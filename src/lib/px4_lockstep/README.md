@@ -10,7 +10,8 @@ Key principles:
 - **No module threads/tasks**: we instantiate modules as objects and call `run_once()` in a fixed order.
 - **PX4 time driven by Julia**: `hrt_absolute_time()` returns an injected sim time in lockstep mode.
 
-This directory builds `libpx4_lockstep.so` exposing a small C ABI (`include/px4_lockstep/px4_lockstep.h`).
+This directory builds `libpx4_lockstep` (shared library) exposing a small C ABI
+(`include/px4_lockstep/px4_lockstep.h`).
 
 ## Build integration
 
@@ -28,16 +29,33 @@ add_subdirectory(px4_lockstep)
 
 3. Ensure your PX4 build generates the required static module libraries (names in `CMakeLists.txt`).
 
-4. Build (POSIX):
+4. Configure the lockstep SITL build (recommended; trims default sim modules):
 
 ```
-make px4_sitl_default
+make px4_sitl_lockstep
+```
+
+This uses the minimal lockstep board config in `boards/px4/sitl/lockstep.px4board`.
+
+5. Build or rebuild just the lockstep library:
+
+```
+ninja -C build/px4_sitl_lockstep px4_lockstep
 ```
 
 The output should contain something like:
 
 ```
-build/px4_sitl_default/src/lib/px4_lockstep/libpx4_lockstep.so
+build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib
+```
+
+On Linux the library ends with `.so` (instead of `.dylib`).
+
+If you prefer the default SITL build, use:
+
+```
+make px4_sitl_default
+ninja -C build/px4_sitl_default px4_lockstep
 ```
 
 ## Runtime
@@ -66,11 +84,15 @@ Outputs include:
 A minimal Julia wrapper lives in `Tools/px4_lockstep_julia` and provides a clean
 starting point for a simulator.
 
+`PX4Lockstep.jl` searches `build/px4_sitl_lockstep` and `build/px4_sitl_default`
+for the shared library; override with `PX4_LOCKSTEP_LIB` if needed.
+
 Example (after building `px4_sitl_lockstep`):
 
 ```
 julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
 ```
 
 The Julia example writes `lockstep_log.csv` and a `lockstep_plot.png` overview
@@ -81,7 +103,7 @@ You can override the shared library and mission path via:
 ```
 PX4_LOCKSTEP_LIB=build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib \
 PX4_LOCKSTEP_MISSION=/path/to/mission.waypoints \
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
 ```
 
 The example keeps Commander disabled (lockstep is not implemented yet), but
@@ -127,4 +149,4 @@ This library expects small, low-paranoia patches in PX4 core:
 - Control allocator: add `enable_lockstep()`, `init_lockstep()` and `run_once()` wrappers
 - Commander: add `enable_lockstep()`, `init_lockstep()` and `run_once()` wrappers (and disable its low-priority thread in lockstep)
 
-See `../patches/` in the zip for the exact diff.
+See the git diff in this branch for the exact changes.

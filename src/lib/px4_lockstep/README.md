@@ -15,22 +15,6 @@ This directory builds `libpx4_lockstep` (shared library) exposing a small C ABI
 
 ## Build integration
 
-1. Copy this folder into:
-
-```
-PX4-Autopilot/src/lib/px4_lockstep
-```
-
-2. Add to `PX4-Autopilot/src/lib/CMakeLists.txt`:
-
-```
-add_subdirectory(px4_lockstep)
-```
-
-3. Ensure your PX4 build generates the required static module libraries (names in `CMakeLists.txt`).
-
-4. Configure the lockstep SITL build (recommended; trims default sim modules):
-
 ```
 make px4_sitl_lockstep
 ```

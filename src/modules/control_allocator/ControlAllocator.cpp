@@ -96,10 +96,27 @@ ControlAllocator::init()
 	}
 
 #ifndef ENABLE_LOCKSTEP_SCHEDULER // Backup schedule would interfere with lockstep
-	ScheduleDelayed(50_ms);
+	if (!_lockstep) {
+		ScheduleDelayed(50_ms);
+	}
 #endif
 
 	return true;
+}
+
+bool ControlAllocator::init_lockstep()
+{
+	updateParams();
+	parameters_updated();
+	return true;
+}
+
+void ControlAllocator::run_once()
+{
+	const bool prev = _lockstep;
+	_lockstep = true;
+	Run();
+	_lockstep = prev;
 }
 
 void
@@ -312,7 +329,9 @@ ControlAllocator::Run()
 
 #ifndef ENABLE_LOCKSTEP_SCHEDULER // Backup schedule would interfere with lockstep
 	// Push backup schedule
-	ScheduleDelayed(50_ms);
+	if (!_lockstep) {
+		ScheduleDelayed(50_ms);
+	}
 #endif
 
 	// Check if parameters have changed

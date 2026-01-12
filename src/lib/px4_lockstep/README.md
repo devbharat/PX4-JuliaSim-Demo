@@ -1,0 +1,130 @@
+# PX4 Lockstep (Strategy A)
+
+Goal: run **Commander + Navigator + flight_mode_manager + Mission + mc_pos_control + mc_att_control + mc_rate_control + control_allocator**
+**single-threaded and deterministic** in a Julia-driven lockstep loop.
+
+Key principles:
+
+- **Reuse uORB as-is** (shared memory, no extra threads required).
+- **Reuse Mission/Navigator** (no mission re-implementation). Load missions by preloading Dataman.
+- **No module threads/tasks**: we instantiate modules as objects and call `run_once()` in a fixed order.
+- **PX4 time driven by Julia**: `hrt_absolute_time()` returns an injected sim time in lockstep mode.
+
+This directory builds `libpx4_lockstep.so` exposing a small C ABI (`include/px4_lockstep/px4_lockstep.h`).
+
+## Build integration
+
+1. Copy this folder into:
+
+```
+PX4-Autopilot/src/lib/px4_lockstep
+```
+
+2. Add to `PX4-Autopilot/src/lib/CMakeLists.txt`:
+
+```
+add_subdirectory(px4_lockstep)
+```
+
+3. Ensure your PX4 build generates the required static module libraries (names in `CMakeLists.txt`).
+
+4. Build (POSIX):
+
+```
+make px4_sitl_default
+```
+
+The output should contain something like:
+
+```
+build/px4_sitl_default/src/lib/px4_lockstep/libpx4_lockstep.so
+```
+
+## Runtime
+
+From Julia, `dlopen` the library and `ccall`:
+
+- `px4_lockstep_create()`
+- `px4_lockstep_load_mission_qgc_wpl()`
+- `px4_lockstep_step()` each sim tick
+
+You must provide:
+
+- monotonic time_us (non-decreasing)
+- vehicle state (local + global + attitude)
+- command requests (arm + mode) and simulated battery state
+
+Outputs include:
+
+- `actuator_controls_0` (raw roll/pitch/yaw/thrust)
+- `actuator_motors` / `actuator_servos` (mixed/allocated outputs, if control allocator enabled)
+- mission progress
+- `trajectory_setpoint_*` (position/velocity/accel/yaw from FlightModeManager)
+
+## Julia wrapper
+
+A minimal Julia wrapper lives in `Tools/px4_lockstep_julia` and provides a clean
+starting point for a simulator.
+
+Example (after building `px4_sitl_lockstep`):
+
+```
+julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+```
+
+The Julia example writes `lockstep_log.csv` and a `lockstep_plot.png` overview
+plot of position, setpoints, and velocity for quick visualization.
+
+You can override the shared library and mission path via:
+
+```
+PX4_LOCKSTEP_LIB=build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib \
+PX4_LOCKSTEP_MISSION=/path/to/mission.waypoints \
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+```
+
+The example keeps Commander disabled (lockstep is not implemented yet), but
+enables the control allocator and includes a quad-physics loop so missions can
+actually advance.
+
+## Julia lockstep sim (Iris)
+
+`Tools/px4_lockstep_julia/examples/basic_step.jl` implements a per-motor physics
+loop tuned to the Gazebo Iris parameters:
+
+- Mass/inertia are pulled from
+  `Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja`.
+- Rotor geometry/yaw moments match the Iris airframe defaults in
+  `ROMFS/px4fmu_common/init.d-posix/airframes/10016_none_iris`.
+- Per-motor outputs use `actuator_motors` (normalized thrust fraction). The
+  sim scales thrust so `hover_thrust=0.5` corresponds to weight; tune this if
+  you change vehicle mass.
+
+Run it like this:
+
+```
+ninja -C build/px4_sitl_lockstep px4_lockstep
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+```
+
+To capture PX4 debug logs emitted on stderr:
+
+```
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl \
+  2>&1 | tee julia_out.txt
+```
+
+## Required PX4 patches
+
+This library expects small, low-paranoia patches in PX4 core:
+
+- POSIX HRT: allow lockstep time injection (`hrt_lockstep_set_absolute_time()`)
+- Dataman: allow lockstep init + synchronous read/write (`dm_lockstep_init()` / `dm_lockstep_set_sync()`)
+- Navigator + flight_mode_manager + controllers: add `enable_lockstep()`, `init_lockstep()` and `run_once()` wrappers
+- Control allocator: add `enable_lockstep()`, `init_lockstep()` and `run_once()` wrappers
+- Commander: add `enable_lockstep()`, `init_lockstep()` and `run_once()` wrappers (and disable its low-priority thread in lockstep)
+
+See `../patches/` in the zip for the exact diff.

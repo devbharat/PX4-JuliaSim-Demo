@@ -629,6 +629,7 @@ static void publish_inputs(LockstepRuntime &rt, const px4_lockstep_inputs_t &in)
 	// Attitude
 	vehicle_attitude_s att{};
 	att.timestamp = in.time_us;
+	att.timestamp_sample = in.time_us;
 	att.q[0] = in.q[0];
 	att.q[1] = in.q[1];
 	att.q[2] = in.q[2];
@@ -638,6 +639,7 @@ static void publish_inputs(LockstepRuntime &rt, const px4_lockstep_inputs_t &in)
 	// Body rates
 	vehicle_angular_velocity_s rates{};
 	rates.timestamp = in.time_us;
+	rates.timestamp_sample = in.time_us;
 	rates.xyz[0] = in.rates_xyz[0];
 	rates.xyz[1] = in.rates_xyz[1];
 	rates.xyz[2] = in.rates_xyz[2];

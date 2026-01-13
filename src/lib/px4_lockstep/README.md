@@ -66,7 +66,8 @@ Outputs include:
 ## Julia wrapper
 
 A minimal Julia wrapper lives in `Tools/px4_lockstep_julia` and provides a clean
-starting point for a simulator.
+starting point for a simulator. The `PX4Lockstep.Sim` submodule contains the
+refactored Iris lockstep simulation framework (vehicles, integrators, scenarios, logging).
 
 `PX4Lockstep.jl` searches `build/px4_sitl_lockstep` and `build/px4_sitl_default`
 for the shared library; override with `PX4_LOCKSTEP_LIB` if needed.
@@ -76,18 +77,17 @@ Example (after building `px4_sitl_lockstep`):
 ```
 julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
 ```
 
-The Julia example writes `lockstep_log.csv` and a `lockstep_plot.png` overview
-plot of position, setpoints, and velocity for quick visualization.
+The Julia example writes `sim_log.csv` for offline plotting.
 
 You can override the shared library and mission path via:
 
 ```
 PX4_LOCKSTEP_LIB=build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib \
 PX4_LOCKSTEP_MISSION=/path/to/mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
 ```
 
 The example keeps Commander disabled (lockstep is not implemented yet), but
@@ -96,7 +96,7 @@ actually advance.
 
 ## Julia lockstep sim (Iris)
 
-`Tools/px4_lockstep_julia/examples/basic_step.jl` implements a per-motor physics
+`Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl` implements a per-motor physics
 loop tuned to the Gazebo Iris parameters:
 
 - Mass/inertia are pulled from
@@ -112,14 +112,14 @@ Run it like this:
 ```
 ninja -C build/px4_sitl_lockstep px4_lockstep
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
 ```
 
 To capture PX4 debug logs emitted on stderr:
 
 ```
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/basic_step.jl \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl \
   2>&1 | tee julia_out.txt
 ```
 

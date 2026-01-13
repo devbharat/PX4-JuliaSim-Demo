@@ -12,6 +12,9 @@ export LockstepConfig,
        step!,
        find_library
 
+# Simulation framework lives in a submodule so the core PX4 lockstep wrapper stays small.
+export Sim
+
 const LIB_ENV = "PX4_LOCKSTEP_LIB"
 const _LIB_HANDLE = Ref{Ptr{Cvoid}}(C_NULL)
 const _SYMBOL_CACHE = Dict{Tuple{Ptr{Cvoid}, Symbol}, Ptr{Cvoid}}()
@@ -156,5 +159,7 @@ function step!(handle::LockstepHandle, inputs::LockstepInputs)
     ret == 0 || error("px4_lockstep_step failed with code $ret")
     return outputs[]
 end
+
+include("sim/Sim.jl")
 
 end

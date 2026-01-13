@@ -155,3 +155,13 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 * The framework uses NED as the world frame to match PX4.
 * Controller outputs are treated as piecewise-constant over each sim `dt`, which is the standard assumption for fixed-step closed-loop simulation.
 * Wind turbulence is advanced once per tick (seeded RNG) and held constant over the integration step for determinism.
+
+## Example Run
+```PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
+python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --output sim_plot.png --inflow-output sim_inflow.png
+```
+<img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
+<img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />
+
+
+

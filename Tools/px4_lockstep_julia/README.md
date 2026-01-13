@@ -38,6 +38,7 @@ Outputs:
 
 * `sim_log.csv`
   * includes position/velocity setpoints for tracking plots
+  * includes air-relative velocity in body axes (`air_bx/air_by/air_bz`) for inflow-aware propulsion debugging
 
 ## Python plotting
 
@@ -80,12 +81,12 @@ The simulation framework is organized as composable modules:
 * `PX4Lockstep.Sim.Vehicles`
   * rigid-body 6DOF baseline model (Iris quad)
   * actuator dynamics (`DirectActuators`, `FirstOrderActuators`, `SecondOrderActuators`)
-  * quad thrust nonlinearity via `thrust_exponent` (legacy mode)
 * `PX4Lockstep.Sim.Powertrain`
   * `IdealBattery` baseline
   * `TheveninBattery` (OCV + R0 + RC) for better voltage sag realism
 * `PX4Lockstep.Sim.Propulsion`
   * motor+ESC+prop split: duty → current/torque → ω → thrust/drag torque
+  * inflow-aware thrust/torque correction (vertical descent + wind projection reduce thrust for a given ω)
 * `PX4Lockstep.Sim.Contacts`
   * pluggable contact model (`NoContact` by default; `FlatGroundContact` optional)
 * `PX4Lockstep.Sim.Events` / `PX4Lockstep.Sim.Scenario`

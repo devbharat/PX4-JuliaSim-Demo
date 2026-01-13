@@ -45,7 +45,7 @@ The sim engine calls the 4-arg method:
 
     scenario_step(scenario, t, state, sim)
 
-and by default this forwards to the legacy 3-arg method.
+and by default this forwards to the 3-argument method.
 """
 scenario_step(s::AbstractScenario, t::Float64, x::RigidBodyState, sim) =
     scenario_step(s, t, x)

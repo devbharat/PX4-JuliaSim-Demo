@@ -2,8 +2,8 @@
 
 Battery / powertrain models.
 
-You said you'll own battery models on the Julia side and inject `battery_status` into PX4.
-This module provides a small interface so you can swap models without touching:
+Battery models for sim-side powertrain and PX4 `battery_status` injection.
+This module provides a small interface so models can be swapped without touching:
 - the sim engine
 - the PX4 lockstep bridge
 
@@ -12,8 +12,8 @@ Included models:
 - `IdealBattery`: deterministic coulomb counting + constant voltage (baseline)
 - `TheveninBattery`: 1st-order Thevenin equivalent (OCV + R0 + RC polarization)
 
-The Thevenin model is still intentionally lightweight (no thermal yet), but it is a much
-better starting point for battery-related RTL / energy studies than a constant voltage.
+The Thevenin model is still intentionally lightweight (no thermal yet), but it is a
+useful starting point for battery-related RTL and energy studies.
 """
 module Powertrain
 
@@ -74,7 +74,7 @@ end
 
 - SOC integrates from a fixed capacity.
 - Voltage is constant (or can be set externally).
-- Current draw is estimated from motor commands via a user-provided callback.
+- Current draw comes from the modeled bus current.
 
 This is intentionally simple and deterministic.
 """
@@ -86,7 +86,6 @@ mutable struct IdealBattery <: AbstractBatteryModel
     low_thr::Float64
     crit_thr::Float64
     emerg_thr::Float64
-    current_estimator::Function
 end
 
 function IdealBattery(;
@@ -96,7 +95,6 @@ function IdealBattery(;
     low_thr::Float64 = 0.15,
     crit_thr::Float64 = 0.10,
     emerg_thr::Float64 = 0.05,
-    current_estimator::Function = (cmds)->0.0,
 )
     capacity_c = capacity_ah * 3600.0
     return IdealBattery(
@@ -107,13 +105,12 @@ function IdealBattery(;
         low_thr,
         crit_thr,
         emerg_thr,
-        current_estimator,
     )
 end
 
 """Advance the battery model by `dt` seconds using a bus current draw.
 
-This is the preferred stepping API once you have an explicit motor/ESC model.
+This is the preferred stepping API when using an explicit motor/ESC model.
 """
 function step!(b::IdealBattery, I_bus_a::Float64, dt::Float64)
     I = max(0.0, Float64(I_bus_a))
@@ -122,14 +119,6 @@ function step!(b::IdealBattery, I_bus_a::Float64, dt::Float64)
     return nothing
 end
 
-"""Advance the battery model by `dt` seconds using motor commands.
-
-This legacy helper is kept for convenience when you don't have a motor model yet.
-"""
-function step!(b::IdealBattery, motor_cmds, dt::Float64)
-    I = Float64(b.current_estimator(motor_cmds))
-    return step!(b, I, dt)
-end
 
 function status(b::IdealBattery)::BatteryStatus
     return BatteryStatus(
@@ -201,13 +190,14 @@ mutable struct TheveninBattery <: AbstractBatteryModel
     c1::Float64
     v1::Float64
 
+    min_voltage_v::Float64
+
     last_current_a::Float64
 
     low_thr::Float64
     crit_thr::Float64
     emerg_thr::Float64
 
-    current_estimator::Function
 end
 
 function TheveninBattery(;
@@ -220,10 +210,10 @@ function TheveninBattery(;
     r1::Float64 = 0.01,
     c1::Float64 = 2000.0,
     v1_0::Float64 = 0.0,
+    min_voltage_v::Float64 = 0.0,
     low_thr::Float64 = 0.15,
     crit_thr::Float64 = 0.10,
     emerg_thr::Float64 = 0.05,
-    current_estimator::Function = (cmds)->0.0,
 )
     capacity_c = capacity_ah * 3600.0
     return TheveninBattery(
@@ -235,11 +225,11 @@ function TheveninBattery(;
         r1,
         c1,
         v1_0,
+        min_voltage_v,
         0.0,
         low_thr,
         crit_thr,
         emerg_thr,
-        current_estimator,
     )
 end
 
@@ -253,20 +243,21 @@ function step!(b::TheveninBattery, I_bus_a::Float64, dt::Float64)
     # Polarization voltage dynamics.
     if b.r1 > 0.0 && b.c1 > 0.0
         τ = b.r1 * b.c1
-        b.v1 += dt * (-(b.v1 / τ) + (I / b.c1))
+        if τ < 1e-9
+            b.v1 = I * b.r1
+        else
+            α = exp(-dt / τ)
+            b.v1 = b.v1 * α + I * b.r1 * (1.0 - α)
+        end
     end
 
     return nothing
 end
 
-function step!(b::TheveninBattery, motor_cmds, dt::Float64)
-    I = Float64(b.current_estimator(motor_cmds))
-    return step!(b, I, dt)
-end
-
 function status(b::TheveninBattery)::BatteryStatus
     ocv = _interp_ocv(b.ocv_soc, b.ocv_v, b.soc)
     V = ocv - b.last_current_a * b.r0 - b.v1
+    V = max(b.min_voltage_v, V)
     return BatteryStatus(
         connected = true,
         voltage_v = V,

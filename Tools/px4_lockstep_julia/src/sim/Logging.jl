@@ -60,6 +60,9 @@ mutable struct SimLog <: AbstractLogSink
     wind_ned::Vector{NTuple{3,Float64}}
     air_density::Vector{Float64}
 
+    # air-relative velocity in body (wind - vel, rotated)
+    air_vel_body::Vector{NTuple{3,Float64}}
+
     # battery
     batt_voltage_v::Vector{Float64}
     batt_current_a::Vector{Float64}
@@ -92,6 +95,7 @@ function SimLog()
         NTuple{4,Float64}[],
         NTuple{3,Float64}[],
         Float64[],
+        NTuple{3,Float64}[],
         Float64[],
         Float64[],
         Float64[],
@@ -106,7 +110,7 @@ end
 
 """Streaming CSV sink.
 
-This is useful for long runs where you don't want to hold everything in memory.
+This is useful for long runs where in-memory storage is not desired.
 """
 mutable struct CSVLogSink <: AbstractLogSink
     io::IO
@@ -189,6 +193,9 @@ const _CSV_HEADER = join(
         "wind_y",
         "wind_z",
         "rho",
+        "air_bx",
+        "air_by",
+        "air_bz",
         # battery
         "batt_v",
         "batt_a",
@@ -225,6 +232,7 @@ function log!(
     cmd::ActuatorCommand;
     wind_ned::Vec3,
     rho::Float64,
+    air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
     battery::BatteryStatus = BatteryStatus(),
     nav_state::Int32 = Int32(-1),
     arming_state::Int32 = Int32(-1),
@@ -259,6 +267,7 @@ function log!(
 
     push!(sink.wind_ned, (wind_ned[1], wind_ned[2], wind_ned[3]))
     push!(sink.air_density, rho)
+    push!(sink.air_vel_body, air_vel_body)
 
     push!(sink.batt_voltage_v, battery.voltage_v)
     push!(sink.batt_current_a, battery.current_a)
@@ -280,6 +289,7 @@ function log!(
     cmd::ActuatorCommand;
     wind_ned::Vec3,
     rho::Float64,
+    air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
     battery::BatteryStatus = BatteryStatus(),
     nav_state::Int32 = Int32(-1),
     arming_state::Int32 = Int32(-1),
@@ -352,6 +362,7 @@ function log!(
     )
     # environment
     @printf(io, "%.6f,%.6f,%.6f,%.6f,", wind_ned[1], wind_ned[2], wind_ned[3], rho)
+    @printf(io, "%.6f,%.6f,%.6f,", air_vel_body[1], air_vel_body[2], air_vel_body[3])
     # battery
     @printf(
         io,
@@ -393,6 +404,7 @@ function write_csv(log::SimLog, path::AbstractString)
             asp = log.acc_sp_ned[i]
             m12 = log.motor_cmd12[i]
             wind = log.wind_ned[i]
+            airb = log.air_vel_body[i]
             ωr = log.rotor_omega_rad_s[i]
             Tr = log.rotor_thrust_n[i]
 
@@ -434,6 +446,7 @@ function write_csv(log::SimLog, path::AbstractString)
                 wind[3],
                 log.air_density[i]
             )
+            @printf(io, "%.6f,%.6f,%.6f,", airb[1], airb[2], airb[3])
 
             @printf(
                 io,

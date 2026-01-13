@@ -2,10 +2,9 @@
 
 Autopilot interfaces.
 
-Right now, the primary autopilot in the loop is PX4 running through your lockstep shared
-library.
+The primary autopilot in the loop is PX4 running through the lockstep shared library.
 
-The design goal is:
+Design goals:
 
 * Keep the PX4 bridge thin and deterministic.
 * Keep all "simulation truth" on the Julia side.
@@ -36,8 +35,8 @@ const EARTH_RADIUS_M = 6.378137e6
 
 """Home location used to convert local NED to lat/lon/alt.
 
-We use a spherical Earth approximation for now. This is more than adequate for the local
-missions/trajectories we care about in early SITL.
+This implementation uses a spherical Earth approximation, which is adequate for local
+missions and trajectories in early SITL.
 """
 Base.@kwdef struct HomeLocation
     lat_deg::Float64 = 47.397742

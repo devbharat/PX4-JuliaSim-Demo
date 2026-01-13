@@ -6,8 +6,8 @@ The sim is fundamentally a fixed-step integrator for the continuous-time plant, 
 controllers, estimators, logging, etc. are *discrete-time* tasks that often run at lower
 rates.
 
-This module provides a minimal PeriodicTrigger you can use to implement sample-and-hold
-logic without introducing threads or wall-clock time.
+This module provides a minimal PeriodicTrigger to implement sample-and-hold logic
+without introducing threads or wall-clock time.
 """
 module Scheduling
 
@@ -20,7 +20,7 @@ internal `t_next` so it can be called repeatedly.
 
 Notes:
 - `t` is simulation time (seconds), not wall clock.
-- If the simulation ever runs slower than the trigger (e.g. you jump time), `due!` will
+- If the simulation runs slower than the trigger (e.g. due to a time jump), `due!` will
   catch up by advancing multiple periods.
 """
 mutable struct PeriodicTrigger
@@ -40,7 +40,7 @@ end
 
 @inline function due!(tr::PeriodicTrigger, t::Float64; eps::Float64 = 1e-12)
     if t + eps >= tr.t_next
-        # Advance at least once, then catch up if we lagged.
+        # Advance at least once, then catch up if the loop lagged.
         while t + eps >= tr.t_next
             tr.t_next += tr.period
         end

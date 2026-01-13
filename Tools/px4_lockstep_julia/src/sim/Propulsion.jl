@@ -15,12 +15,12 @@ Design goals:
 Notes / intentional simplifications:
 * Electrical inductance is ignored (quasi-static current). This is typically fine for
   flight dynamics timescales.
-* The propeller is modeled as quadratic in ω (hover-ish). You can extend this with an
-  inflow/advance-ratio model when you add table-based aero.
+* The propeller is modeled as quadratic in ω (hover-ish). It can be extended with an
+  inflow/advance-ratio model when table-based aero is added.
 """
 module Propulsion
 
-using ..Types: Vec3, vec3
+using ..Types: Vec3
 using StaticArrays
 using Random
 
@@ -91,15 +91,39 @@ the `km` term in many quad models).
 Base.@kwdef struct QuadraticPropParams
     kT::Float64 = 3.0e-6
     kQ::Float64 = 1.5e-7
+
+    # Rotor geometry used for inflow sensitivity (meters).
+    radius_m::Float64 = 0.127
+
+    # Inflow sensitivity (dimensionless). 0 disables inflow effects.
+    # We apply a simple correction factor: f = 1/(1 + k*mu^2)
+    # where mu = Vax / (|ω|*R).
+    inflow_kT::Float64 = 8.0
+    inflow_kQ::Float64 = 8.0
 end
 
-@inline function prop_thrust(p::QuadraticPropParams, ρ::Float64, ω::Float64)
-    return p.kT * ρ * ω * ω
+@inline function _inflow_mu(p::QuadraticPropParams, ω::Float64, Vax::Float64)
+    tip = max(1e-3, abs(ω) * p.radius_m)
+    return Vax / tip
 end
 
-@inline function prop_torque(p::QuadraticPropParams, ρ::Float64, ω::Float64)
-    return p.kQ * ρ * ω * ω
+@inline function _inflow_factor(k::Float64, mu::Float64)
+    k <= 0.0 && return 1.0
+    return 1.0 / (1.0 + k * mu * mu)
 end
+
+@inline function prop_thrust(p::QuadraticPropParams, ρ::Float64, ω::Float64, Vax::Float64)
+    mu = _inflow_mu(p, ω, Vax)
+    f = _inflow_factor(p.inflow_kT, mu)
+    return p.kT * ρ * ω * ω * f
+end
+
+@inline function prop_torque(p::QuadraticPropParams, ρ::Float64, ω::Float64, Vax::Float64)
+    mu = _inflow_mu(p, ω, Vax)
+    f = _inflow_factor(p.inflow_kQ, mu)
+    return p.kQ * ρ * ω * ω * f
+end
+
 
 ############################
 # Combined unit
@@ -165,7 +189,7 @@ This is *not* meant to be a perfect Iris model; it is a calibrated baseline that
 * has plausible motor time constants,
 * produces plausible current draw.
 
-You should replace these params when you move beyond Iris.
+Replace these parameters when modeling other airframes.
 """
 function default_iris_quadrotor_set(;
     N::Int = 4,
@@ -173,6 +197,9 @@ function default_iris_quadrotor_set(;
     V_nom::Float64 = 12.0,
     ρ_nom::Float64 = 1.225,
     thrust_hover_per_rotor_n::Float64 = 3.7,
+    rotor_radius_m::Float64 = 0.127,
+    inflow_kT::Float64 = 8.0,
+    inflow_kQ::Float64 = 8.0,
 )
 
     esc = ESCParams(η = 0.98, deadzone = 0.02)
@@ -186,8 +213,16 @@ function default_iris_quadrotor_set(;
     )
 
     # Calibrate kT so that at ~hover the thrust is reasonable at nominal density.
-    prop =
-        _calibrate_quadratic_prop(motor, V_nom, ρ_nom, thrust_hover_per_rotor_n*2.0, km_m)
+    prop = _calibrate_quadratic_prop(
+        motor,
+        V_nom,
+        ρ_nom,
+        thrust_hover_per_rotor_n*2.0,
+        km_m;
+        radius_m = rotor_radius_m,
+        inflow_kT = inflow_kT,
+        inflow_kQ = inflow_kQ,
+    )
 
     units = [
         MotorPropUnit(
@@ -219,7 +254,10 @@ function _calibrate_quadratic_prop(
     V_nom::Float64,
     ρ_nom::Float64,
     target_thrust_n::Float64,
-    km_m::Float64,
+    km_m::Float64;
+    radius_m::Float64 = 0.127,
+    inflow_kT::Float64 = 8.0,
+    inflow_kQ::Float64 = 8.0,
 )::QuadraticPropParams
 
     Ke = motor_Ke(motor)
@@ -268,7 +306,13 @@ function _calibrate_quadratic_prop(
 
     kT = 0.5*(lo+hi)
     kQ = km_m * kT
-    return QuadraticPropParams(kT = kT, kQ = kQ)
+    return QuadraticPropParams(
+        kT = kT,
+        kQ = kQ,
+        radius_m = radius_m,
+        inflow_kT = inflow_kT,
+        inflow_kQ = inflow_kQ,
+    )
 end
 
 ############################
@@ -284,6 +328,7 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
     duty::Float64,
     V_bus::Float64,
     ρ::Float64,
+    Vax::Float64,
     dt::Float64,
 )
     if !u.enabled
@@ -322,7 +367,7 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
     τ_e = Kt * max(0.0, I_m - motor.I0_a)
 
     # Load torque from propeller.
-    τ_load = prop_torque(prop, ρ, ω)
+    τ_load = prop_torque(prop, ρ, ω, Vax)
 
     # Rotor dynamics.
     b = motor.viscous_friction_nm_per_rad_s
@@ -332,8 +377,8 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
     u.ω_rad_s = ω_new
 
     # Outputs (use updated speed for thrust).
-    T = prop_thrust(prop, ρ, ω_new)
-    Q = prop_torque(prop, ρ, ω_new)
+    T = prop_thrust(prop, ρ, ω_new, Vax)
+    Q = prop_torque(prop, ρ, ω_new, Vax)
 
     # Bus current from ideal PWM stage (power conservation w/ efficiency).
     I_bus = (d * I_m) / max(1e-6, esc.η)
@@ -355,6 +400,7 @@ function step_propulsion!(
     duties::SVector{N,Float64},
     V_bus::Float64,
     ρ::Float64,
+    v_air_body::Vec3,
     dt::Float64,
 ) where {N}
     thrust = zeros(Float64, N)
@@ -363,8 +409,12 @@ function step_propulsion!(
     imotor = zeros(Float64, N)
     Ibus_total = 0.0
 
+    # Axial inflow along rotor thrust direction (body -Z).
+    # Body axes are X fwd, Y right, Z down, so thrust is along -Z and Vax = -v_air_body.z.
+    Vax = -Float64(v_air_body[3])
+
     @inbounds for i = 1:N
-        Ti, Qi, ωi, Ii, Ibus = _step_unit!(p.units[i], duties[i], V_bus, ρ, dt)
+        Ti, Qi, ωi, Ii, Ibus = _step_unit!(p.units[i], duties[i], V_bus, ρ, Vax, dt)
         thrust[i] = Ti
         torque[i] = Qi
         omega[i] = ωi

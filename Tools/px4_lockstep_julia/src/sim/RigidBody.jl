@@ -2,8 +2,8 @@
 
 Core rigid-body state representation and ODE helper operations.
 
-This file is intentionally *model agnostic*: it defines how we represent and integrate
-6DOF rigid body state. Specific aircraft models compute forces and moments.
+This file is intentionally *model agnostic*: it defines representation and integration
+for 6DOF rigid body state. Specific aircraft models compute forces and moments.
 """
 module RigidBody
 
@@ -51,7 +51,7 @@ end
 
 """Return a new state: `x + scale * xdot`.
 
-We normalize the quaternion to avoid drift during multi-stage integration.
+The quaternion is normalized to avoid drift during multi-stage integration.
 """
 @inline function rb_add(x::RigidBodyState, xdot::RigidBodyDeriv, scale::Float64)
     return RigidBodyState(

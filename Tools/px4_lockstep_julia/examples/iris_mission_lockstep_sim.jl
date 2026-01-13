@@ -18,6 +18,44 @@ using PX4Lockstep.Sim
 
 const DEFAULT_HOME = Sim.Autopilots.HomeLocation(lat_deg=47.397742, lon_deg=8.545594, alt_msl_m=488.0)
 
+# Scenario timing.
+const ARM_TIME_S = 1.0
+const MISSION_TIME_S = 2.0
+
+# Wind configuration.
+const WIND_MEAN = Sim.Types.vec3(0.0, 0.0, 0.0)
+const WIND_SIGMA = Sim.Types.vec3(0.5, 0.5, 0.2)
+const WIND_TAU_S = 3.0
+
+# Estimator noise/delay.
+const EST_POS_SIGMA_M = Sim.Types.vec3(0.3, 0.3, 0.5)
+const EST_VEL_SIGMA_MPS = Sim.Types.vec3(0.1, 0.1, 0.2)
+const EST_YAW_SIGMA_RAD = deg2rad(2.0)
+const EST_RATE_SIGMA_RAD_S = Sim.Types.vec3(0.02, 0.02, 0.03)
+const EST_BIAS_TAU_S = 20.0
+const EST_POS_BIAS_SIGMA_M = Sim.Types.vec3(0.5, 0.5, 0.5)
+const EST_DELAY_S = 0.01
+const EST_DT = 0.01
+
+# Simulation rates.
+const SIM_DT = 0.002
+const SIM_DT_AUTOPILOT = 0.01
+const SIM_DT_LOG = 0.01
+const SIM_T_END = 90.0
+const SIM_SEED = 1
+
+# Battery configuration (pack-level values derived from per-cell parameters).
+const BATTERY_CELLS = 3
+const BATTERY_CAPACITY_AH = 5.0
+const BATTERY_OCV_SOC = [0.0, 0.1, 0.5, 0.9, 1.0]
+const BATTERY_OCV_CELL_V = [3.0, 3.6, 3.8, 4.1, 4.2]
+const BATTERY_R0 = 0.02
+const BATTERY_R1 = 0.01
+const BATTERY_C1 = 2000.0
+const BATTERY_MIN_CELL_V = 3.0
+const BATTERY_OCV_V = BATTERY_OCV_CELL_V .* BATTERY_CELLS
+const BATTERY_MIN_VOLTAGE_V = BATTERY_MIN_CELL_V * BATTERY_CELLS
+
 function run_example()
     lib_path = get(ENV, PX4Lockstep.LIB_ENV, "")
     mission_path = get(ENV, "PX4_LOCKSTEP_MISSION", "")
@@ -41,11 +79,7 @@ function run_example()
         end
 
         # World: ISA atmosphere + (optionally) stateful turbulence.
-        wind = Sim.Environment.OUWind(
-            mean=Sim.Types.vec3(0, 0, 0),
-            σ=Sim.Types.vec3(0.5, 0.5, 0.2),
-            τ_s=3.0,
-        )
+        wind = Sim.Environment.OUWind(mean=WIND_MEAN, σ=WIND_SIGMA, τ_s=WIND_TAU_S)
         env = Sim.Environment.EnvironmentModel(wind=wind)
 
         model = Sim.Vehicles.IrisQuadrotor()
@@ -71,19 +105,19 @@ function run_example()
         integrator = Sim.Integrators.RK4Integrator()
 
         # Battery model: 1st-order Thevenin equivalent (OCV + R0 + RC).
-        # Replace `current_estimator` with a higher-fidelity ESC/motor current model when available.
         battery = Sim.Powertrain.TheveninBattery(
-            capacity_ah=5.0,
-            current_estimator=(cmds)->begin
-                cmds === nothing && return 0.0
-                # crude current estimate: ~20A at full collective
-                return 20.0 * (sum(cmds) / length(cmds))
-            end,
+            capacity_ah=BATTERY_CAPACITY_AH,
+            ocv_soc=BATTERY_OCV_SOC,
+            ocv_v=BATTERY_OCV_V,
+            r0=BATTERY_R0,
+            r1=BATTERY_R1,
+            c1=BATTERY_C1,
+            min_voltage_v=BATTERY_MIN_VOLTAGE_V,
         )
 
         scenario = Sim.Scenario.EventScenario()
-        Sim.Scenario.arm_at!(scenario, 1.0)
-        Sim.Scenario.mission_start_at!(scenario, 2.0)
+        Sim.Scenario.arm_at!(scenario, ARM_TIME_S)
+        Sim.Scenario.mission_start_at!(scenario, MISSION_TIME_S)
 
         # Examples of additional event injection:
         # Sim.Scenario.wind_step_at!(scenario, 10.0, Sim.Types.vec3(2.0, 0.0, 0.0); duration_s=3.0)
@@ -91,21 +125,21 @@ function run_example()
 
         # Estimated-state injection (noise + fixed delay).
         base_est = Sim.Estimators.NoisyEstimator(
-            pos_sigma_m=Sim.Types.vec3(0.3, 0.3, 0.5),
-            vel_sigma_mps=Sim.Types.vec3(0.1, 0.1, 0.2),
-            yaw_sigma_rad=deg2rad(2.0),
-            rate_sigma_rad_s=Sim.Types.vec3(0.02, 0.02, 0.03),
-            bias_tau_s=20.0,
-            pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
+            pos_sigma_m=EST_POS_SIGMA_M,
+            vel_sigma_mps=EST_VEL_SIGMA_MPS,
+            yaw_sigma_rad=EST_YAW_SIGMA_RAD,
+            rate_sigma_rad_s=EST_RATE_SIGMA_RAD_S,
+            bias_tau_s=EST_BIAS_TAU_S,
+            pos_bias_sigma_m=EST_POS_BIAS_SIGMA_M,
         )
-        est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.01, dt_est=0.01)
+        est = Sim.Estimators.DelayedEstimator(base_est; delay_s=EST_DELAY_S, dt_est=EST_DT)
 
         sim_cfg = Sim.Simulation.SimulationConfig(
-            dt=0.002,
-            dt_autopilot=0.01,
-            dt_log=0.01,
-            t_end=90.0,
-            seed=1,
+            dt=SIM_DT,
+            dt_autopilot=SIM_DT_AUTOPILOT,
+            dt_log=SIM_DT_LOG,
+            t_end=SIM_T_END,
+            seed=SIM_SEED,
         )
         sim = Sim.Simulation.SimulationInstance(
             cfg=sim_cfg,

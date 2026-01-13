@@ -2,7 +2,7 @@
 
 Composable, deterministic simulation framework intended for PX4-in-the-loop lockstep SITL.
 
-This is a lightweight foundation designed to scale to the long-term architecture you described:
+This is a lightweight foundation designed to scale to a longer-term architecture:
 
 * environment: ISA1976 atmosphere, wind, gravity, (later: terrain)
 * aircraft: 6DOF rigid-body + aero + powertrain + actuators

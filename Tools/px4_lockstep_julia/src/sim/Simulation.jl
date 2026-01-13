@@ -14,11 +14,11 @@ This file focuses on:
 """
 module Simulation
 
-using ..Types: Vec3, Quat, vec3
+using ..Types: Vec3, Quat, vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState, RigidBodyDeriv
 using ..Environment: EnvironmentModel, wind_velocity, air_density, step_wind!
 using ..Vehicles: AbstractVehicleModel, ActuatorCommand, step_actuators!, dynamics, mass
-using ..Propulsion: QuadRotorSet, RotorOutput, step_propulsion!
+using ..Propulsion: step_propulsion!
 using ..Integrators: AbstractIntegrator, step_integrator
 using ..Autopilots: AbstractAutopilot, AutopilotCommand, autopilot_step
 using ..Estimators: AbstractEstimator, TruthEstimator, estimate!
@@ -37,7 +37,7 @@ export VehicleInstance, SimulationConfig, SimulationInstance, step!, run!
 # Simulation types
 ############################
 
-"""Vehicle instance = model + (optional) propulsion state + rigid-body state."""
+"""Vehicle instance = model + propulsion state + rigid-body state."""
 mutable struct VehicleInstance{M<:AbstractVehicleModel,AM,AS,P}
     model::M
     motor_actuators::AM
@@ -45,14 +45,6 @@ mutable struct VehicleInstance{M<:AbstractVehicleModel,AM,AS,P}
     propulsion::P
     state::RigidBodyState
 end
-
-"""Backward-compatible constructor (no propulsion model)."""
-VehicleInstance(
-    model::AbstractVehicleModel,
-    motor_actuators,
-    servo_actuators,
-    state::RigidBodyState,
-) = VehicleInstance(model, motor_actuators, servo_actuators, nothing, state)
 
 """Simulation configuration."""
 Base.@kwdef struct SimulationConfig
@@ -191,34 +183,38 @@ function step!(sim::SimulationInstance)
 
     u_cmd = ActuatorCommand(motors = motors, servos = servos)
 
-    # Propulsion: duty → ω → thrust/torque/current (if a propulsion model is attached).
-    u_dyn = u_cmd
-    I_bus = NaN
+    # Compute air-relative velocity in body frame for inflow-aware propulsion.
+    # v_air_ned is air velocity relative to vehicle (wind - vel), expressed in NED.
+    wind_now = wind_velocity(sim.env.wind, sim.vehicle.state.pos_ned, t)
+    v_air_ned = wind_now - sim.vehicle.state.vel_ned
+    v_air_body = quat_rotate_inv(sim.vehicle.state.q_bn, v_air_ned)
+
+    # Propulsion: duty → ω → thrust/torque/current.
+    p = sim.vehicle.propulsion
+    p === nothing &&
+        error("Simulation requires a propulsion model; attach to VehicleInstance.")
+    N = length(p.units)
+    duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
+    alt_m = max(0.0, -sim.vehicle.state.pos_ned[3])
+    ρ = air_density(sim.env.atmosphere, alt_m)
+    prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, v_air_body, dt)
+    I_bus = prop_out.bus_current_a
+    u_dyn = prop_out
     rotor_ω = (NaN, NaN, NaN, NaN)
     rotor_T = (NaN, NaN, NaN, NaN)
-    if sim.vehicle.propulsion !== nothing
-        p = sim.vehicle.propulsion
-        N = length(p.units)
-        duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
-        alt_m = max(0.0, -sim.vehicle.state.pos_ned[3])
-        ρ = air_density(sim.env.atmosphere, alt_m)
-        prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, dt)
-        I_bus = prop_out.bus_current_a
-        u_dyn = prop_out
-        if N >= 4
-            rotor_ω = (
-                prop_out.ω_rad_s[1],
-                prop_out.ω_rad_s[2],
-                prop_out.ω_rad_s[3],
-                prop_out.ω_rad_s[4],
-            )
-            rotor_T = (
-                prop_out.thrust_n[1],
-                prop_out.thrust_n[2],
-                prop_out.thrust_n[3],
-                prop_out.thrust_n[4],
-            )
-        end
+    if N >= 4
+        rotor_ω = (
+            prop_out.ω_rad_s[1],
+            prop_out.ω_rad_s[2],
+            prop_out.ω_rad_s[3],
+            prop_out.ω_rad_s[4],
+        )
+        rotor_T = (
+            prop_out.thrust_n[1],
+            prop_out.thrust_n[2],
+            prop_out.thrust_n[3],
+            prop_out.thrust_n[4],
+        )
     end
 
     # Integrate rigid body with optional contact forces.
@@ -239,18 +235,17 @@ function step!(sim::SimulationInstance)
     new_state = step_integrator(sim.integrator, f, t, sim.vehicle.state, u_dyn, dt)
     sim.vehicle.state = new_state
 
-    # Update battery based on modeled bus current if available, else fall back to estimator.
-    if sim.vehicle.propulsion !== nothing
-        Powertrain.step!(sim.battery, I_bus, dt)
-    else
-        Powertrain.step!(sim.battery, motors, dt)
-    end
+    # Update battery based on modeled bus current.
+    Powertrain.step!(sim.battery, I_bus, dt)
     batt_after = status(sim.battery)
 
     # Logging (multi-rate).
     if due!(sim.log_trig, t)
         wind = wind_velocity(sim.env.wind, new_state.pos_ned, t)
         rho = air_density(sim.env.atmosphere, -new_state.pos_ned[3])
+        v_air_ned_log = wind - new_state.vel_ned
+        v_air_body_log = quat_rotate_inv(new_state.q_bn, v_air_ned_log)
+
 
         # PX4 setpoints (if present).
         pos_sp = (
@@ -279,6 +274,7 @@ function step!(sim::SimulationInstance)
             u_cmd;
             wind_ned = wind,
             rho = rho,
+            air_vel_body = (v_air_body_log[1], v_air_body_log[2], v_air_body_log[3]),
             battery = batt_after,
             nav_state = Int32(getproperty(out, :nav_state)),
             arming_state = Int32(getproperty(out, :arming_state)),

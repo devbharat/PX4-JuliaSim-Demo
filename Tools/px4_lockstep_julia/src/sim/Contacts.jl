@@ -2,7 +2,7 @@
 
 Pluggable contact/terrain models.
 
-The long-term roadmap includes terrain and touchdown modeling. For now we add a
+The long-term roadmap includes terrain and touchdown modeling. This module provides a
 "minimum viable" contact layer that is:
 
 * deterministic

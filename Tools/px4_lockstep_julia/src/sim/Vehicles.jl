@@ -2,16 +2,16 @@
 
 Aircraft/vehicle models.
 
-The long-term plan (per your Gradient doc) includes:
+The long-term scope includes:
 
 * 6DOF rigid body
 * multiple aero model options (identified coefficients vs CFD tables)
 * prop/motor/ESC/battery models
 * actuator dynamics for surfaces (2nd order, rate-limited)
 
-This file starts with a high-signal baseline:
+This module starts with a high-signal baseline:
 
-* a rigid-body quadrotor model for the PX4 Iris (good enough to close the loop)
+* a rigid-body quadrotor model for the PX4 Iris (suitable for closed-loop testing)
 * clean interfaces so it can be replaced with higher-fidelity models later.
 """
 module Vehicles
@@ -38,11 +38,10 @@ export AbstractVehicleModel,
 
 """Actuator command packet.
 
-We keep fixed-size arrays matching the PX4 lockstep ABI (`actuator_motors` and
-`actuator_servos`) to make it easy to support multiple airframes without changing the sim
-engine.
+Fixed-size arrays match the PX4 lockstep ABI (`actuator_motors` and `actuator_servos`) to
+support multiple airframes without changing the sim engine.
 
-* `motors` are typically normalized thrust commands.
+* `motors` are typically normalized ESC duty commands.
 * `servos` are typically normalized [-1,1] deflections.
 """
 Base.@kwdef struct ActuatorCommand
@@ -68,7 +67,7 @@ end
 
 """First-order actuator dynamics: `ẏ = (u - y)/τ`.
 
-This is a good default for motors/servos when you want *some* dynamics without a big
+Provides a simple motor/servo lag model when some dynamics are required without a large
 modeling effort.
 """
 mutable struct FirstOrderActuators{N} <: AbstractActuatorModel
@@ -95,8 +94,8 @@ end
 
 """Second-order actuator dynamics with optional rate limiting.
 
-This is a good default for control surfaces (elevons, rudders, etc.) and any actuator
-where you want a bit more realism than a first-order lag.
+Suitable for control surfaces (elevons, rudders, etc.) and any actuator that benefits
+from more realism than a first-order lag.
 
 Continuous-time model (per axis):
   ÿ + 2ζωₙ ẏ + ωₙ² y = ωₙ² u
@@ -167,7 +166,7 @@ function inertia_diag end
 
 `dynamics(t, state, u)` must return `RigidBodyDeriv`.
 
-`u` is typically an actuator-level command vector (e.g. motor normalized thrust commands).
+`u` is vehicle-specific (e.g. rotor thrust/torque for multirotors).
 """
 function dynamics end
 
@@ -188,15 +187,8 @@ Base.@kwdef struct QuadrotorParams{N}
     rotor_pos_body::SVector{N,Vec3}
     rotor_dir::SVector{N,Float64}          # +1 or -1
     km::Float64 = 0.05                      # yaw moment coefficient
-    hover_throttle::Float64 = 0.5           # PX4 iris default-ish
-    thrust_exponent::Float64 = 2.0            # thrust ∝ cmd^exp
     linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
-    max_total_thrust_n::Float64 = (mass * 9.80665) / (hover_throttle^thrust_exponent)
-end
-
-@inline function max_thrust_per_rotor(p::QuadrotorParams{N}) where {N}
-    return p.max_total_thrust_n / N
 end
 
 """A minimal Iris quadrotor dynamics model.
@@ -232,11 +224,7 @@ end
 """Rigid-body dynamics for the quadrotor.
 
 Inputs:
-* `u::ActuatorCommand` (legacy): normalized motor commands in [0,1]
-* `u::Propulsion.RotorOutput{4}`: explicit per-rotor thrust/shaft torque
-
-The simulator typically drives this model with `RotorOutput` once the motor/prop model
-is enabled.
+* `u::Propulsion.RotorOutput{4}`: per-rotor thrust/shaft torque
 """
 function dynamics(
     model::IrisQuadrotor,
@@ -249,34 +237,12 @@ function dynamics(
     m = p.mass
     I = p.inertia_diag
 
-    # Inputs:
-    # 1) RotorOutput{4} (preferred when using the motor/prop model)
-    # 2) ActuatorCommand / vector of normalized motor commands (legacy)
-    thrusts = nothing
-    shaft_torques = nothing
-    if u isa RotorOutput{4}
-        thrusts = u.thrust_n
-        shaft_torques = u.shaft_torque_nm
-    else
-        # Convert/shape input to 4 motor commands.
-        cmd = if u isa ActuatorCommand
-            SVector{4,Float64}(u.motors[1], u.motors[2], u.motors[3], u.motors[4])
-        elseif u isa SVector{4,Float64}
-            u
-        elseif u isa NTuple{4,Float64}
-            SVector{4,Float64}(u)
-        elseif u isa AbstractVector
-            SVector{4,Float64}(Float64.(u[1:4]))
-        else
-            error("Unsupported motor command type: $(typeof(u))")
-        end
-
-        # Motor -> thrust (legacy: normalize maps linearly to thrust)
-        Tmax = max_thrust_per_rotor(p)
-        thrusts = map(c -> (clamp(c, 0.0, 1.0)^p.thrust_exponent) * Tmax, cmd)
-        # Approximate shaft torque using the old km coefficient (Nm per N).
-        shaft_torques = map(Ti -> abs(p.km) * Ti, thrusts)
+    if !(u isa RotorOutput{4})
+        error("IrisQuadrotor expects RotorOutput{4}; attach a propulsion model.")
     end
+
+    thrusts = u.thrust_n
+    shaft_torques = u.shaft_torque_nm
 
     # Total force in body (rotor thrust along -Z).
     F_body = vec3(0.0, 0.0, -sum(thrusts))

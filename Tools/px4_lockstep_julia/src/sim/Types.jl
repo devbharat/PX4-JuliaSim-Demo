@@ -23,6 +23,7 @@ export Vec3,
     quat_from_axis_angle,
     quat_to_dcm,
     quat_rotate,
+    quat_rotate_inv,
     quat_integrate,
     yaw_from_quat,
     wrap_pi
@@ -94,6 +95,9 @@ end
 
 """Rotate a body-frame vector into NED using quaternion `q` (Body → NED)."""
 @inline quat_rotate(q::Quat, v_body::Vec3) = quat_to_dcm(q) * v_body
+
+"""Rotate a NED-frame vector into body frame using quaternion `q` (Body → NED)."""
+@inline quat_rotate_inv(q::Quat, v_ned::Vec3) = transpose(quat_to_dcm(q)) * v_ned
 
 """Yaw angle (rad) from quaternion (Body → NED)."""
 @inline function yaw_from_quat(q::Quat)

@@ -61,6 +61,21 @@ def summarize(data: dict[str, list[float]]) -> None:
         print(f"Battery remaining: min {min(batt_rem):.2f}")
 
 
+def _avg_series(data: dict[str, list[float]], keys: list[str]) -> list[float] | None:
+    series = [data[key] for key in keys if key in data]
+    if not series:
+        return None
+    n = len(series[0])
+    if any(len(values) != n for values in series):
+        return None
+    out: list[float] = []
+    for idx in range(n):
+        vals = [values[idx] for values in series]
+        valid = [v for v in vals if not math.isnan(v)]
+        out.append(sum(valid) / len(valid) if valid else float("nan"))
+    return out
+
+
 def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
     t = data["time_s"]
     x = data["pos_x"]
@@ -164,10 +179,82 @@ def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
     plt.close(fig)
 
 
+def plot_inflow(data: dict[str, list[float]], output: Path, show: bool) -> None:
+    t = data["time_s"]
+    vz = data.get("vel_z", [])
+    air_bz = data.get("air_bz", [])
+    batt_v = data.get("batt_v", [])
+
+    duty_avg = _avg_series(data, ["m1", "m2", "m3", "m4"])
+    thrust_avg = _avg_series(data, ["rotor_T1", "rotor_T2", "rotor_T3", "rotor_T4"])
+    omega_avg = _avg_series(data, ["rotor_w1", "rotor_w2", "rotor_w3", "rotor_w4"])
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    ax_air, ax_thrust, ax_omega = axes
+
+    if air_bz and len(air_bz) == len(t):
+        vax = [-v for v in air_bz]
+        ax_air.plot(t, vax, label="Vax (-air_bz)")
+    if vz and len(vz) == len(t):
+        ax_air.plot(t, vz, label="vz (NED)")
+    ax_air.set_ylabel("m/s")
+    ax_air.set_title("Axial Inflow vs Vertical Speed")
+    ax_air.legend()
+    ax_air.grid(True, alpha=0.3)
+
+    if thrust_avg and len(thrust_avg) == len(t):
+        ax_thrust.plot(t, thrust_avg, label="rotor_T_avg")
+    ax_thrust2 = None
+    if duty_avg and len(duty_avg) == len(t):
+        ax_thrust2 = ax_thrust.twinx()
+        ax_thrust2.plot(t, duty_avg, color="tab:red", label="duty_avg")
+        ax_thrust2.set_ylabel("duty")
+    ax_thrust.set_ylabel("N")
+    ax_thrust.set_title("Mean Rotor Thrust vs Duty")
+    handles = ax_thrust.get_lines()
+    labels = [line.get_label() for line in handles]
+    if ax_thrust2 is not None:
+        handles += ax_thrust2.get_lines()
+        labels += [line.get_label() for line in ax_thrust2.get_lines()]
+    if handles:
+        ax_thrust.legend(handles, labels)
+    ax_thrust.grid(True, alpha=0.3)
+
+    if omega_avg and len(omega_avg) == len(t):
+        ax_omega.plot(t, omega_avg, label="rotor_w_avg")
+    ax_omega2 = None
+    if batt_v and len(batt_v) == len(t):
+        ax_omega2 = ax_omega.twinx()
+        ax_omega2.plot(t, batt_v, color="tab:red", label="batt_v")
+        ax_omega2.set_ylabel("V")
+    ax_omega.set_ylabel("rad/s")
+    ax_omega.set_title("Rotor Speed vs Battery Voltage")
+    handles = ax_omega.get_lines()
+    labels = [line.get_label() for line in handles]
+    if ax_omega2 is not None:
+        handles += ax_omega2.get_lines()
+        labels += [line.get_label() for line in ax_omega2.get_lines()]
+    if handles:
+        ax_omega.legend(handles, labels)
+    ax_omega.grid(True, alpha=0.3)
+    ax_omega.set_xlabel("time (s)")
+
+    fig.tight_layout()
+    fig.savefig(output, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", default="sim_log.csv", help="Path to sim_log.csv")
     parser.add_argument("--output", default="sim_plot.png", help="Output plot path")
+    parser.add_argument(
+        "--inflow-output",
+        default="",
+        help="Optional output path for inflow/propulsion debug plot",
+    )
     parser.add_argument("--show", action="store_true", help="Display plot window")
     args = parser.parse_args()
 
@@ -178,6 +265,8 @@ def main() -> int:
     data = load_log(log_path)
     summarize(data)
     plot(data, Path(args.output), args.show)
+    if args.inflow_output:
+        plot_inflow(data, Path(args.inflow_output), args.show)
     print(f"Saved plot to {args.output}")
     return 0
 

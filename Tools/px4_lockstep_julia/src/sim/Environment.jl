@@ -116,7 +116,7 @@ step_wind!(::ConstantWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothin
 
 Adds `gust_v_ned` between `[t_on, t_off]`.
 
-This is intentionally simple and deterministic; you can replace it with Dryden/von Karman
+This is intentionally simple and deterministic; it can be replaced with Dryden/von Karman
 models later.
 """
 struct GustStep <: AbstractWind
@@ -143,7 +143,7 @@ The OU process is a simple stochastic model with finite correlation time:
 
 where ξ ~ N(0, I). Stationary variance is σ^2.
 
-This is not a full Dryden/von Karman model, but it's a solid baseline and easy to
+This is not a full Dryden/von Karman model, but it is a practical baseline and easy to
 extend.
 """
 Base.@kwdef mutable struct OUWind <: AbstractWind
@@ -207,8 +207,9 @@ gravity_accel(g::UniformGravity, ::Vec3, ::Float64) = vec3(0.0, 0.0, g.g)
 
 """Spherical gravity `μ / r^2`.
 
-This model expects `r` to be measured from Earth's center. For NED local frames, it's
-usually adequate to use `UniformGravity` unless you're doing high-altitude/long-range.
+This model expects `r` to be measured from Earth's center. For NED local frames, it is
+usually adequate to use `UniformGravity`; use `SphericalGravity` for high-altitude or
+long-range scenarios.
 """
 struct SphericalGravity <: AbstractGravity
     μ::Float64      # [m^3/s^2]

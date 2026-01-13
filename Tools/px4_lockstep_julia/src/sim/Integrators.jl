@@ -2,8 +2,8 @@
 
 Fixed-step ODE integrators used by the sim engine.
 
-We intentionally keep this lightweight and dependency-free (no DifferentialEquations.jl)
-because we want deterministic behavior, easy review, and minimal dependency surface.
+This module is intentionally lightweight and dependency-free (no DifferentialEquations.jl)
+to preserve deterministic behavior, simplify review, and minimize dependencies.
 
 Design:
 
@@ -13,8 +13,8 @@ Design:
   start of the interval and the physical system evolves under that command until the next
   tick.
 
-The blog you linked strongly emphasizes solver choice and time step stability; this file
-provides Euler (for debugging) and RK4 (default).
+Design notes on solver choice emphasize time step stability; this file provides Euler (for
+debugging) and RK4 (default).
 """
 module Integrators
 

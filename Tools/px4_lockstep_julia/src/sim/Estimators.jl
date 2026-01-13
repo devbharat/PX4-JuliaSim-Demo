@@ -146,7 +146,7 @@ end
 """Fixed-step delay wrapper for an estimator.
 
 This is intentionally quantized in steps (not continuous delay) for deterministic
-lockstep simulation. Use a delay that is a multiple of your autopilot update period.
+lockstep simulation. Use a delay that is a multiple of the autopilot update period.
 """
 mutable struct DelayedEstimator{E<:AbstractEstimator} <: AbstractEstimator
     inner::E

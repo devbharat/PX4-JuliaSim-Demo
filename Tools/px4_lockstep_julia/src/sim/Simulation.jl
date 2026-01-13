@@ -2,7 +2,7 @@
 
 Deterministic single-threaded simulation engine.
 
-Key ideas (matching the simulator design principles in the blog you linked):
+Key ideas:
 - The vehicle/body dynamics are a continuous-time ODE integrated with a fixed-step solver.
 - The autopilot, estimators, scenarios, and logging are discrete-time tasks ("hybrid system").
 - Everything runs in one thread, driven by simulation time (no wall clock).
@@ -15,19 +15,19 @@ This file focuses on:
 module Simulation
 
 using ..Types: Vec3, Quat, vec3
-using ..RigidBody: RigidBodyState
-using ..Environment: EnvironmentModel, wind_velocity, air_density
-using ..Vehicles: AbstractVehicleModel, ActuatorCommand, step_actuators!, dynamics
+using ..RigidBody: RigidBodyState, RigidBodyDeriv
+using ..Environment: EnvironmentModel, wind_velocity, air_density, step_wind!
+using ..Vehicles: AbstractVehicleModel, ActuatorCommand, step_actuators!, dynamics, mass
+using ..Propulsion: QuadRotorSet, RotorOutput, step_propulsion!
 using ..Integrators: AbstractIntegrator, step_integrator
-using ..Autopilots:
-    AbstractAutopilot, PX4LockstepAutopilot, AutopilotCommand, autopilot_step
+using ..Autopilots: AbstractAutopilot, AutopilotCommand, autopilot_step
 using ..Estimators: AbstractEstimator, TruthEstimator, estimate!
 using ..Scenario: AbstractScenario, ScriptedScenario, scenario_step
 import ..Powertrain
 using ..Powertrain: AbstractBatteryModel, IdealBattery, BatteryStatus, status
-using ..Scheduling: PeriodicTrigger, due!
 using ..Logging: AbstractLogSink, SimLog, log!, close!
-
+using ..Scheduling: PeriodicTrigger, due!
+using ..Contacts: AbstractContactModel, NoContact, contact_force_ned
 using Random
 using StaticArrays
 
@@ -37,13 +37,22 @@ export VehicleInstance, SimulationConfig, SimulationInstance, step!, run!
 # Simulation types
 ############################
 
-"""Vehicle instance = model + actuator models + state."""
-mutable struct VehicleInstance{M<:AbstractVehicleModel,AM,AS}
+"""Vehicle instance = model + (optional) propulsion state + rigid-body state."""
+mutable struct VehicleInstance{M<:AbstractVehicleModel,AM,AS,P}
     model::M
     motor_actuators::AM
     servo_actuators::AS
+    propulsion::P
     state::RigidBodyState
 end
+
+"""Backward-compatible constructor (no propulsion model)."""
+VehicleInstance(
+    model::AbstractVehicleModel,
+    motor_actuators,
+    servo_actuators,
+    state::RigidBodyState,
+) = VehicleInstance(model, motor_actuators, servo_actuators, nothing, state)
 
 """Simulation configuration."""
 Base.@kwdef struct SimulationConfig
@@ -58,13 +67,10 @@ Base.@kwdef struct SimulationConfig
 
     # Determinism.
     seed::UInt64 = 0
-
-    # Simple ground plane (z=0 in NED). This is intentionally minimal; terrain/contact
-    # dynamics are a future model component.
-    enable_ground_plane::Bool = true
 end
 
-mutable struct SimulationInstance{E,V,A,EST,I,S,B,L,R}
+"""A simulation instance."""
+mutable struct SimulationInstance{E,V,A,EST,I,S,B,L,C,R}
     cfg::SimulationConfig
     env::E
     vehicle::V
@@ -74,6 +80,7 @@ mutable struct SimulationInstance{E,V,A,EST,I,S,B,L,R}
     scenario::S
     battery::B
     log::L
+    contact::C
     rng::R
 
     # simulation time
@@ -97,11 +104,13 @@ function SimulationInstance(;
     scenario::AbstractScenario = ScriptedScenario(),
     battery::AbstractBatteryModel = IdealBattery(),
     log::AbstractLogSink = SimLog(),
+    contact::AbstractContactModel = NoContact(),
+    rng::Union{Nothing,AbstractRNG} = nothing,
 )
     dt_ap = (cfg.dt_autopilot > 0) ? max(cfg.dt_autopilot, cfg.dt) : cfg.dt
     dt_log = (cfg.dt_log > 0) ? max(cfg.dt_log, cfg.dt) : cfg.dt
 
-    rng = MersenneTwister(cfg.seed)
+    rr = isnothing(rng) ? MersenneTwister(cfg.seed) : rng
 
     sim = SimulationInstance(
         cfg,
@@ -113,7 +122,8 @@ function SimulationInstance(;
         scenario,
         battery,
         log,
-        rng,
+        contact,
+        rr,
         cfg.t0,
         PeriodicTrigger(dt_ap, cfg.t0),
         PeriodicTrigger(dt_log, cfg.t0),
@@ -127,32 +137,8 @@ end
 # Helpers
 ############################
 
-@inline function _ground_plane(x::RigidBodyState)
-    if x.pos_ned[3] > 0.0
-        # Clamp to ground plane z=0 (NED). This prevents the simulation from
-        # "falling through" when you aren't modeling contact yet.
-        return RigidBodyState(
-            pos_ned = vec3(x.pos_ned[1], x.pos_ned[2], 0.0),
-            vel_ned = vec3(x.vel_ned[1], x.vel_ned[2], min(x.vel_ned[3], 0.0)),
-            q_bn = x.q_bn,
-            ω_body = x.ω_body,
-        )
-    end
-    return x
-end
-
 @inline function _sanitize_cmd(x, lo::Float64, hi::Float64)
     isfinite(x) ? clamp(x, lo, hi) : 0.0
-end
-
-@inline function _extract_actuator_command(out)::ActuatorCommand
-    # Default: assume PX4 LockstepOutputs struct.
-    m_raw = getproperty(out, :actuator_motors)
-    s_raw = getproperty(out, :actuator_servos)
-    motors =
-        SVector{12,Float64}(ntuple(i -> _sanitize_cmd(Float64(m_raw[i]), 0.0, 1.0), 12))
-    servos = SVector{8,Float64}(ntuple(i -> _sanitize_cmd(Float64(s_raw[i]), -1.0, 1.0), 8))
-    return ActuatorCommand(motors = motors, servos = servos)
 end
 
 ############################
@@ -164,8 +150,11 @@ function step!(sim::SimulationInstance)
     dt = sim.cfg.dt
     t = sim.t
 
+    # Advance environment disturbances (e.g. turbulence) deterministically.
+    step_wind!(sim.env.wind, sim.vehicle.state.pos_ned, t, dt, sim.rng)
+
     # Scenario produces high-level autopilot commands and an approximate landed flag.
-    cmd, landed = scenario_step(sim.scenario, t, sim.vehicle.state)
+    cmd, landed = scenario_step(sim.scenario, t, sim.vehicle.state, sim)
 
     # Battery model -> PX4 battery_status injection.
     batt = status(sim.battery)
@@ -187,25 +176,76 @@ function step!(sim::SimulationInstance)
     end
     out = sim.last_out
 
-    # Extract actuator commands from the autopilot output.
-    u_cmd = _extract_actuator_command(out)
+    # Extract actuator commands from PX4 output.
+    m_raw = getproperty(out, :actuator_motors)
+    s_raw = getproperty(out, :actuator_servos)
 
-    # Apply actuator dynamics (motors and servos independently).
-    m_dyn = step_actuators!(sim.vehicle.motor_actuators, u_cmd.motors, dt)
-    s_dyn = step_actuators!(sim.vehicle.servo_actuators, u_cmd.servos, dt)
-    u = ActuatorCommand(motors = m_dyn, servos = s_dyn)
+    motors =
+        SVector{12,Float64}(ntuple(i -> _sanitize_cmd(Float64(m_raw[i]), 0.0, 1.0), 12))
+    servos = SVector{8,Float64}(ntuple(i -> _sanitize_cmd(Float64(s_raw[i]), -1.0, 1.0), 8))
 
-    # Integrate rigid body over [t, t+dt) with piecewise-constant input u.
-    f = (τ, state, uu) -> dynamics(sim.vehicle.model, sim.env, τ, state, uu)
-    new_state = step_integrator(sim.integrator, f, t, sim.vehicle.state, u, dt)
+    # Apply actuator dynamics (if any) independently for motors and servos.
+    # For multirotors, `motors` is interpreted as ESC duty [0,1].
+    motors = step_actuators!(sim.vehicle.motor_actuators, motors, dt)
+    servos = step_actuators!(sim.vehicle.servo_actuators, servos, dt)
 
-    if sim.cfg.enable_ground_plane
-        new_state = _ground_plane(new_state)
+    u_cmd = ActuatorCommand(motors = motors, servos = servos)
+
+    # Propulsion: duty → ω → thrust/torque/current (if a propulsion model is attached).
+    u_dyn = u_cmd
+    I_bus = NaN
+    rotor_ω = (NaN, NaN, NaN, NaN)
+    rotor_T = (NaN, NaN, NaN, NaN)
+    if sim.vehicle.propulsion !== nothing
+        p = sim.vehicle.propulsion
+        N = length(p.units)
+        duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
+        alt_m = max(0.0, -sim.vehicle.state.pos_ned[3])
+        ρ = air_density(sim.env.atmosphere, alt_m)
+        prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, dt)
+        I_bus = prop_out.bus_current_a
+        u_dyn = prop_out
+        if N >= 4
+            rotor_ω = (
+                prop_out.ω_rad_s[1],
+                prop_out.ω_rad_s[2],
+                prop_out.ω_rad_s[3],
+                prop_out.ω_rad_s[4],
+            )
+            rotor_T = (
+                prop_out.thrust_n[1],
+                prop_out.thrust_n[2],
+                prop_out.thrust_n[3],
+                prop_out.thrust_n[4],
+            )
+        end
     end
+
+    # Integrate rigid body with optional contact forces.
+    f =
+        (τ, state, uu) -> begin
+            d = dynamics(sim.vehicle.model, sim.env, τ, state, uu)
+            F_contact = contact_force_ned(sim.contact, state, τ)
+            if (F_contact[1] != 0.0) || (F_contact[2] != 0.0) || (F_contact[3] != 0.0)
+                d = RigidBodyDeriv(
+                    pos_dot = d.pos_dot,
+                    vel_dot = d.vel_dot + F_contact / mass(sim.vehicle.model),
+                    q_dot = d.q_dot,
+                    ω_dot = d.ω_dot,
+                )
+            end
+            return d
+        end
+    new_state = step_integrator(sim.integrator, f, t, sim.vehicle.state, u_dyn, dt)
     sim.vehicle.state = new_state
 
-    # Update battery based on *applied* motor commands.
-    Powertrain.step!(sim.battery, u.motors, dt)
+    # Update battery based on modeled bus current if available, else fall back to estimator.
+    if sim.vehicle.propulsion !== nothing
+        Powertrain.step!(sim.battery, I_bus, dt)
+    else
+        Powertrain.step!(sim.battery, motors, dt)
+    end
+    batt_after = status(sim.battery)
 
     # Logging (multi-rate).
     if due!(sim.log_trig, t)
@@ -236,10 +276,10 @@ function step!(sim::SimulationInstance)
             sim.log,
             t,
             new_state,
-            u;
+            u_cmd;
             wind_ned = wind,
             rho = rho,
-            battery = batt,
+            battery = batt_after,
             nav_state = Int32(getproperty(out, :nav_state)),
             arming_state = Int32(getproperty(out, :arming_state)),
             mission_seq = Int32(getproperty(out, :mission_seq)),
@@ -250,6 +290,8 @@ function step!(sim::SimulationInstance)
             acc_sp = acc_sp,
             yaw_sp = yaw_sp,
             yawspeed_sp = yawspeed_sp,
+            rotor_omega = rotor_ω,
+            rotor_thrust = rotor_T,
         )
     end
 

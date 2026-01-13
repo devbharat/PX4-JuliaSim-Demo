@@ -19,14 +19,15 @@ include("Noise.jl")
 include("RigidBody.jl")
 include("Environment.jl")
 include("Powertrain.jl")
+include("Propulsion.jl")
 include("Integrators.jl")
 include("Vehicles.jl")
 include("Estimators.jl")
+include("Contacts.jl")
+include("Events.jl")
 include("Autopilots.jl")
 include("Scenario.jl")
 include("Logging.jl")
 include("Simulation.jl")
-
-
 
 end # module Sim

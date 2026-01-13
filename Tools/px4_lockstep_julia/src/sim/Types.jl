@@ -81,7 +81,6 @@ about `axis` (right-hand rule).
     return quat_normalize(Quat(cos(0.5 * angle_rad), ax*s, ay*s, az*s))
 end
 
-
 """Direction cosine matrix for rotation Body → NED."""
 @inline function quat_to_dcm(q::Quat)
     qw, qx, qy, qz = q

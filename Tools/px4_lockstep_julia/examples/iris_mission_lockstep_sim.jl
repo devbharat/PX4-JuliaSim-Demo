@@ -40,15 +40,18 @@ function run_example()
             Sim.Autopilots.load_mission!(ap, mission_path)
         end
 
-        gust = Sim.Environment.GustStep(
-            Sim.Environment.ConstantWind(Sim.Types.vec3(0.0, 0.0, 0.0)),
-            Sim.Types.vec3(2.0, 0.0, 0.0),
-            5.0,
-            10.0,
+        # World: ISA atmosphere + (optionally) stateful turbulence.
+        wind = Sim.Environment.OUWind(
+            mean=Sim.Types.vec3(0, 0, 0),
+            σ=Sim.Types.vec3(0.5, 0.5, 0.2),
+            τ_s=3.0,
         )
-        env = Sim.Environment.EnvironmentModel(wind=gust)
+        env = Sim.Environment.EnvironmentModel(wind=wind)
+
         model = Sim.Vehicles.IrisQuadrotor()
-        motor_act = Sim.Vehicles.SecondOrderActuators{12}(ωn=40.0, ζ=0.8)
+
+        # Actuators: keep direct (no extra lag). Motor dynamics are handled by Propulsion.
+        motor_act = Sim.Vehicles.DirectActuators()
         servo_act = Sim.Vehicles.DirectActuators()
 
         x0 = Sim.RigidBody.RigidBodyState(
@@ -57,11 +60,16 @@ function run_example()
             q_bn=Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
             ω_body=Sim.Types.vec3(0, 0, 0),
         )
-        vehicle = Sim.Simulation.VehicleInstance(model, motor_act, servo_act, x0)
+        # Propulsion (ESC + BLDC + prop): duty → ω → thrust/torque/current.
+        hover_T = model.params.mass * 9.80665 / 4.0
+        propulsion = Sim.Propulsion.default_iris_quadrotor_set(
+            km_m=model.params.km,
+            thrust_hover_per_rotor_n=hover_T,
+        )
+        vehicle = Sim.Simulation.VehicleInstance(model, motor_act, servo_act, propulsion, x0)
 
         integrator = Sim.Integrators.RK4Integrator()
 
-        # A lightweight battery model. Replace with your real battery model later.
         # Battery model: 1st-order Thevenin equivalent (OCV + R0 + RC).
         # Replace `current_estimator` with a higher-fidelity ESC/motor current model when available.
         battery = Sim.Powertrain.TheveninBattery(
@@ -73,12 +81,13 @@ function run_example()
             end,
         )
 
+        scenario = Sim.Scenario.EventScenario()
+        Sim.Scenario.arm_at!(scenario, 1.0)
+        Sim.Scenario.mission_start_at!(scenario, 2.0)
 
-        scenario = Sim.Scenario.ScriptedScenario(
-            arm_time_s=1.0,
-            mission_time_s=2.0,
-            rtl_time_s=nothing,
-        )
+        # Examples of additional event injection:
+        # Sim.Scenario.wind_step_at!(scenario, 10.0, Sim.Types.vec3(2.0, 0.0, 0.0); duration_s=3.0)
+        # Sim.Scenario.fail_motor_at!(scenario, 15.0, 1)  # disable motor 1
 
         # Estimated-state injection (noise + fixed delay).
         base_est = Sim.Estimators.NoisyEstimator(
@@ -91,7 +100,13 @@ function run_example()
         )
         est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.01, dt_est=0.01)
 
-        sim_cfg = Sim.Simulation.SimulationConfig(dt=0.002, dt_autopilot=0.01, dt_log=0.01, t_end=90.0, enable_ground_plane=true)
+        sim_cfg = Sim.Simulation.SimulationConfig(
+            dt=0.002,
+            dt_autopilot=0.01,
+            dt_log=0.01,
+            t_end=90.0,
+            seed=1,
+        )
         sim = Sim.Simulation.SimulationInstance(
             cfg=sim_cfg,
             env=env,
@@ -102,6 +117,7 @@ function run_example()
             scenario=scenario,
             battery=battery,
             log=Sim.Logging.SimLog(),
+            contact=Sim.Contacts.FlatGroundContact(),
         )
 
         Sim.Simulation.run!(sim)

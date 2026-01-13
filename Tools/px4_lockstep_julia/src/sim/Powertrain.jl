@@ -111,12 +111,24 @@ function IdealBattery(;
     )
 end
 
-"""Advance the battery model by `dt` seconds."""
-function step!(b::IdealBattery, motor_cmds, dt::Float64)
-    I = Float64(b.current_estimator(motor_cmds))
+"""Advance the battery model by `dt` seconds using a bus current draw.
+
+This is the preferred stepping API once you have an explicit motor/ESC model.
+"""
+function step!(b::IdealBattery, I_bus_a::Float64, dt::Float64)
+    I = max(0.0, Float64(I_bus_a))
     b.last_current_a = I
     b.soc = _clamp01(b.soc - (I * dt) / b.capacity_c)
     return nothing
+end
+
+"""Advance the battery model by `dt` seconds using motor commands.
+
+This legacy helper is kept for convenience when you don't have a motor model yet.
+"""
+function step!(b::IdealBattery, motor_cmds, dt::Float64)
+    I = Float64(b.current_estimator(motor_cmds))
+    return step!(b, I, dt)
 end
 
 function status(b::IdealBattery)::BatteryStatus
@@ -231,8 +243,8 @@ function TheveninBattery(;
     )
 end
 
-function step!(b::TheveninBattery, motor_cmds, dt::Float64)
-    I = Float64(b.current_estimator(motor_cmds))
+function step!(b::TheveninBattery, I_bus_a::Float64, dt::Float64)
+    I = max(0.0, Float64(I_bus_a))
     b.last_current_a = I
 
     # SOC coulomb counting.
@@ -245,6 +257,11 @@ function step!(b::TheveninBattery, motor_cmds, dt::Float64)
     end
 
     return nothing
+end
+
+function step!(b::TheveninBattery, motor_cmds, dt::Float64)
+    I = Float64(b.current_estimator(motor_cmds))
+    return step!(b, I, dt)
 end
 
 function status(b::TheveninBattery)::BatteryStatus

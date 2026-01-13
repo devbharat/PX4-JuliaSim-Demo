@@ -58,16 +58,17 @@ Format Julia source:
 julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
 ```
 
-Run Aqua checks (project hygiene + method ambiguities):
+Run Aqua checks (project hygiene + method ambiguities). We disable `stale_deps` because
+tooling packages are kept as direct deps for convenience:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep)'
+julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep; stale_deps=false)'
 ```
 
-Run JET static analysis:
+Run JET static analysis (disable `analyze_from_definitions` for Julia 1.12 compatibility):
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep")'
+julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep"; analyze_from_definitions=false)'
 ```
 
 ## Architecture
@@ -75,22 +76,28 @@ julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4L
 The simulation framework is organized as composable modules:
 
 * `PX4Lockstep.Sim.Environment`
-  * atmosphere (ISA1976), wind models (incl. gusts), gravity models
+  * atmosphere (ISA1976), wind models (incl. OU turbulence + gusts), gravity models
 * `PX4Lockstep.Sim.Vehicles`
   * rigid-body 6DOF baseline model (Iris quad)
   * actuator dynamics (`DirectActuators`, `FirstOrderActuators`, `SecondOrderActuators`)
-  * quad thrust nonlinearity via `thrust_exponent`
+  * quad thrust nonlinearity via `thrust_exponent` (legacy mode)
 * `PX4Lockstep.Sim.Powertrain`
   * `IdealBattery` baseline
   * `TheveninBattery` (OCV + R0 + RC) for better voltage sag realism
-* `PX4Lockstep.Sim.Integrators`
-  * fixed-step Euler and RK4 (default)
+* `PX4Lockstep.Sim.Propulsion`
+  * motor+ESC+prop split: duty → current/torque → ω → thrust/drag torque
+* `PX4Lockstep.Sim.Contacts`
+  * pluggable contact model (`NoContact` by default; `FlatGroundContact` optional)
+* `PX4Lockstep.Sim.Events` / `PX4Lockstep.Sim.Scenario`
+  * deterministic event scheduler (arm at t, gust injection, motor failure, SOC triggers, ...)
 * `PX4Lockstep.Sim.Scheduling`
   * deterministic periodic triggers for multi-rate stepping (no threads)
 * `PX4Lockstep.Sim.Noise`
   * AR(1) bias + Gaussian noise utilities
 * `PX4Lockstep.Sim.Estimators`
   * truth → estimated state (noise, bias, delay) feeding PX4 without EKF2
+* `PX4Lockstep.Sim.Integrators`
+  * fixed-step Euler and RK4 (default)
 * `PX4Lockstep.Sim.Autopilots`
   * thin bridge from sim truth → PX4 lockstep inputs
 * `PX4Lockstep.Sim.Logging`
@@ -112,11 +119,25 @@ base_est = Sim.Estimators.NoisyEstimator(
     pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
 )
 
-est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.02, dt_est=0.01)
+est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.01, dt_est=0.01)
 
 sim = Sim.Simulation.SimulationInstance(
     ...,
     estimator=est,
+)
+```
+
+### Multi-rate stepping
+
+Use `dt_autopilot` and `dt_log` to decouple physics, PX4, and logging rates:
+
+```julia
+sim_cfg = Sim.Simulation.SimulationConfig(
+    dt=0.002,
+    dt_autopilot=0.01,
+    dt_log=0.01,
+    t_end=90.0,
+    seed=1,
 )
 ```
 
@@ -132,3 +153,4 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 
 * The framework uses NED as the world frame to match PX4.
 * Controller outputs are treated as piecewise-constant over each sim `dt`, which is the standard assumption for fixed-step closed-loop simulation.
+* Wind turbulence is advanced once per tick (seeded RNG) and held constant over the integration step for determinism.

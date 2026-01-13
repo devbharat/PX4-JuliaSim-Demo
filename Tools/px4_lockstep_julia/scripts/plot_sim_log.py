@@ -50,6 +50,15 @@ def summarize(data: dict[str, list[float]]) -> None:
     mission_count = data.get("mission_count", [])
     if mission_seq and mission_count:
         print(f"Mission progress: {max(mission_seq):.0f}/{max(mission_count):.0f}")
+    batt_v = data.get("batt_v", [])
+    batt_a = data.get("batt_a", [])
+    batt_rem = data.get("batt_rem", [])
+    if batt_v:
+        print(f"Battery voltage: min {min(batt_v):.2f} V, max {max(batt_v):.2f} V")
+    if batt_a:
+        print(f"Battery current: max {max(batt_a):.2f} A")
+    if batt_rem:
+        print(f"Battery remaining: min {min(batt_rem):.2f}")
 
 
 def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
@@ -68,11 +77,16 @@ def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
     vx_sp = data.get("vel_sp_x")
     vy_sp = data.get("vel_sp_y")
 
+    batt_v = data.get("batt_v")
+    batt_a = data.get("batt_a")
+    batt_rem = data.get("batt_rem")
+    batt_warn = data.get("batt_warn")
+
     alt = [-zi for zi in z]
     speed_xy = [math.hypot(vx_i, vy_i) for vx_i, vy_i in zip(vx, vy)]
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-    ax_alt, ax_xy, ax_vz, ax_path = axes.flatten()
+    fig, axes = plt.subplots(3, 2, figsize=(12, 10))
+    ax_alt, ax_xy, ax_vz, ax_path, ax_batt, ax_soc = axes.flatten()
 
     ax_alt.plot(t, alt, label="alt")
     if z_sp and len(z_sp) == len(t):
@@ -112,6 +126,36 @@ def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
     ax_path.set_title("XY Path")
     ax_path.axis("equal")
     ax_path.grid(True, alpha=0.3)
+
+    batt_handles: list[plt.Line2D] = []
+    batt_labels: list[str] = []
+    if batt_v and len(batt_v) == len(t):
+        (line_v,) = ax_batt.plot(t, batt_v, label="voltage_v")
+        batt_handles.append(line_v)
+        batt_labels.append("voltage_v")
+    ax_batt2 = None
+    if batt_a and len(batt_a) == len(t):
+        ax_batt2 = ax_batt.twinx()
+        (line_a,) = ax_batt2.plot(t, batt_a, color="tab:red", label="current_a")
+        batt_handles.append(line_a)
+        batt_labels.append("current_a")
+        ax_batt2.set_ylabel("A")
+    if batt_handles:
+        ax_batt.legend(batt_handles, batt_labels)
+    ax_batt.set_xlabel("time (s)")
+    ax_batt.set_ylabel("V")
+    ax_batt.set_title("Battery Voltage/Current")
+    ax_batt.grid(True, alpha=0.3)
+
+    if batt_rem and len(batt_rem) == len(t):
+        ax_soc.plot(t, batt_rem, label="remaining")
+    if batt_warn and len(batt_warn) == len(t):
+        ax_soc.step(t, batt_warn, where="post", label="warning")
+    ax_soc.set_xlabel("time (s)")
+    ax_soc.set_ylabel("fraction / warning")
+    ax_soc.set_title("Battery Remaining/Warning")
+    ax_soc.legend()
+    ax_soc.grid(True, alpha=0.3)
 
     fig.tight_layout()
     fig.savefig(output, dpi=150)

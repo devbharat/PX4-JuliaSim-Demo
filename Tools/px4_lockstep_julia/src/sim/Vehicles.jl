@@ -19,6 +19,7 @@ module Vehicles
 using ..Types: Vec3, Quat, Mat3, vec3, quat_to_dcm
 using ..RigidBody: RigidBodyState, RigidBodyDeriv, quat_deriv
 using ..Environment: EnvironmentModel, wind_velocity, gravity_accel
+using ..Propulsion: RotorOutput
 using LinearAlgebra
 using StaticArrays
 
@@ -26,10 +27,13 @@ export AbstractVehicleModel,
     AbstractActuatorModel,
     DirectActuators,
     FirstOrderActuators,
+    SecondOrderActuators,
     ActuatorCommand,
     QuadrotorParams,
     IrisQuadrotor,
     step_actuators!,
+    mass,
+    inertia_diag,
     dynamics
 
 """Actuator command packet.
@@ -143,12 +147,21 @@ end
     return a.y
 end
 
-
 ############################
 # Vehicle model interface
 ############################
 
 abstract type AbstractVehicleModel end
+
+"""Vehicle mass (kg).
+
+Expose this so the simulation engine can apply external forces (e.g. contact) without
+hard-coding vehicle types.
+"""
+function mass end
+
+"""Vehicle inertia diagonal (kg*m^2) in body frame."""
+function inertia_diag end
 
 """Compute the rigid-body dynamics.
 
@@ -196,6 +209,12 @@ struct IrisQuadrotor <: AbstractVehicleModel
     params::QuadrotorParams{4}
 end
 
+"""Vehicle mass (kg)."""
+mass(m::IrisQuadrotor) = m.params.mass
+
+"""Vehicle inertia diagonal (kg*m^2) in body axes."""
+inertia_diag(m::IrisQuadrotor) = m.params.inertia_diag
+
 function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
     if params === nothing
         rotor_pos = SVector(
@@ -212,7 +231,12 @@ end
 
 """Rigid-body dynamics for the quadrotor.
 
-`u` is a vector of normalized motor commands. For non-reversible rotors we clamp to [0,1].
+Inputs:
+* `u::ActuatorCommand` (legacy): normalized motor commands in [0,1]
+* `u::Propulsion.RotorOutput{4}`: explicit per-rotor thrust/shaft torque
+
+The simulator typically drives this model with `RotorOutput` once the motor/prop model
+is enabled.
 """
 function dynamics(
     model::IrisQuadrotor,
@@ -225,22 +249,34 @@ function dynamics(
     m = p.mass
     I = p.inertia_diag
 
-    # Convert/shape input to 4 motor commands.
-    cmd = if u isa ActuatorCommand
-        SVector{4,Float64}(u.motors[1], u.motors[2], u.motors[3], u.motors[4])
-    elseif u isa SVector{4,Float64}
-        u
-    elseif u isa NTuple{4,Float64}
-        SVector{4,Float64}(u)
-    elseif u isa AbstractVector
-        SVector{4,Float64}(Float64.(u[1:4]))
+    # Inputs:
+    # 1) RotorOutput{4} (preferred when using the motor/prop model)
+    # 2) ActuatorCommand / vector of normalized motor commands (legacy)
+    thrusts = nothing
+    shaft_torques = nothing
+    if u isa RotorOutput{4}
+        thrusts = u.thrust_n
+        shaft_torques = u.shaft_torque_nm
     else
-        error("Unsupported motor command type: $(typeof(u))")
-    end
+        # Convert/shape input to 4 motor commands.
+        cmd = if u isa ActuatorCommand
+            SVector{4,Float64}(u.motors[1], u.motors[2], u.motors[3], u.motors[4])
+        elseif u isa SVector{4,Float64}
+            u
+        elseif u isa NTuple{4,Float64}
+            SVector{4,Float64}(u)
+        elseif u isa AbstractVector
+            SVector{4,Float64}(Float64.(u[1:4]))
+        else
+            error("Unsupported motor command type: $(typeof(u))")
+        end
 
-    # Motor -> thrust
-    Tmax = max_thrust_per_rotor(p)
-    thrusts = map(c -> (clamp(c, 0.0, 1.0)^p.thrust_exponent) * Tmax, cmd)
+        # Motor -> thrust (legacy: normalize maps linearly to thrust)
+        Tmax = max_thrust_per_rotor(p)
+        thrusts = map(c -> (clamp(c, 0.0, 1.0)^p.thrust_exponent) * Tmax, cmd)
+        # Approximate shaft torque using the old km coefficient (Nm per N).
+        shaft_torques = map(Ti -> abs(p.km) * Ti, thrusts)
+    end
 
     # Total force in body (rotor thrust along -Z).
     F_body = vec3(0.0, 0.0, -sum(thrusts))
@@ -258,7 +294,7 @@ function dynamics(
     # Translational dynamics.
     vel_dot = (F_ned + F_drag) / m + g_ned
 
-    # Moments from rotors (lever arm cross thrust + yaw torque).
+    # Moments from rotors (lever arm cross thrust + yaw reaction torque).
     τ = vec3(0.0, 0.0, 0.0)
     for i = 1:4
         r = p.rotor_pos_body[i]
@@ -266,7 +302,7 @@ function dynamics(
         # Force vector for each rotor in body.
         Fi = vec3(0.0, 0.0, -Ti)
         τ += cross(r, Fi)
-        τ += vec3(0.0, 0.0, p.rotor_dir[i] * p.km * Ti)
+        τ += vec3(0.0, 0.0, p.rotor_dir[i] * shaft_torques[i])
     end
 
     # Angular dynamics with simple damping.

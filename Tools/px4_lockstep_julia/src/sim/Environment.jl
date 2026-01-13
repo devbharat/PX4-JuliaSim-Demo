@@ -14,6 +14,7 @@ the vehicle layer, not here.
 module Environment
 
 using ..Types: Vec3, vec3
+using Random
 
 export AbstractAtmosphere,
     ISA1976,
@@ -24,7 +25,11 @@ export AbstractAtmosphere,
     NoWind,
     ConstantWind,
     GustStep,
+    OUWind,
     wind_velocity,
+    step_wind!,
+    set_mean_wind!,
+    add_step_gust!,
     AbstractGravity,
     UniformGravity,
     SphericalGravity,
@@ -93,11 +98,19 @@ abstract type AbstractWind end
 struct NoWind <: AbstractWind end
 wind_velocity(::NoWind, ::Vec3, ::Float64) = vec3(0, 0, 0)
 
+"""Advance a wind model by one step (default: no-op).
+
+Stateful wind models (e.g. OU turbulence) should override this.
+"""
+step_wind!(::AbstractWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+step_wind!(::NoWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+
 """Constant wind velocity in NED (m/s)."""
 struct ConstantWind <: AbstractWind
     v_ned::Vec3
 end
 wind_velocity(w::ConstantWind, ::Vec3, ::Float64) = w.v_ned
+step_wind!(::ConstantWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
 
 """A simple step gust.
 
@@ -117,6 +130,67 @@ function wind_velocity(w::GustStep, pos_ned::Vec3, t::Float64)
     v = wind_velocity(w.mean, pos_ned, t)
     return (t >= w.t_on && t <= w.t_off) ? (v + w.gust_v_ned) : v
 end
+
+step_wind!(::GustStep, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+
+"""Ornstein–Uhlenbeck (OU) turbulence wind.
+
+This produces a *stateful, deterministic* gust process when driven by a seeded RNG.
+
+The OU process is a simple stochastic model with finite correlation time:
+
+    dv = -(v/τ) dt + σ * sqrt(2/τ) * sqrt(dt) * ξ
+
+where ξ ~ N(0, I). Stationary variance is σ^2.
+
+This is not a full Dryden/von Karman model, but it's a solid baseline and easy to
+extend.
+"""
+Base.@kwdef mutable struct OUWind <: AbstractWind
+    mean::Vec3 = vec3(0, 0, 0)
+    σ::Vec3 = vec3(0.0, 0.0, 0.0)
+    τ_s::Float64 = 5.0
+    v_gust::Vec3 = vec3(0.0, 0.0, 0.0)
+    # Optional deterministic step gust for scenarios.
+    step_gust::Vec3 = vec3(0.0, 0.0, 0.0)
+    step_until_s::Float64 = -Inf
+end
+
+function wind_velocity(w::OUWind, ::Vec3, t::Float64)
+    gust = (t <= w.step_until_s) ? w.step_gust : vec3(0.0, 0.0, 0.0)
+    return w.mean + w.v_gust + gust
+end
+
+function step_wind!(w::OUWind, ::Vec3, ::Float64, dt::Float64, rng::AbstractRNG)
+    τ = max(1e-3, w.τ_s)
+    # Euler-Maruyama discretization.
+    α = -1.0/τ
+    β = sqrt(2.0/τ)
+    # Sample independent N(0,1) for each axis.
+    ξ = vec3(randn(rng), randn(rng), randn(rng))
+    w.v_gust = w.v_gust + (α .* w.v_gust) * dt + (w.σ .* (β * sqrt(max(dt, 0.0)))) .* ξ
+    return nothing
+end
+
+"""Set the mean wind (mutable wind models only)."""
+function set_mean_wind!(w::OUWind, v_ned::Vec3)
+    w.mean = v_ned
+    return nothing
+end
+set_mean_wind!(::AbstractWind, ::Vec3) =
+    throw(ArgumentError("set_mean_wind! not supported for this wind type"))
+
+"""Add a deterministic step gust for `duration_s` starting at the current time.
+
+This is designed for scenario/event injection (e.g. a manual gust).
+"""
+function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now::Float64, duration_s::Float64)
+    w.step_gust = dv_ned
+    w.step_until_s = t_now + max(0.0, duration_s)
+    return nothing
+end
+add_step_gust!(::AbstractWind, ::Vec3, ::Float64, ::Float64) =
+    throw(ArgumentError("add_step_gust! not supported for this wind type"))
 
 ############################
 # Gravity

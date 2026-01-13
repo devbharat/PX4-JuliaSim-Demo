@@ -7,7 +7,7 @@ This module provides two logger backends:
 1) `SimLog` (in-memory, columnar, low-dependency)
 2) `CSVLogSink` (streaming to disk during simulation)
 
-Design goals (consistent with the blog you linked):
+Design goals:
 - Logging should be explicit and easy to extend.
 - Logging should not mutate simulation state (only record it).
 - The log format should be stable enough for external tools/scripts.
@@ -52,6 +52,10 @@ mutable struct SimLog <: AbstractLogSink
     motor_cmd4::Vector{NTuple{4,Float64}}
     motor_cmd12::Vector{NTuple{12,Float64}}
 
+    # propulsion outputs (optional)
+    rotor_omega_rad_s::Vector{NTuple{4,Float64}}
+    rotor_thrust_n::Vector{NTuple{4,Float64}}
+
     # environment (sampled at vehicle position)
     wind_ned::Vector{NTuple{3,Float64}}
     air_density::Vector{Float64}
@@ -84,6 +88,8 @@ function SimLog()
         Float64[],
         NTuple{4,Float64}[],
         NTuple{12,Float64}[],
+        NTuple{4,Float64}[],
+        NTuple{4,Float64}[],
         NTuple{3,Float64}[],
         Float64[],
         Float64[],
@@ -169,6 +175,15 @@ const _CSV_HEADER = join(
         "m10",
         "m11",
         "m12",
+        # rotor outputs (optional)
+        "rotor_w1",
+        "rotor_w2",
+        "rotor_w3",
+        "rotor_w4",
+        "rotor_T1",
+        "rotor_T2",
+        "rotor_T3",
+        "rotor_T4",
         # environment
         "wind_x",
         "wind_y",
@@ -221,6 +236,8 @@ function log!(
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     yaw_sp::Float64 = NaN,
     yawspeed_sp::Float64 = NaN,
+    rotor_omega::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
+    rotor_thrust::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
 )
     push!(sink.t, t)
     push!(sink.pos_ned, (x.pos_ned[1], x.pos_ned[2], x.pos_ned[3]))
@@ -236,6 +253,9 @@ function log!(
 
     push!(sink.motor_cmd4, _motor4_from_cmd(cmd))
     push!(sink.motor_cmd12, _motor12_from_cmd(cmd))
+
+    push!(sink.rotor_omega_rad_s, rotor_omega)
+    push!(sink.rotor_thrust_n, rotor_thrust)
 
     push!(sink.wind_ned, (wind_ned[1], wind_ned[2], wind_ned[3]))
     push!(sink.air_density, rho)
@@ -271,6 +291,8 @@ function log!(
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     yaw_sp::Float64 = NaN,
     yawspeed_sp::Float64 = NaN,
+    rotor_omega::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
+    rotor_thrust::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
 )
     io = sink.io
     if !sink.wrote_header
@@ -310,6 +332,23 @@ function log!(
         m[10],
         m[11],
         m[12]
+    )
+    # rotor outputs
+    @printf(
+        io,
+        "%.6f,%.6f,%.6f,%.6f,",
+        rotor_omega[1],
+        rotor_omega[2],
+        rotor_omega[3],
+        rotor_omega[4]
+    )
+    @printf(
+        io,
+        "%.6f,%.6f,%.6f,%.6f,",
+        rotor_thrust[1],
+        rotor_thrust[2],
+        rotor_thrust[3],
+        rotor_thrust[4]
     )
     # environment
     @printf(io, "%.6f,%.6f,%.6f,%.6f,", wind_ned[1], wind_ned[2], wind_ned[3], rho)
@@ -354,6 +393,8 @@ function write_csv(log::SimLog, path::AbstractString)
             asp = log.acc_sp_ned[i]
             m12 = log.motor_cmd12[i]
             wind = log.wind_ned[i]
+            ωr = log.rotor_omega_rad_s[i]
+            Tr = log.rotor_thrust_n[i]
 
             @printf(io, "%.6f,", log.t[i])
             @printf(io, "%.6f,%.6f,%.6f,", p[1], p[2], p[3])
@@ -381,6 +422,9 @@ function write_csv(log::SimLog, path::AbstractString)
                 m12[11],
                 m12[12]
             )
+
+            @printf(io, "%.6f,%.6f,%.6f,%.6f,", ωr[1], ωr[2], ωr[3], ωr[4])
+            @printf(io, "%.6f,%.6f,%.6f,%.6f,", Tr[1], Tr[2], Tr[3], Tr[4])
 
             @printf(
                 io,

@@ -80,6 +80,46 @@ end
     return a.y
 end
 
+"""Second-order actuator dynamics with optional rate limiting.
+
+This is a good default for control surfaces (elevons, rudders, etc.) and any actuator
+where you want a bit more realism than a first-order lag.
+
+Continuous-time model (per axis):
+  ÿ + 2ζωₙ ẏ + ωₙ² y = ωₙ² u
+
+Discrete update uses a simple semi-implicit Euler step which is stable enough for the
+small dt typically used in flight dynamics sims.
+"""
+mutable struct SecondOrderActuators{N} <: AbstractActuatorModel
+    ωn::Float64
+    ζ::Float64
+    rate_limit::Float64
+    y::SVector{N, Float64}
+    ydot::SVector{N, Float64}
+end
+
+function SecondOrderActuators{N}(; ωn::Float64=30.0, ζ::Float64=0.7, rate_limit::Float64=Inf,
+                                  y0=zero(SVector{N,Float64}), ydot0=zero(SVector{N,Float64})) where {N}
+    return SecondOrderActuators{N}(ωn, ζ, rate_limit, SVector{N,Float64}(y0), SVector{N,Float64}(ydot0))
+end
+
+@inline function step_actuators!(a::SecondOrderActuators{N}, cmd::SVector{N,Float64}, dt::Float64) where {N}
+    ωn = a.ωn
+    ζ = a.ζ
+    # Acceleration
+    ydd = (ωn*ωn) .* (cmd .- a.y) .- (2.0*ζ*ωn) .* a.ydot
+    # Semi-implicit integration
+    a.ydot = a.ydot .+ ydd .* dt
+    if isfinite(a.rate_limit)
+        rl = a.rate_limit
+        a.ydot = map(v -> clamp(v, -rl, rl), a.ydot)
+    end
+    a.y = a.y .+ a.ydot .* dt
+    return a.y
+end
+
+
 ############################
 # Vehicle model interface
 ############################
@@ -112,9 +152,10 @@ Base.@kwdef struct QuadrotorParams{N}
     rotor_dir::SVector{N, Float64}          # +1 or -1
     km::Float64 = 0.05                      # yaw moment coefficient
     hover_throttle::Float64 = 0.5           # PX4 iris default-ish
+    thrust_exponent::Float64 = 2.0            # thrust ∝ cmd^exp
     linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
-    max_total_thrust_n::Float64 = (mass * 9.80665) / hover_throttle
+    max_total_thrust_n::Float64 = (mass * 9.80665) / (hover_throttle^thrust_exponent)
 end
 
 @inline function max_thrust_per_rotor(p::QuadrotorParams{N}) where {N}
@@ -170,7 +211,7 @@ function dynamics(model::IrisQuadrotor, env::EnvironmentModel,
 
     # Motor -> thrust
     Tmax = max_thrust_per_rotor(p)
-    thrusts = map(c -> clamp(c, 0.0, 1.0) * Tmax, cmd)
+    thrusts = map(c -> (clamp(c, 0.0, 1.0)^p.thrust_exponent) * Tmax, cmd)
 
     # Total force in body (rotor thrust along -Z).
     F_body = vec3(0.0, 0.0, -sum(thrusts))

@@ -49,18 +49,50 @@ See `Tools/px4_lockstep_julia/scripts/README.md` for setup and usage.
 The simulation framework is organized as composable modules:
 
 * `PX4Lockstep.Sim.Environment`
-  * atmosphere (ISA1976), wind models, gravity models
+  * atmosphere (ISA1976), wind models (incl. gusts), gravity models
 * `PX4Lockstep.Sim.Vehicles`
   * rigid-body 6DOF baseline model (Iris quad)
-  * actuator dynamics (`DirectActuators`, `FirstOrderActuators`)
+  * actuator dynamics (`DirectActuators`, `FirstOrderActuators`, `SecondOrderActuators`)
+  * quad thrust nonlinearity via `thrust_exponent`
 * `PX4Lockstep.Sim.Powertrain`
-  * `IdealBattery` baseline, with a stable interface for higher-fidelity models
+  * `IdealBattery` baseline
+  * `TheveninBattery` (OCV + R0 + RC) for better voltage sag realism
 * `PX4Lockstep.Sim.Integrators`
   * fixed-step Euler and RK4 (default)
+* `PX4Lockstep.Sim.Scheduling`
+  * deterministic periodic triggers for multi-rate stepping (no threads)
+* `PX4Lockstep.Sim.Noise`
+  * AR(1) bias + Gaussian noise utilities
+* `PX4Lockstep.Sim.Estimators`
+  * truth → estimated state (noise, bias, delay) feeding PX4 without EKF2
 * `PX4Lockstep.Sim.Autopilots`
   * thin bridge from sim truth → PX4 lockstep inputs
+* `PX4Lockstep.Sim.Logging`
+  * `SimLog` in-memory logging and `CSVLogSink` streaming logs
 * `PX4Lockstep.Sim.Simulation`
   * deterministic engine: scenario → PX4 → actuators → integrate → log
+
+### Estimator injection (noise + delay)
+
+You can inject estimated-state noise and latency before PX4 sees the state:
+
+```julia
+base_est = Sim.Estimators.NoisyEstimator(
+    pos_sigma_m=Sim.Types.vec3(0.3, 0.3, 0.5),
+    vel_sigma_mps=Sim.Types.vec3(0.1, 0.1, 0.2),
+    yaw_sigma_rad=deg2rad(2.0),
+    rate_sigma_rad_s=Sim.Types.vec3(0.02, 0.02, 0.03),
+    bias_tau_s=20.0,
+    pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
+)
+
+est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.02, dt_est=0.01)
+
+sim = Sim.Simulation.SimulationInstance(
+    ...,
+    estimator=est,
+)
+```
 
 ### Extending
 

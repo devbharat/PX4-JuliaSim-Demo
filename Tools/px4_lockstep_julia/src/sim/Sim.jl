@@ -14,14 +14,19 @@ The key idea is to keep the simulation loop explicit and single-threaded so it i
 module Sim
 
 include("Types.jl")
+include("Scheduling.jl")
+include("Noise.jl")
+include("RigidBody.jl")
 include("Environment.jl")
 include("Powertrain.jl")
-include("RigidBody.jl")
 include("Integrators.jl")
 include("Vehicles.jl")
+include("Estimators.jl")
 include("Autopilots.jl")
 include("Scenario.jl")
 include("Logging.jl")
 include("Simulation.jl")
+
+
 
 end # module Sim

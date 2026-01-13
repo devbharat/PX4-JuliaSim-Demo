@@ -15,7 +15,7 @@ using StaticArrays
 
 export Vec3, Mat3, Quat,
        vec3,
-       quat_normalize, quat_conj, quat_mul,
+       quat_normalize, quat_conj, quat_mul, quat_from_axis_angle,
        quat_to_dcm, quat_rotate,
        quat_integrate,
        yaw_from_quat,
@@ -57,6 +57,24 @@ end
         qw*pz + qx*py - qy*px + qz*pw,
     )
 end
+
+"""Quaternion from axis-angle.
+
+`axis` does not need to be unit length.
+
+The returned quaternion is `(w, x, y, z)` and represents the rotation of `angle_rad`
+about `axis` (right-hand rule).
+"""
+@inline function quat_from_axis_angle(axis::Vec3, angle_rad::Float64)
+    ax, ay, az = axis
+    n = sqrt(ax*ax + ay*ay + az*az)
+    if n == 0.0
+        return Quat(1.0, 0.0, 0.0, 0.0)
+    end
+    s = sin(0.5 * angle_rad) / n
+    return quat_normalize(Quat(cos(0.5 * angle_rad), ax*s, ay*s, az*s))
+end
+
 
 """Direction cosine matrix for rotation Body → NED."""
 @inline function quat_to_dcm(q::Quat)

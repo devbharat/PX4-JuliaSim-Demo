@@ -40,9 +40,15 @@ function run_example()
             Sim.Autopilots.load_mission!(ap, mission_path)
         end
 
-        env = Sim.Environment.EnvironmentModel()
+        gust = Sim.Environment.GustStep(
+            Sim.Environment.ConstantWind(Sim.Types.vec3(0.0, 0.0, 0.0)),
+            Sim.Types.vec3(2.0, 0.0, 0.0),
+            5.0,
+            10.0,
+        )
+        env = Sim.Environment.EnvironmentModel(wind=gust)
         model = Sim.Vehicles.IrisQuadrotor()
-        motor_act = Sim.Vehicles.DirectActuators()  # swap to FirstOrderActuators{12}(τ=0.05) if you want motor lag
+        motor_act = Sim.Vehicles.SecondOrderActuators{12}(ωn=40.0, ζ=0.8)
         servo_act = Sim.Vehicles.DirectActuators()
 
         x0 = Sim.RigidBody.RigidBodyState(
@@ -56,14 +62,17 @@ function run_example()
         integrator = Sim.Integrators.RK4Integrator()
 
         # A lightweight battery model. Replace with your real battery model later.
-        battery = Sim.Powertrain.IdealBattery(
+        # Battery model: 1st-order Thevenin equivalent (OCV + R0 + RC).
+        # Replace `current_estimator` with a higher-fidelity ESC/motor current model when available.
+        battery = Sim.Powertrain.TheveninBattery(
             capacity_ah=5.0,
             current_estimator=(cmds)->begin
-                # crude current estimate: ~20A at full collective
                 cmds === nothing && return 0.0
+                # crude current estimate: ~20A at full collective
                 return 20.0 * (sum(cmds) / length(cmds))
-            end
+            end,
         )
+
 
         scenario = Sim.Scenario.ScriptedScenario(
             arm_time_s=1.0,
@@ -71,12 +80,24 @@ function run_example()
             rtl_time_s=nothing,
         )
 
-        sim_cfg = Sim.Simulation.SimulationConfig(dt=0.002, t_end=40.0, enable_ground_plane=true)
+        # Estimated-state injection (noise + fixed delay).
+        base_est = Sim.Estimators.NoisyEstimator(
+            pos_sigma_m=Sim.Types.vec3(0.3, 0.3, 0.5),
+            vel_sigma_mps=Sim.Types.vec3(0.1, 0.1, 0.2),
+            yaw_sigma_rad=deg2rad(2.0),
+            rate_sigma_rad_s=Sim.Types.vec3(0.02, 0.02, 0.03),
+            bias_tau_s=20.0,
+            pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
+        )
+        est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.01, dt_est=0.01)
+
+        sim_cfg = Sim.Simulation.SimulationConfig(dt=0.002, dt_autopilot=0.01, dt_log=0.01, t_end=90.0, enable_ground_plane=true)
         sim = Sim.Simulation.SimulationInstance(
             cfg=sim_cfg,
             env=env,
             vehicle=vehicle,
             autopilot=ap,
+            estimator=est,
             integrator=integrator,
             scenario=scenario,
             battery=battery,

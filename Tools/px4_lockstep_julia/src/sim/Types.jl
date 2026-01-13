@@ -13,22 +13,28 @@ module Types
 using LinearAlgebra
 using StaticArrays
 
-export Vec3, Mat3, Quat,
-       vec3,
-       quat_normalize, quat_conj, quat_mul, quat_from_axis_angle,
-       quat_to_dcm, quat_rotate,
-       quat_integrate,
-       yaw_from_quat,
-       wrap_pi
+export Vec3,
+    Mat3,
+    Quat,
+    vec3,
+    quat_normalize,
+    quat_conj,
+    quat_mul,
+    quat_from_axis_angle,
+    quat_to_dcm,
+    quat_rotate,
+    quat_integrate,
+    yaw_from_quat,
+    wrap_pi
 
 """3D vector (Float64) used for NED/body vectors."""
-const Vec3 = SVector{3, Float64}
+const Vec3 = SVector{3,Float64}
 
 """3x3 rotation matrix (Float64)."""
-const Mat3 = SMatrix{3, 3, Float64, 9}
+const Mat3 = SMatrix{3,3,Float64,9}
 
 """Quaternion `(w,x,y,z)` representing rotation Body → NED."""
-const Quat = SVector{4, Float64}
+const Quat = SVector{4,Float64}
 
 @inline vec3(x::Real, y::Real, z::Real) = Vec3(Float64(x), Float64(y), Float64(z))
 
@@ -81,9 +87,9 @@ end
     qw, qx, qy, qz = q
     # Matches the formula used in the existing example (row-major literal).
     return @SMatrix [
-        1.0 - 2.0*(qy*qy + qz*qz)  2.0*(qx*qy - qw*qz)       2.0*(qx*qz + qw*qy)
-        2.0*(qx*qy + qw*qz)        1.0 - 2.0*(qx*qx + qz*qz) 2.0*(qy*qz - qw*qx)
-        2.0*(qx*qz - qw*qy)        2.0*(qy*qz + qw*qx)       1.0 - 2.0*(qx*qx + qy*qy)
+        1.0 - 2.0*(qy*qy + qz*qz) 2.0*(qx*qy - qw*qz) 2.0*(qx*qz + qw*qy)
+        2.0*(qx*qy + qw*qz) 1.0 - 2.0*(qx*qx + qz*qz) 2.0*(qy*qz - qw*qx)
+        2.0*(qx*qz - qw*qy) 2.0*(qy*qz + qw*qx) 1.0 - 2.0*(qx*qx + qy*qy)
     ]
 end
 
@@ -105,9 +111,9 @@ This matches the existing example and is used as the primitive inside Euler and 
     wx, wy, wz = ω_body
     dq = Quat(
         -0.5 * (qx*wx + qy*wy + qz*wz),
-         0.5 * (qw*wx + qy*wz - qz*wy),
-         0.5 * (qw*wy - qx*wz + qz*wx),
-         0.5 * (qw*wz + qx*wy - qy*wx),
+        0.5 * (qw*wx + qy*wz - qz*wy),
+        0.5 * (qw*wy - qx*wz + qz*wx),
+        0.5 * (qw*wz + qx*wy - qy*wx),
     )
     return quat_normalize(q + dq * dt)
 end

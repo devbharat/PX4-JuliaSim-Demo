@@ -20,12 +20,7 @@ import ..Noise: step!, reset!
 using Random
 
 export EstimatedState,
-       AbstractEstimator,
-       TruthEstimator,
-       NoisyEstimator,
-       DelayedEstimator,
-       estimate!,
-       reset!
+    AbstractEstimator, TruthEstimator, NoisyEstimator, DelayedEstimator, estimate!, reset!
 
 """Estimated state used to drive the autopilot interface."""
 Base.@kwdef struct EstimatedState
@@ -44,8 +39,19 @@ struct TruthEstimator <: AbstractEstimator end
     return nothing
 end
 
-@inline function estimate!(::TruthEstimator, ::AbstractRNG, t::Float64, x::RigidBodyState, dt_hint::Float64)
-    return EstimatedState(pos_ned=x.pos_ned, vel_ned=x.vel_ned, q_bn=x.q_bn, ω_body=x.ω_body)
+@inline function estimate!(
+    ::TruthEstimator,
+    ::AbstractRNG,
+    t::Float64,
+    x::RigidBodyState,
+    dt_hint::Float64,
+)
+    return EstimatedState(
+        pos_ned = x.pos_ned,
+        vel_ned = x.vel_ned,
+        q_bn = x.q_bn,
+        ω_body = x.ω_body,
+    )
 end
 
 """Noisy estimator with AR(1) bias and additive Gaussian noise.
@@ -73,21 +79,28 @@ mutable struct NoisyEstimator <: AbstractEstimator
     last_t::Float64
 end
 
-function NoisyEstimator(; pos_sigma_m::Vec3=vec3(0.0,0.0,0.0),
-                          vel_sigma_mps::Vec3=vec3(0.0,0.0,0.0),
-                          yaw_sigma_rad::Float64=0.0,
-                          rate_sigma_rad_s::Vec3=vec3(0.0,0.0,0.0),
-                          bias_tau_s::Float64=Inf,
-                          pos_bias_sigma_m::Vec3=vec3(0.0,0.0,0.0),
-                          vel_bias_sigma_mps::Vec3=vec3(0.0,0.0,0.0),
-                          yaw_bias_sigma_rad::Float64=0.0,
-                          rate_bias_sigma_rad_s::Vec3=vec3(0.0,0.0,0.0))
-    return NoisyEstimator(pos_sigma_m, vel_sigma_mps, yaw_sigma_rad, rate_sigma_rad_s,
-                          AR1Vec(bias_tau_s, pos_bias_sigma_m),
-                          AR1Vec(bias_tau_s, vel_bias_sigma_mps),
-                          AR1(bias_tau_s, yaw_bias_sigma_rad),
-                          AR1Vec(bias_tau_s, rate_bias_sigma_rad_s),
-                          NaN)
+function NoisyEstimator(;
+    pos_sigma_m::Vec3 = vec3(0.0, 0.0, 0.0),
+    vel_sigma_mps::Vec3 = vec3(0.0, 0.0, 0.0),
+    yaw_sigma_rad::Float64 = 0.0,
+    rate_sigma_rad_s::Vec3 = vec3(0.0, 0.0, 0.0),
+    bias_tau_s::Float64 = Inf,
+    pos_bias_sigma_m::Vec3 = vec3(0.0, 0.0, 0.0),
+    vel_bias_sigma_mps::Vec3 = vec3(0.0, 0.0, 0.0),
+    yaw_bias_sigma_rad::Float64 = 0.0,
+    rate_bias_sigma_rad_s::Vec3 = vec3(0.0, 0.0, 0.0),
+)
+    return NoisyEstimator(
+        pos_sigma_m,
+        vel_sigma_mps,
+        yaw_sigma_rad,
+        rate_sigma_rad_s,
+        AR1Vec(bias_tau_s, pos_bias_sigma_m),
+        AR1Vec(bias_tau_s, vel_bias_sigma_mps),
+        AR1(bias_tau_s, yaw_bias_sigma_rad),
+        AR1Vec(bias_tau_s, rate_bias_sigma_rad_s),
+        NaN,
+    )
 end
 
 function reset!(e::NoisyEstimator)
@@ -99,7 +112,13 @@ function reset!(e::NoisyEstimator)
     return e
 end
 
-function estimate!(e::NoisyEstimator, rng::AbstractRNG, t::Float64, x::RigidBodyState, dt_hint::Float64)
+function estimate!(
+    e::NoisyEstimator,
+    rng::AbstractRNG,
+    t::Float64,
+    x::RigidBodyState,
+    dt_hint::Float64,
+)
     dt = (isfinite(e.last_t) ? (t - e.last_t) : dt_hint)
     dt = max(dt, 0.0)
     e.last_t = t
@@ -111,7 +130,7 @@ function estimate!(e::NoisyEstimator, rng::AbstractRNG, t::Float64, x::RigidBody
 
     pos = x.pos_ned + pb + gaussian_vec(rng, e.pos_sigma_m)
     vel = x.vel_ned + vb + gaussian_vec(rng, e.vel_sigma_mps)
-    ω   = x.ω_body + rb + gaussian_vec(rng, e.rate_sigma_rad_s)
+    ω = x.ω_body + rb + gaussian_vec(rng, e.rate_sigma_rad_s)
 
     # Apply yaw bias/noise as a rotation about NED Z.
     dyaw = yb + gaussian(rng, e.yaw_sigma_rad)
@@ -121,7 +140,7 @@ function estimate!(e::NoisyEstimator, rng::AbstractRNG, t::Float64, x::RigidBody
         q = quat_normalize(quat_mul(qz, q))
     end
 
-    return EstimatedState(pos_ned=pos, vel_ned=vel, q_bn=q, ω_body=ω)
+    return EstimatedState(pos_ned = pos, vel_ned = vel, q_bn = q, ω_body = ω)
 end
 
 """Fixed-step delay wrapper for an estimator.
@@ -137,12 +156,21 @@ mutable struct DelayedEstimator{E<:AbstractEstimator} <: AbstractEstimator
     filled::Int
 end
 
-function DelayedEstimator(inner::E; delay_s::Float64=0.0, dt_est::Float64=0.002) where {E<:AbstractEstimator}
+function DelayedEstimator(
+    inner::E;
+    delay_s::Float64 = 0.0,
+    dt_est::Float64 = 0.002,
+) where {E<:AbstractEstimator}
     delay_steps = max(0, Int(round(delay_s / dt_est)))
     ring_len = max(1, delay_steps + 1)
-    ring = [EstimatedState(pos_ned=vec3(0.0,0.0,0.0), vel_ned=vec3(0.0,0.0,0.0),
-                           q_bn=Quat(1.0,0.0,0.0,0.0), ω_body=vec3(0.0,0.0,0.0))
-            for _ in 1:ring_len]
+    ring = [
+        EstimatedState(
+            pos_ned = vec3(0.0, 0.0, 0.0),
+            vel_ned = vec3(0.0, 0.0, 0.0),
+            q_bn = Quat(1.0, 0.0, 0.0, 0.0),
+            ω_body = vec3(0.0, 0.0, 0.0),
+        ) for _ = 1:ring_len
+    ]
     return DelayedEstimator(inner, delay_steps, ring, 1, 0)
 end
 
@@ -153,7 +181,13 @@ function reset!(e::DelayedEstimator)
     return e
 end
 
-function estimate!(e::DelayedEstimator, rng::AbstractRNG, t::Float64, x::RigidBodyState, dt_hint::Float64)
+function estimate!(
+    e::DelayedEstimator,
+    rng::AbstractRNG,
+    t::Float64,
+    x::RigidBodyState,
+    dt_hint::Float64,
+)
     cur = estimate!(e.inner, rng, t, x, dt_hint)
     e.ring[e.idx] = cur
     e.filled = min(length(e.ring), e.filled + 1)

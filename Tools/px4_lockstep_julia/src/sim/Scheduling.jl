@@ -27,18 +27,18 @@ mutable struct PeriodicTrigger
     period::Float64
     t_next::Float64
 
-    function PeriodicTrigger(period::Float64, t0::Float64=0.0)
+    function PeriodicTrigger(period::Float64, t0::Float64 = 0.0)
         period > 0 || throw(ArgumentError("period must be > 0"))
         return new(period, t0)
     end
 end
 
-@inline function reset!(tr::PeriodicTrigger, t0::Float64=0.0)
+@inline function reset!(tr::PeriodicTrigger, t0::Float64 = 0.0)
     tr.t_next = t0
     return tr
 end
 
-@inline function due!(tr::PeriodicTrigger, t::Float64; eps::Float64=1e-12)
+@inline function due!(tr::PeriodicTrigger, t::Float64; eps::Float64 = 1e-12)
     if t + eps >= tr.t_next
         # Advance at least once, then catch up if we lagged.
         while t + eps >= tr.t_next

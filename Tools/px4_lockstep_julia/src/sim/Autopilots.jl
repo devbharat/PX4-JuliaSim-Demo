@@ -24,10 +24,13 @@ using PX4Lockstep: LockstepHandle, LockstepInputs, LockstepOutputs
 using PX4Lockstep: create, destroy, load_mission, step!
 
 export HomeLocation,
-       AutopilotCommand,
-       AbstractAutopilot,
-       PX4LockstepAutopilot,
-       init!, close!, load_mission!, autopilot_step
+    AutopilotCommand,
+    AbstractAutopilot,
+    PX4LockstepAutopilot,
+    init!,
+    close!,
+    load_mission!,
+    autopilot_step
 
 const EARTH_RADIUS_M = 6.378137e6
 
@@ -63,8 +66,13 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
 end
 
 """Create and initialize the PX4 lockstep autopilot."""
-function init!(; config=nothing, libpath=nothing, home::HomeLocation=HomeLocation(), edge_trigger::Bool=false)
-    h = isnothing(config) ? create(; libpath=libpath) : create(config; libpath=libpath)
+function init!(;
+    config = nothing,
+    libpath = nothing,
+    home::HomeLocation = HomeLocation(),
+    edge_trigger::Bool = false,
+)
+    h = isnothing(config) ? create(; libpath = libpath) : create(config; libpath = libpath)
     return PX4LockstepAutopilot(h, home, edge_trigger, AutopilotCommand())
 end
 
@@ -103,46 +111,51 @@ Inputs:
 Returns:
 * `LockstepOutputs` from the PX4 lockstep library
 """
-function autopilot_step(ap::PX4LockstepAutopilot,
-                        t::Float64,
-                        state_pos_ned::Vec3,
-                        state_vel_ned::Vec3,
-                        q_bn::Quat,
-                        ω_body::Vec3,
-                        cmd::AutopilotCommand;
-                        landed::Bool=false,
-                        battery::BatteryStatus=BatteryStatus())::LockstepOutputs
+function autopilot_step(
+    ap::PX4LockstepAutopilot,
+    t::Float64,
+    state_pos_ned::Vec3,
+    state_vel_ned::Vec3,
+    q_bn::Quat,
+    ω_body::Vec3,
+    cmd::AutopilotCommand;
+    landed::Bool = false,
+    battery::BatteryStatus = BatteryStatus(),
+)::LockstepOutputs
 
     time_us = UInt64(round(Int, t * 1e6))
     yaw = yaw_from_quat(q_bn)
     lat, lon, alt = _ned_to_lla(state_pos_ned, ap.home)
 
-    req_mission = ap.edge_trigger ? (cmd.request_mission && !ap.last_cmd.request_mission) : cmd.request_mission
-    req_rtl = ap.edge_trigger ? (cmd.request_rtl && !ap.last_cmd.request_rtl) : cmd.request_rtl
+    req_mission =
+        ap.edge_trigger ? (cmd.request_mission && !ap.last_cmd.request_mission) :
+        cmd.request_mission
+    req_rtl =
+        ap.edge_trigger ? (cmd.request_rtl && !ap.last_cmd.request_rtl) : cmd.request_rtl
 
     inputs = LockstepInputs(
-        time_us=time_us,
-        armed=cmd.armed ? 1 : 0,
-        nav_auto_mission=req_mission ? 1 : 0,
-        nav_auto_rtl=req_rtl ? 1 : 0,
-        landed=landed ? 1 : 0,
-        x=Float32(state_pos_ned[1]),
-        y=Float32(state_pos_ned[2]),
-        z=Float32(state_pos_ned[3]),
-        vx=Float32(state_vel_ned[1]),
-        vy=Float32(state_vel_ned[2]),
-        vz=Float32(state_vel_ned[3]),
-        yaw=Float32(yaw),
-        lat_deg=lat,
-        lon_deg=lon,
-        alt_msl_m=Float32(alt),
-        q=(Float32(q_bn[1]), Float32(q_bn[2]), Float32(q_bn[3]), Float32(q_bn[4])),
-        rates_xyz=(Float32(ω_body[1]), Float32(ω_body[2]), Float32(ω_body[3])),
-        battery_connected=battery.connected ? 1 : 0,
-        battery_voltage_v=Float32(battery.voltage_v),
-        battery_current_a=Float32(battery.current_a),
-        battery_remaining=Float32(battery.remaining),
-        battery_warning=battery.warning,
+        time_us = time_us,
+        armed = cmd.armed ? 1 : 0,
+        nav_auto_mission = req_mission ? 1 : 0,
+        nav_auto_rtl = req_rtl ? 1 : 0,
+        landed = landed ? 1 : 0,
+        x = Float32(state_pos_ned[1]),
+        y = Float32(state_pos_ned[2]),
+        z = Float32(state_pos_ned[3]),
+        vx = Float32(state_vel_ned[1]),
+        vy = Float32(state_vel_ned[2]),
+        vz = Float32(state_vel_ned[3]),
+        yaw = Float32(yaw),
+        lat_deg = lat,
+        lon_deg = lon,
+        alt_msl_m = Float32(alt),
+        q = (Float32(q_bn[1]), Float32(q_bn[2]), Float32(q_bn[3]), Float32(q_bn[4])),
+        rates_xyz = (Float32(ω_body[1]), Float32(ω_body[2]), Float32(ω_body[3])),
+        battery_connected = battery.connected ? 1 : 0,
+        battery_voltage_v = Float32(battery.voltage_v),
+        battery_current_a = Float32(battery.current_a),
+        battery_remaining = Float32(battery.remaining),
+        battery_warning = battery.warning,
     )
 
     out = step!(ap.handle, inputs)

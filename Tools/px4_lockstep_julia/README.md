@@ -44,6 +44,32 @@ Outputs:
 Lightweight Python scripts live in `Tools/px4_lockstep_julia/scripts`.
 See `Tools/px4_lockstep_julia/scripts/README.md` for setup and usage.
 
+## Developer tooling
+
+Install tooling deps (once):
+
+```bash
+julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
+```
+
+Format Julia source:
+
+```bash
+julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
+```
+
+Run Aqua checks (project hygiene + method ambiguities):
+
+```bash
+julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep)'
+```
+
+Run JET static analysis:
+
+```bash
+julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep")'
+```
+
 ## Architecture
 
 The simulation framework is organized as composable modules:

@@ -14,8 +14,7 @@ module Noise
 using ..Types: Vec3, vec3
 using Random
 
-export gaussian, gaussian_vec,
-       AR1, AR1Vec, step!, reset!
+export gaussian, gaussian_vec, AR1, AR1Vec, step!, reset!
 
 @inline gaussian(rng::AbstractRNG, σ::Float64) = (σ == 0.0 ? 0.0 : σ * randn(rng))
 
@@ -72,9 +71,12 @@ end
     end
     ϕ = exp(-dt / a.tau_s)
     scale = sqrt(max(0.0, 1.0 - ϕ^2))
-    a.x = ϕ * a.x + vec3(a.sigma[1]*scale*randn(rng),
-                         a.sigma[2]*scale*randn(rng),
-                         a.sigma[3]*scale*randn(rng))
+    a.x =
+        ϕ * a.x + vec3(
+            a.sigma[1]*scale*randn(rng),
+            a.sigma[2]*scale*randn(rng),
+            a.sigma[3]*scale*randn(rng),
+        )
     return a.x
 end
 

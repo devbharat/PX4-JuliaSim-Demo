@@ -19,12 +19,7 @@ module Powertrain
 
 using Printf
 
-export BatteryStatus,
-       AbstractBatteryModel,
-       IdealBattery,
-       TheveninBattery,
-       step!,
-       status
+export BatteryStatus, AbstractBatteryModel, IdealBattery, TheveninBattery, step!, status
 
 ############################
 # Types
@@ -48,7 +43,12 @@ abstract type AbstractBatteryModel end
 # Helpers
 ############################
 
-@inline function _warning_from_remaining(rem::Float64, low::Float64, crit::Float64, emerg::Float64)::Int32
+@inline function _warning_from_remaining(
+    rem::Float64,
+    low::Float64,
+    crit::Float64,
+    emerg::Float64,
+)::Int32
     if rem <= emerg
         return Int32(3)  # EMERGENCY
     elseif rem <= crit
@@ -89,16 +89,26 @@ mutable struct IdealBattery <: AbstractBatteryModel
     current_estimator::Function
 end
 
-function IdealBattery(; capacity_ah::Float64=5.0,
-                        soc0::Float64=1.0,
-                        voltage_v::Float64=12.0,
-                        low_thr::Float64=0.15,
-                        crit_thr::Float64=0.10,
-                        emerg_thr::Float64=0.05,
-                        current_estimator::Function=(cmds)->0.0)
+function IdealBattery(;
+    capacity_ah::Float64 = 5.0,
+    soc0::Float64 = 1.0,
+    voltage_v::Float64 = 12.0,
+    low_thr::Float64 = 0.15,
+    crit_thr::Float64 = 0.10,
+    emerg_thr::Float64 = 0.05,
+    current_estimator::Function = (cmds)->0.0,
+)
     capacity_c = capacity_ah * 3600.0
-    return IdealBattery(capacity_c, _clamp01(soc0), voltage_v, 0.0,
-                        low_thr, crit_thr, emerg_thr, current_estimator)
+    return IdealBattery(
+        capacity_c,
+        _clamp01(soc0),
+        voltage_v,
+        0.0,
+        low_thr,
+        crit_thr,
+        emerg_thr,
+        current_estimator,
+    )
 end
 
 """Advance the battery model by `dt` seconds."""
@@ -111,11 +121,11 @@ end
 
 function status(b::IdealBattery)::BatteryStatus
     return BatteryStatus(
-        connected=true,
-        voltage_v=b.voltage_v,
-        current_a=b.last_current_a,
-        remaining=b.soc,
-        warning=_warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
+        connected = true,
+        voltage_v = b.voltage_v,
+        current_a = b.last_current_a,
+        remaining = b.soc,
+        warning = _warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
     )
 end
 
@@ -143,7 +153,7 @@ function _interp_ocv(soc_pts::Vector{Float64}, v_pts::Vector{Float64}, soc::Floa
     end
 
     # Find segment (linear scan; small n).
-    for i in 1:(n-1)
+    for i = 1:(n-1)
         s0 = soc_pts[i]
         s1 = soc_pts[i+1]
         if s >= s0 && s <= s1
@@ -188,26 +198,37 @@ mutable struct TheveninBattery <: AbstractBatteryModel
     current_estimator::Function
 end
 
-function TheveninBattery(; capacity_ah::Float64=5.0,
-                           soc0::Float64=1.0,
-                           # Default ~3S LiPo-ish open circuit curve (very rough).
-                           ocv_soc::Vector{Float64}=[0.0, 0.1, 0.5, 0.9, 1.0],
-                           ocv_v::Vector{Float64}=[9.0, 10.8, 11.4, 12.3, 12.6],
-                           r0::Float64=0.02,
-                           r1::Float64=0.01,
-                           c1::Float64=2000.0,
-                           v1_0::Float64=0.0,
-                           low_thr::Float64=0.15,
-                           crit_thr::Float64=0.10,
-                           emerg_thr::Float64=0.05,
-                           current_estimator::Function=(cmds)->0.0)
+function TheveninBattery(;
+    capacity_ah::Float64 = 5.0,
+    soc0::Float64 = 1.0,
+    # Default ~3S LiPo-ish open circuit curve (very rough).
+    ocv_soc::Vector{Float64} = [0.0, 0.1, 0.5, 0.9, 1.0],
+    ocv_v::Vector{Float64} = [9.0, 10.8, 11.4, 12.3, 12.6],
+    r0::Float64 = 0.02,
+    r1::Float64 = 0.01,
+    c1::Float64 = 2000.0,
+    v1_0::Float64 = 0.0,
+    low_thr::Float64 = 0.15,
+    crit_thr::Float64 = 0.10,
+    emerg_thr::Float64 = 0.05,
+    current_estimator::Function = (cmds)->0.0,
+)
     capacity_c = capacity_ah * 3600.0
-    return TheveninBattery(capacity_c, _clamp01(soc0),
-                           ocv_soc, ocv_v,
-                           r0, r1, c1, v1_0,
-                           0.0,
-                           low_thr, crit_thr, emerg_thr,
-                           current_estimator)
+    return TheveninBattery(
+        capacity_c,
+        _clamp01(soc0),
+        ocv_soc,
+        ocv_v,
+        r0,
+        r1,
+        c1,
+        v1_0,
+        0.0,
+        low_thr,
+        crit_thr,
+        emerg_thr,
+        current_estimator,
+    )
 end
 
 function step!(b::TheveninBattery, motor_cmds, dt::Float64)
@@ -230,11 +251,11 @@ function status(b::TheveninBattery)::BatteryStatus
     ocv = _interp_ocv(b.ocv_soc, b.ocv_v, b.soc)
     V = ocv - b.last_current_a * b.r0 - b.v1
     return BatteryStatus(
-        connected=true,
-        voltage_v=V,
-        current_a=b.last_current_a,
-        remaining=b.soc,
-        warning=_warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
+        connected = true,
+        voltage_v = V,
+        current_a = b.last_current_a,
+        remaining = b.soc,
+        warning = _warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
     )
 end
 

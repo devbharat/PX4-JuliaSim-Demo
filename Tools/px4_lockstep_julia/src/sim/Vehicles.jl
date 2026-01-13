@@ -23,12 +23,14 @@ using LinearAlgebra
 using StaticArrays
 
 export AbstractVehicleModel,
-       AbstractActuatorModel,
-       DirectActuators, FirstOrderActuators,
-       ActuatorCommand,
-       QuadrotorParams, IrisQuadrotor,
-       step_actuators!,
-       dynamics
+    AbstractActuatorModel,
+    DirectActuators,
+    FirstOrderActuators,
+    ActuatorCommand,
+    QuadrotorParams,
+    IrisQuadrotor,
+    step_actuators!,
+    dynamics
 
 """Actuator command packet.
 
@@ -67,14 +69,21 @@ modeling effort.
 """
 mutable struct FirstOrderActuators{N} <: AbstractActuatorModel
     τ::Float64
-    y::SVector{N, Float64}
+    y::SVector{N,Float64}
 end
 
-function FirstOrderActuators{N}(; τ::Float64=0.05, y0=zero(SVector{N,Float64})) where {N}
+function FirstOrderActuators{N}(;
+    τ::Float64 = 0.05,
+    y0 = zero(SVector{N,Float64}),
+) where {N}
     return FirstOrderActuators{N}(τ, SVector{N,Float64}(y0))
 end
 
-@inline function step_actuators!(a::FirstOrderActuators{N}, cmd::SVector{N,Float64}, dt::Float64) where {N}
+@inline function step_actuators!(
+    a::FirstOrderActuators{N},
+    cmd::SVector{N,Float64},
+    dt::Float64,
+) where {N}
     α = clamp(dt / a.τ, 0.0, 1.0)
     a.y = (1.0 - α) * a.y + α * cmd
     return a.y
@@ -95,16 +104,31 @@ mutable struct SecondOrderActuators{N} <: AbstractActuatorModel
     ωn::Float64
     ζ::Float64
     rate_limit::Float64
-    y::SVector{N, Float64}
-    ydot::SVector{N, Float64}
+    y::SVector{N,Float64}
+    ydot::SVector{N,Float64}
 end
 
-function SecondOrderActuators{N}(; ωn::Float64=30.0, ζ::Float64=0.7, rate_limit::Float64=Inf,
-                                  y0=zero(SVector{N,Float64}), ydot0=zero(SVector{N,Float64})) where {N}
-    return SecondOrderActuators{N}(ωn, ζ, rate_limit, SVector{N,Float64}(y0), SVector{N,Float64}(ydot0))
+function SecondOrderActuators{N}(;
+    ωn::Float64 = 30.0,
+    ζ::Float64 = 0.7,
+    rate_limit::Float64 = Inf,
+    y0 = zero(SVector{N,Float64}),
+    ydot0 = zero(SVector{N,Float64}),
+) where {N}
+    return SecondOrderActuators{N}(
+        ωn,
+        ζ,
+        rate_limit,
+        SVector{N,Float64}(y0),
+        SVector{N,Float64}(ydot0),
+    )
 end
 
-@inline function step_actuators!(a::SecondOrderActuators{N}, cmd::SVector{N,Float64}, dt::Float64) where {N}
+@inline function step_actuators!(
+    a::SecondOrderActuators{N},
+    cmd::SVector{N,Float64},
+    dt::Float64,
+) where {N}
     ωn = a.ωn
     ζ = a.ζ
     # Acceleration
@@ -148,8 +172,8 @@ Conventions:
 Base.@kwdef struct QuadrotorParams{N}
     mass::Float64 = 1.5
     inertia_diag::Vec3 = vec3(0.029125, 0.029125, 0.055225)
-    rotor_pos_body::SVector{N, Vec3}
-    rotor_dir::SVector{N, Float64}          # +1 or -1
+    rotor_pos_body::SVector{N,Vec3}
+    rotor_dir::SVector{N,Float64}          # +1 or -1
     km::Float64 = 0.05                      # yaw moment coefficient
     hover_throttle::Float64 = 0.5           # PX4 iris default-ish
     thrust_exponent::Float64 = 2.0            # thrust ∝ cmd^exp
@@ -172,16 +196,16 @@ struct IrisQuadrotor <: AbstractVehicleModel
     params::QuadrotorParams{4}
 end
 
-function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}}=nothing)
+function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
     if params === nothing
         rotor_pos = SVector(
-            vec3( 0.1515,  0.2450, 0.0),
+            vec3(0.1515, 0.2450, 0.0),
             vec3(-0.1515, -0.1875, 0.0),
-            vec3( 0.1515, -0.2450, 0.0),
-            vec3(-0.1515,  0.1875, 0.0),
+            vec3(0.1515, -0.2450, 0.0),
+            vec3(-0.1515, 0.1875, 0.0),
         )
         rotor_dir = SVector(1.0, 1.0, -1.0, -1.0)
-        params = QuadrotorParams{4}(rotor_pos_body=rotor_pos, rotor_dir=rotor_dir)
+        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_dir = rotor_dir)
     end
     return IrisQuadrotor(params)
 end
@@ -190,8 +214,13 @@ end
 
 `u` is a vector of normalized motor commands. For non-reversible rotors we clamp to [0,1].
 """
-function dynamics(model::IrisQuadrotor, env::EnvironmentModel,
-                  t::Float64, x::RigidBodyState, u)
+function dynamics(
+    model::IrisQuadrotor,
+    env::EnvironmentModel,
+    t::Float64,
+    x::RigidBodyState,
+    u,
+)
     p = model.params
     m = p.mass
     I = p.inertia_diag
@@ -231,7 +260,7 @@ function dynamics(model::IrisQuadrotor, env::EnvironmentModel,
 
     # Moments from rotors (lever arm cross thrust + yaw torque).
     τ = vec3(0.0, 0.0, 0.0)
-    for i in 1:4
+    for i = 1:4
         r = p.rotor_pos_body[i]
         Ti = thrusts[i]
         # Force vector for each rotor in body.
@@ -254,8 +283,8 @@ function dynamics(model::IrisQuadrotor, env::EnvironmentModel,
     return RigidBodyDeriv(
         pos_dot = x.vel_ned,
         vel_dot = vel_dot,
-        q_dot   = quat_deriv(x.q_bn, ω),
-        ω_dot   = ω_dot,
+        q_dot = quat_deriv(x.q_bn, ω),
+        ω_dot = ω_dot,
     )
 end
 

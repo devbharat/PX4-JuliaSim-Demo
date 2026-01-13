@@ -15,11 +15,21 @@ module Environment
 
 using ..Types: Vec3, vec3
 
-export AbstractAtmosphere, ISA1976,
-       air_temperature, air_pressure, air_density,
-       AbstractWind, NoWind, ConstantWind, GustStep, wind_velocity,
-       AbstractGravity, UniformGravity, SphericalGravity, gravity_accel,
-       EnvironmentModel
+export AbstractAtmosphere,
+    ISA1976,
+    air_temperature,
+    air_pressure,
+    air_density,
+    AbstractWind,
+    NoWind,
+    ConstantWind,
+    GustStep,
+    wind_velocity,
+    AbstractGravity,
+    UniformGravity,
+    SphericalGravity,
+    gravity_accel,
+    EnvironmentModel
 
 ############################
 # Atmosphere
@@ -142,15 +152,16 @@ end
 ############################
 
 """A composable environment model."""
-struct EnvironmentModel{A<:AbstractAtmosphere, W<:AbstractWind, G<:AbstractGravity}
+struct EnvironmentModel{A<:AbstractAtmosphere,W<:AbstractWind,G<:AbstractGravity}
     atmosphere::A
     wind::W
     gravity::G
 end
 
-EnvironmentModel(; atmosphere::AbstractAtmosphere=ISA1976(),
-                  wind::AbstractWind=NoWind(),
-                  gravity::AbstractGravity=UniformGravity(9.80665)) =
-    EnvironmentModel(atmosphere, wind, gravity)
+EnvironmentModel(;
+    atmosphere::AbstractAtmosphere = ISA1976(),
+    wind::AbstractWind = NoWind(),
+    gravity::AbstractGravity = UniformGravity(9.80665),
+) = EnvironmentModel(atmosphere, wind, gravity)
 
 end # module Environment

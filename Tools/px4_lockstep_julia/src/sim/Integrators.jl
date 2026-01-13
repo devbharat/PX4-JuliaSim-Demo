@@ -20,8 +20,7 @@ module Integrators
 
 using ..RigidBody: RigidBodyState, RigidBodyDeriv, rb_add, rb_scale_add
 
-export AbstractIntegrator, EulerIntegrator, RK4Integrator,
-       step_integrator
+export AbstractIntegrator, EulerIntegrator, RK4Integrator, step_integrator
 
 abstract type AbstractIntegrator end
 
@@ -49,12 +48,26 @@ Arguments:
 * `u`          : control input (piecewise-constant over dt)
 * `dt`         : step size (s)
 """
-@inline function step_integrator(::EulerIntegrator, f, t::Float64, x::RigidBodyState, u, dt::Float64)
+@inline function step_integrator(
+    ::EulerIntegrator,
+    f,
+    t::Float64,
+    x::RigidBodyState,
+    u,
+    dt::Float64,
+)
     k1 = f(t, x, u)
     return rb_add(x, k1, dt)
 end
 
-@inline function step_integrator(::RK4Integrator, f, t::Float64, x::RigidBodyState, u, dt::Float64)
+@inline function step_integrator(
+    ::RK4Integrator,
+    f,
+    t::Float64,
+    x::RigidBodyState,
+    u,
+    dt::Float64,
+)
     k1 = f(t, x, u)
     x2 = rb_add(x, k1, 0.5*dt)
     k2 = f(t + 0.5*dt, x2, u)

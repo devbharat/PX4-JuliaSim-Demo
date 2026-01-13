@@ -16,9 +16,7 @@ using ..Types: Vec3
 using ..RigidBody: RigidBodyState
 using ..Autopilots: AutopilotCommand
 
-export AbstractScenario,
-       ScriptedScenario,
-       scenario_step
+export AbstractScenario, ScriptedScenario, scenario_step
 
 abstract type AbstractScenario end
 
@@ -53,7 +51,8 @@ function scenario_step(s::ScriptedScenario, t::Float64, x::RigidBodyState)
         armed = false
     end
 
-    landed = (x.pos_ned[3] >= -s.land_z_thresh_m) && (abs(x.vel_ned[3]) < s.land_vz_thresh_mps)
+    landed =
+        (x.pos_ned[3] >= -s.land_z_thresh_m) && (abs(x.vel_ned[3]) < s.land_vz_thresh_mps)
     if !isnothing(s.takeoff_override_delay_s)
         if armed && request_mission && t >= (s.mission_time_s + s.takeoff_override_delay_s)
             landed = false
@@ -61,9 +60,9 @@ function scenario_step(s::ScriptedScenario, t::Float64, x::RigidBodyState)
     end
 
     cmd = AutopilotCommand(
-        armed=armed,
-        request_mission=request_mission,
-        request_rtl=request_rtl,
+        armed = armed,
+        request_mission = request_mission,
+        request_rtl = request_rtl,
     )
     return cmd, landed
 end

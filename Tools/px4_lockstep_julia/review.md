@@ -898,3 +898,55 @@ This section records what was implemented in response to the review.
 
 - Once OU is stable and deterministic, add a Dryden-ish or von Karman turbulence option (still seeded and stateful).
 
+
+---
+
+## 2026-01-14 — Patch: ABI handshake + altitude ref + rotor_dir ownership + estimator cadence + propulsion midpoint
+
+### Implemented (done)
+
+1) **C-ABI compatibility handshake (P0)**
+- Added C-side exported functions:
+  - `px4_lockstep_abi_version()`
+  - `px4_lockstep_sizes(uint32_t* in_sz, uint32_t* out_sz, uint32_t* cfg_sz)`
+- Julia `PX4Lockstep.create(...)` now calls the handshake and hard-errors on:
+  - ABI version mismatch
+  - struct size mismatch (`LockstepInputs/Outputs/Config`)
+  - non-isbits structs
+- Added a Julia unit test for the pure `_check_abi!` helper (does not require the shared library).
+
+2) **Altitude reference consistency (P0)**
+- Added `origin_alt_msl_m::Float64` to `EnvironmentModel` (default `0.0`).
+- Physics + logging now compute atmosphere at `alt_msl = origin_alt_msl_m - pos_ned.z`.
+- Updated the Iris mission example to wire `origin_alt_msl_m = DEFAULT_HOME.alt_msl_m`.
+- Added a unit test verifying density matches ISA at home altitude and at +100 m.
+
+3) **Rotor direction / yaw-torque ownership cleanup (P0/P1)**
+- Removed `rotor_dir` and `km` from `Vehicles.QuadrotorParams`.
+- Propulsion now owns rotor direction as the *single source of truth*:
+  - `Propulsion.step_propulsion!` outputs **signed** `shaft_torque_nm[i] = rotor_dir[i] * Q_i`.
+- Vehicle dynamics now consumes signed shaft torques directly (no extra rotor_dir sign).
+- Added a unit test that spins only rotor 3 and verifies yaw acceleration sign.
+
+4) **Estimator cadence determinism (P1)**
+- `NoisyEstimator` now steps using **`dt_hint` only** (no `t - last_t` float differencing).
+- `DelayedEstimator` now requires `delay_s` to be an **exact multiple** of `dt_est`:
+  - enforced via microsecond quantization and integer divisibility
+  - no more silent rounding
+- Added a unit test that confirms non-multiple delay throws.
+
+5) **Propulsion midpoint output consistency (P1)**
+- `_step_unit!` now computes thrust/torque using **midpoint rotor speed** `ω_mid = 0.5*(ω_old + ω_new)`.
+- This removes the “phase lead” where thrust was computed at `ω_new` but integration used `ω_old`.
+
+### Additional small robustness improvements
+- **Events are no longer float-time triggered:** `Events.AtTime` now stores integer microseconds internally and compares against the sim’s integer microsecond clock; added `AtStep`.
+- Added a **warning** if `dt_autopilot` is larger than the period implied by the **fastest** PX4 task rate in the lockstep config.
+- Moved tooling deps (`Aqua`, `JET`, `JuliaFormatter`) to `[extras]` + `[targets]` in `Project.toml`.
+- Added `CSV_SCHEMA_VERSION` and emit a `# schema_version=...` comment line in CSV outputs.
+
+### What’s next
+- Add a small **power consistency** regression test for propulsion (`Q*ω <= V*I*η + ε`).
+- Consider making `AtTime` accept non-microsecond inputs by rounding (currently strict).
+- Decide whether the CSV schema version should be a **column** (more tool-friendly) vs a comment line (current).
+- If desired, move rotor-speed `ω` into the integrated state (so RK4 covers motor+prop dynamics too).

@@ -123,6 +123,17 @@ typedef struct px4_lockstep_outputs_t {
 	float trajectory_setpoint_yawspeed;
 } px4_lockstep_outputs_t;
 
+// ABI compatibility
+//
+// The Julia wrapper assumes the exact memory layout of the input/output/config structs.
+// These helper functions allow a runtime handshake so mismatches fail fast.
+#define PX4_LOCKSTEP_ABI_VERSION 1u
+
+PX4_LOCKSTEP_EXPORT uint32_t px4_lockstep_abi_version(void);
+PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
+				    uint32_t *out_sz,
+				    uint32_t *cfg_sz);
+
 // Create/destroy.
 PX4_LOCKSTEP_EXPORT px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg);
 PX4_LOCKSTEP_EXPORT void px4_lockstep_destroy(px4_lockstep_handle_t handle);

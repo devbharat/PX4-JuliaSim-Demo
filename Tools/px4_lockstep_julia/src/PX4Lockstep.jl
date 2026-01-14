@@ -16,6 +16,7 @@ export LockstepConfig,
 export Sim
 
 const LIB_ENV = "PX4_LOCKSTEP_LIB"
+const PX4_LOCKSTEP_ABI_VERSION = UInt32(1)
 const _LIB_HANDLE = Ref{Ptr{Cvoid}}(C_NULL)
 const _SYMBOL_CACHE = Dict{Tuple{Ptr{Cvoid},Symbol},Ptr{Cvoid}}()
 
@@ -134,9 +135,54 @@ struct LockstepOutputs
     trajectory_setpoint_yawspeed::Cfloat
 end
 
+"""Handle for a loaded `libpx4_lockstep` instance."""
 mutable struct LockstepHandle
     ptr::Ptr{Cvoid}
     lib::Ptr{Cvoid}
+    outbuf::Ref{LockstepOutputs}
+    config::LockstepConfig
+end
+
+"""Validate Julia <-> C ABI compatibility.
+
+This is intentionally separate from the shared-library queries so it can be unit tested
+without loading `libpx4_lockstep`.
+"""
+function _check_abi!(abi_version::UInt32, in_sz::UInt32, out_sz::UInt32, cfg_sz::UInt32)
+    isbitstype(LockstepInputs) || error("LockstepInputs must be an isbits type")
+    isbitstype(LockstepOutputs) || error("LockstepOutputs must be an isbits type")
+    isbitstype(LockstepConfig) || error("LockstepConfig must be an isbits type")
+
+    abi_version == PX4_LOCKSTEP_ABI_VERSION || error(
+        "libpx4_lockstep ABI mismatch: expected ABI version $(PX4_LOCKSTEP_ABI_VERSION), got $abi_version",
+    )
+
+    exp_in = UInt32(sizeof(LockstepInputs))
+    exp_out = UInt32(sizeof(LockstepOutputs))
+    exp_cfg = UInt32(sizeof(LockstepConfig))
+
+    in_sz == exp_in || error("ABI mismatch: inputs size expected $exp_in bytes, got $in_sz")
+    out_sz == exp_out ||
+        error("ABI mismatch: outputs size expected $exp_out bytes, got $out_sz")
+    cfg_sz == exp_cfg ||
+        error("ABI mismatch: config size expected $exp_cfg bytes, got $cfg_sz")
+
+    return nothing
+end
+
+"""Run the C-side ABI handshake against the loaded library."""
+function _abi_handshake!(lib::Ptr{Cvoid})
+    fn_ver = _resolve_symbol(lib, :px4_lockstep_abi_version)
+    abi = UInt32(ccall(fn_ver, Cuint, ()))
+
+    fn_sizes = _resolve_symbol(lib, :px4_lockstep_sizes)
+    in_sz = Ref{Cuint}(0)
+    out_sz = Ref{Cuint}(0)
+    cfg_sz = Ref{Cuint}(0)
+    ccall(fn_sizes, Cvoid, (Ref{Cuint}, Ref{Cuint}, Ref{Cuint}), in_sz, out_sz, cfg_sz)
+
+    _check_abi!(abi, UInt32(in_sz[]), UInt32(out_sz[]), UInt32(cfg_sz[]))
+    return nothing
 end
 
 function create(
@@ -144,10 +190,12 @@ function create(
     libpath::Union{Nothing,AbstractString} = nothing,
 )
     lib = _load_library(libpath)
+    # Fail fast if the shared library does not match the Julia-side struct layout.
+    _abi_handshake!(lib)
     fn = _resolve_symbol(lib, :px4_lockstep_create)
     handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
     handle == C_NULL && error("px4_lockstep_create returned NULL")
-    lockstep = LockstepHandle(handle, lib)
+    lockstep = LockstepHandle(handle, lib, Ref{LockstepOutputs}(), config)
     finalizer(lockstep) do instance
         try
             destroy(instance)
@@ -171,7 +219,7 @@ function load_mission(handle::LockstepHandle, path::AbstractString)
 end
 
 function step!(handle::LockstepHandle, inputs::LockstepInputs)
-    outputs = Ref{LockstepOutputs}()
+    outputs = handle.outbuf
     fn = _resolve_symbol(handle.lib, :px4_lockstep_step)
     ret = ccall(
         fn,

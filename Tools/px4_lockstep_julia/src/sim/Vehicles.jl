@@ -187,14 +187,15 @@ function dynamics end
 Conventions:
 * Rotor thrust acts along **-body Z** (upwards in NED).
 * Rotor positions are in body coordinates, meters.
-* `km` maps thrust to yaw moment (Nm per N). Sign determined by rotor direction.
+
+Notes:
+* Yaw reaction torque sign is owned by the *propulsion* model (e.g. `Propulsion.QuadRotorSet`).
+  The rigid-body model consumes signed per-rotor shaft torque from propulsion.
 """
 Base.@kwdef struct QuadrotorParams{N}
     mass::Float64 = 1.5
     inertia_diag::Vec3 = vec3(0.029125, 0.029125, 0.055225)
     rotor_pos_body::SVector{N,Vec3}
-    rotor_dir::SVector{N,Float64}          # +1 or -1
-    km::Float64 = 0.05                      # yaw moment coefficient
     linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
 end
@@ -223,8 +224,7 @@ function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
             vec3(0.1515, -0.2450, 0.0),
             vec3(-0.1515, 0.1875, 0.0),
         )
-        rotor_dir = SVector(1.0, 1.0, -1.0, -1.0)
-        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_dir = rotor_dir)
+        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos)
     end
     return IrisQuadrotor(params)
 end
@@ -276,7 +276,8 @@ function dynamics(
         # Force vector for each rotor in body.
         Fi = vec3(0.0, 0.0, -Ti)
         τ += cross(r, Fi)
-        τ += vec3(0.0, 0.0, p.rotor_dir[i] * shaft_torques[i])
+        # Signed yaw reaction torque comes from propulsion output.
+        τ += vec3(0.0, 0.0, shaft_torques[i])
     end
 
     # Angular dynamics with simple damping.

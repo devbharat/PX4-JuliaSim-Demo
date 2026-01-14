@@ -2,6 +2,7 @@
 """Plot and summarize PX4 lockstep sim logs.
 
 Reads `sim_log.csv` produced by `PX4Lockstep.Sim` and writes a PNG summary plot.
+Schema comment lines (e.g. `# schema_version=...`) are ignored.
 """
 
 from __future__ import annotations
@@ -16,7 +17,18 @@ import matplotlib.pyplot as plt
 
 def load_log(path: Path) -> dict[str, list[float]]:
     with path.open("r", newline="") as handle:
-        reader = csv.DictReader(handle)
+        header = None
+        rows = []
+        for line in handle:
+            if line.startswith("#"):
+                continue
+            if header is None:
+                header = line
+            else:
+                rows.append(line)
+        if header is None:
+            raise ValueError("log has no columns")
+        reader = csv.DictReader([header, *rows])
         data: dict[str, list[float]] = {key: [] for key in reader.fieldnames or []}
         for row in reader:
             for key, value in row.items():

@@ -19,7 +19,11 @@ using ..Vehicles: AbstractVehicleModel, ActuatorCommand, step_actuators!, dynami
 using ..Propulsion: step_propulsion!
 using ..Integrators: AbstractIntegrator, step_integrator
 using ..Autopilots:
-    AbstractAutopilot, AutopilotCommand, autopilot_step, autopilot_output_type
+    AbstractAutopilot,
+    AutopilotCommand,
+    autopilot_step,
+    autopilot_output_type,
+    max_internal_rate_hz
 using ..Estimators: AbstractEstimator, TruthEstimator, estimate!
 using ..Scenario: AbstractScenario, ScriptedScenario, scenario_step
 import ..Powertrain
@@ -253,6 +257,17 @@ function SimulationInstance(;
     # Derived dt actually used for the estimator/autopilot cadence.
     ap_dt = ap_steps * cfg.dt
 
+    # Guard against conceptually-inconsistent PX4 lockstep cadence.
+    # If PX4 tasks are configured at (say) 250 Hz but we only step the lockstep lib at 100 Hz,
+    # those loops will silently run too slowly.
+    max_hz = max_internal_rate_hz(autopilot)
+    if max_hz !== nothing
+        dt_req = 1.0 / Float64(max_hz)
+        if ap_dt > dt_req + 1e-12
+            @warn "dt_autopilot is larger than the fastest configured autopilot task period; PX4 loops will run too slowly" dt_autopilot=ap_dt required_dt=dt_req max_task_rate_hz=max_hz
+        end
+    end
+
     rng_wind, rng_est, rng_misc = _make_rngs(cfg.seed, rng)
 
     # Preallocate in-memory log capacity (nice perf win for long runs).
@@ -390,8 +405,9 @@ function step!(sim::SimulationInstance)
         error("Simulation requires a propulsion model; attach to VehicleInstance.")
     N = length(p.units)
     duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
-    alt_m = max(0.0, -x0.pos_ned[3])
-    ρ = air_density(sim.env.atmosphere, alt_m)
+    # Atmosphere expects MSL altitude. NED origin is typically at the home location.
+    alt_msl_m = sim.env.origin_alt_msl_m - x0.pos_ned[3]
+    ρ = air_density(sim.env.atmosphere, alt_msl_m)
     prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, v_air_body, dt)
     I_bus = prop_out.bus_current_a
 
@@ -406,7 +422,8 @@ function step!(sim::SimulationInstance)
     if due(sim.log_trig, step)
         # Environment sampled at the log time/state.
         wind = wind_velocity(sim.env.wind, x0.pos_ned, t)
-        rho = air_density(sim.env.atmosphere, max(0.0, -x0.pos_ned[3]))
+        alt_msl_m_log = sim.env.origin_alt_msl_m - x0.pos_ned[3]
+        rho = air_density(sim.env.atmosphere, alt_msl_m_log)
         v_air_ned_log = wind - x0.vel_ned
         v_air_body_log = quat_rotate_inv(x0.q_bn, v_air_ned_log)
 

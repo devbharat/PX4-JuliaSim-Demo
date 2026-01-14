@@ -23,6 +23,9 @@ using Printf
 export AbstractLogSink, SimLog, CSVLogSink, close!, log!, write_csv
 export reserve!
 
+# Bump this when you add/remove/rename columns in the CSV output.
+const CSV_SCHEMA_VERSION = 1
+
 ############################
 # Log sinks
 ############################
@@ -343,6 +346,7 @@ function log!(
 )
     io = sink.io
     if !sink.wrote_header
+        println(io, "# schema_version=$(CSV_SCHEMA_VERSION)")
         println(io, _CSV_HEADER)
         sink.wrote_header = true
     end
@@ -429,6 +433,7 @@ This is mostly for convenience; for long runs, consider using `CSVLogSink`.
 """
 function write_csv(log::SimLog, path::AbstractString)
     open(path, "w") do io
+        println(io, "# schema_version=$(CSV_SCHEMA_VERSION)")
         println(io, _CSV_HEADER)
         n = length(log.t)
         for i = 1:n

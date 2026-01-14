@@ -39,7 +39,7 @@ const EST_DT = 0.01
 
 # Simulation rates.
 const SIM_DT = 0.002
-const SIM_DT_AUTOPILOT = 0.01
+const SIM_DT_AUTOPILOT = 0.004
 const SIM_DT_LOG = 0.01
 const SIM_T_END = 90.0
 const SIM_SEED = 1
@@ -80,7 +80,10 @@ function run_example()
 
         # World: ISA atmosphere + (optionally) stateful turbulence.
         wind = Sim.Environment.OUWind(mean=WIND_MEAN, σ=WIND_SIGMA, τ_s=WIND_TAU_S)
-        env = Sim.Environment.EnvironmentModel(wind=wind)
+        env = Sim.Environment.EnvironmentModel(
+            wind=wind,
+            origin_alt_msl_m=DEFAULT_HOME.alt_msl_m,
+        )
 
         model = Sim.Vehicles.IrisQuadrotor()
 
@@ -96,8 +99,10 @@ function run_example()
         )
         # Propulsion (ESC + BLDC + prop): duty → ω → thrust/torque/current.
         hover_T = model.params.mass * 9.80665 / 4.0
+        # `km_m` is a prop calibration convenience (torque/thrust ratio) used by
+        # the default quadratic prop model.
         propulsion = Sim.Propulsion.default_iris_quadrotor_set(
-            km_m=model.params.km,
+            km_m=0.05,
             thrust_hover_per_rotor_n=hover_T,
         )
         vehicle = Sim.Simulation.VehicleInstance(model, motor_act, servo_act, propulsion, x0)

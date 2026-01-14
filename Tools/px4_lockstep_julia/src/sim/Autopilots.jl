@@ -27,6 +27,7 @@ export HomeLocation,
     AbstractAutopilot,
     PX4LockstepAutopilot,
     autopilot_output_type,
+    max_internal_rate_hz,
     init!,
     close!,
     load_mission!,
@@ -57,6 +58,13 @@ end
 
 abstract type AbstractAutopilot end
 
+"""Return the fastest internal control/navigation loop rate (Hz) for an autopilot.
+
+For PX4 lockstep, this is derived from the lockstep config used to build the library.
+If `nothing` is returned, the simulator will not issue dt/rate warnings.
+"""
+max_internal_rate_hz(::AbstractAutopilot) = nothing
+
 """Return the concrete output type produced by `autopilot_step`.
 
 The simulator uses this to keep the sample-and-hold path type-stable.
@@ -76,6 +84,33 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
 end
 
 autopilot_output_type(::PX4LockstepAutopilot) = LockstepOutputs
+
+function max_internal_rate_hz(ap::PX4LockstepAutopilot)
+    cfg = ap.handle.config
+    max_hz = Int32(0)
+    # Only consider enabled modules. Rate <= 0 means "every tick", so it does not
+    # constrain dt_autopilot.
+    if cfg.enable_commander != 0 && cfg.commander_rate_hz > 0
+        max_hz = max(max_hz, cfg.commander_rate_hz)
+    end
+    if cfg.navigator_rate_hz > 0
+        max_hz = max(max_hz, cfg.navigator_rate_hz)
+    end
+    if cfg.mc_pos_control_rate_hz > 0
+        max_hz = max(max_hz, cfg.mc_pos_control_rate_hz)
+    end
+    if cfg.mc_att_control_rate_hz > 0
+        max_hz = max(max_hz, cfg.mc_att_control_rate_hz)
+    end
+    if cfg.mc_rate_control_rate_hz > 0
+        max_hz = max(max_hz, cfg.mc_rate_control_rate_hz)
+    end
+    if cfg.enable_control_allocator != 0 && cfg.control_allocator_rate_hz > 0
+        max_hz = max(max_hz, cfg.control_allocator_rate_hz)
+    end
+
+    return max_hz > 0 ? Int(max_hz) : nothing
+end
 
 """Create and initialize the PX4 lockstep autopilot."""
 function init!(;

@@ -61,6 +61,30 @@
 // For VEHICLE_CMD_DO_SET_MODE payloads
 #include "px4_custom_mode.h"
 
+// -----------------------------------------------------------------------------
+// ABI compatibility helpers
+// -----------------------------------------------------------------------------
+
+extern "C" PX4_LOCKSTEP_EXPORT uint32_t px4_lockstep_abi_version(void)
+{
+	return PX4_LOCKSTEP_ABI_VERSION;
+}
+
+extern "C" PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
+				    uint32_t *out_sz,
+				    uint32_t *cfg_sz)
+{
+	if (in_sz) {
+		*in_sz = static_cast<uint32_t>(sizeof(px4_lockstep_inputs_t));
+	}
+	if (out_sz) {
+		*out_sz = static_cast<uint32_t>(sizeof(px4_lockstep_outputs_t));
+	}
+	if (cfg_sz) {
+		*cfg_sz = static_cast<uint32_t>(sizeof(px4_lockstep_config_t));
+	}
+}
+
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -629,7 +653,6 @@ static void publish_inputs(LockstepRuntime &rt, const px4_lockstep_inputs_t &in)
 	// Attitude
 	vehicle_attitude_s att{};
 	att.timestamp = in.time_us;
-	att.timestamp_sample = in.time_us;
 	att.q[0] = in.q[0];
 	att.q[1] = in.q[1];
 	att.q[2] = in.q[2];
@@ -639,7 +662,6 @@ static void publish_inputs(LockstepRuntime &rt, const px4_lockstep_inputs_t &in)
 	// Body rates
 	vehicle_angular_velocity_s rates{};
 	rates.timestamp = in.time_us;
-	rates.timestamp_sample = in.time_us;
 	rates.xyz[0] = in.rates_xyz[0];
 	rates.xyz[1] = in.rates_xyz[1];
 	rates.xyz[2] = in.rates_xyz[2];

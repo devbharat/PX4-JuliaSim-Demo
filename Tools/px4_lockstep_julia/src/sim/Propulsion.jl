@@ -376,9 +376,12 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
     ω_new = max(0.0, ω + ω_dot * dt)
     u.ω_rad_s = ω_new
 
-    # Outputs (use updated speed for thrust).
-    T = prop_thrust(prop, ρ, ω_new, Vax)
-    Q = prop_torque(prop, ρ, ω_new, Vax)
+    # Outputs should be temporally consistent with the integrated state.
+    # Use a midpoint speed to avoid a "phase lead" where thrust uses ω_{k+1}
+    # while the integrated torque/current were based on ω_k.
+    ω_mid = 0.5 * (ω + ω_new)
+    T = prop_thrust(prop, ρ, ω_mid, Vax)
+    Q = prop_torque(prop, ρ, ω_mid, Vax)
 
     # Bus current from ideal PWM stage (power conservation w/ efficiency).
     I_bus = (d * I_m) / max(1e-6, esc.η)
@@ -417,7 +420,8 @@ function step_propulsion!(
     @inbounds for i = 1:N
         Ti, Qi, ωi, Ii, Ibus = _step_unit!(p.units[i], duties[i], V_bus, ρ, Vax, dt)
         thrust[i] = Ti
-        torque[i] = Qi
+        # Own yaw reaction torque sign here (single source of truth).
+        torque[i] = p.rotor_dir[i] * Qi
         omega[i] = ωi
         imotor[i] = Ii
         Ibus_total += Ibus

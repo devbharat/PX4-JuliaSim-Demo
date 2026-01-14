@@ -247,17 +247,26 @@ end
 # Environment container
 ############################
 
-"""A composable environment model."""
+"""A composable environment model.
+
+`origin_alt_msl_m` defines the mean-sea-level (MSL) altitude of the local NED origin.
+
+This matters for atmosphere models: in a typical PX4 local frame, `pos_ned = (0,0,0)`
+corresponds to the *home* location, not sea level. Using `origin_alt_msl_m` keeps the
+physics (density) consistent with the lat/lon/alt fed to PX4.
+"""
 struct EnvironmentModel{A<:AbstractAtmosphere,W<:AbstractWind,G<:AbstractGravity}
     atmosphere::A
     wind::W
     gravity::G
+    origin_alt_msl_m::Float64
 end
 
 EnvironmentModel(;
     atmosphere::AbstractAtmosphere = ISA1976(),
     wind::AbstractWind = NoWind(),
     gravity::AbstractGravity = UniformGravity(9.80665),
-) = EnvironmentModel(atmosphere, wind, gravity)
+    origin_alt_msl_m::Float64 = 0.0,
+) = EnvironmentModel(atmosphere, wind, gravity, origin_alt_msl_m)
 
 end # module Environment

@@ -75,8 +75,6 @@ mutable struct NoisyEstimator <: AbstractEstimator
     vel_bias::AR1Vec
     yaw_bias::AR1
     rate_bias::AR1Vec
-
-    last_t::Float64
 end
 
 function NoisyEstimator(;
@@ -99,7 +97,6 @@ function NoisyEstimator(;
         AR1Vec(bias_tau_s, vel_bias_sigma_mps),
         AR1(bias_tau_s, yaw_bias_sigma_rad),
         AR1Vec(bias_tau_s, rate_bias_sigma_rad_s),
-        NaN,
     )
 end
 
@@ -108,7 +105,6 @@ function reset!(e::NoisyEstimator)
     reset!(e.vel_bias)
     reset!(e.yaw_bias)
     reset!(e.rate_bias)
-    e.last_t = NaN
     return e
 end
 
@@ -119,9 +115,12 @@ function estimate!(
     x::RigidBodyState,
     dt_hint::Float64,
 )
-    dt = (isfinite(e.last_t) ? (t - e.last_t) : dt_hint)
-    dt = max(dt, 0.0)
-    e.last_t = t
+    # IMPORTANT: keep estimator stepping on an exact cadence.
+    #
+    # Using (t - last_t) reintroduces float subtraction noise which can change
+    # bias evolution over long horizons across platforms/libm versions.
+    dt_hint > 0.0 || error("dt_hint must be > 0")
+    dt = dt_hint
 
     pb = step!(e.pos_bias, rng, dt)
     vb = step!(e.vel_bias, rng, dt)
@@ -156,12 +155,31 @@ mutable struct DelayedEstimator{E<:AbstractEstimator} <: AbstractEstimator
     filled::Int
 end
 
+@inline function _to_us_strict(t_s::Float64, name::AbstractString)
+    t_s >= 0.0 || error("$name must be >= 0")
+    t_us_f = t_s * 1e6
+    t_us = Int(round(t_us_f))
+    # Enforce microsecond quantization to keep delay behavior deterministic.
+    if abs(t_us_f - t_us) > 1e-6
+        error("$name must be microsecond-quantized (got $t_s s)")
+    end
+    return t_us
+end
+
 function DelayedEstimator(
     inner::E;
     delay_s::Float64 = 0.0,
     dt_est::Float64 = 0.002,
 ) where {E<:AbstractEstimator}
-    delay_steps = max(0, Int(round(delay_s / dt_est)))
+    dt_us = _to_us_strict(dt_est, "dt_est")
+    dt_us > 0 || error("dt_est must be > 0")
+    delay_us = _to_us_strict(delay_s, "delay_s")
+    if delay_us % dt_us != 0
+        error(
+            "delay_s must be an exact multiple of dt_est (delay_s=$delay_s, dt_est=$dt_est)",
+        )
+    end
+    delay_steps = delay_us ÷ dt_us
     ring_len = max(1, delay_steps + 1)
     ring = [
         EstimatedState(

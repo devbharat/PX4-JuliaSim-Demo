@@ -149,6 +149,7 @@ lockstep simulation. Use a delay that is a multiple of the autopilot update peri
 """
 mutable struct DelayedEstimator{E<:AbstractEstimator} <: AbstractEstimator
     inner::E
+    dt_est_us::Int
     delay_steps::Int
     ring::Vector{EstimatedState}
     idx::Int
@@ -189,7 +190,7 @@ function DelayedEstimator(
             ω_body = vec3(0.0, 0.0, 0.0),
         ) for _ = 1:ring_len
     ]
-    return DelayedEstimator(inner, delay_steps, ring, 1, 0)
+    return DelayedEstimator(inner, dt_us, delay_steps, ring, 1, 0)
 end
 
 function reset!(e::DelayedEstimator)
@@ -206,6 +207,15 @@ function estimate!(
     x::RigidBodyState,
     dt_hint::Float64,
 )
+    # DelayedEstimator is step-quantized for determinism. If the stepping cadence
+    # doesn't match the cadence used to compute `delay_steps`, the configured delay
+    # becomes wrong (silently). Fail fast.
+    dt_hint_us = _to_us_strict(dt_hint, "dt_hint")
+    if dt_hint_us != e.dt_est_us
+        error(
+            "DelayedEstimator dt mismatch: dt_hint=$(dt_hint) s ($(dt_hint_us) μs) != configured dt_est=$(e.dt_est_us * 1e-6) s ($(e.dt_est_us) μs).",
+        )
+    end
     cur = estimate!(e.inner, rng, t, x, dt_hint)
     e.ring[e.idx] = cur
     e.filled = min(length(e.ring), e.filled + 1)

@@ -12,9 +12,10 @@ Core rules (enforced by code):
 """
 module Simulation
 
-using ..Types: Vec3, Quat, vec3, quat_rotate_inv
+using ..Types: Vec3, Quat, WorldOrigin, vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState, RigidBodyDeriv
-using ..Environment: EnvironmentModel, wind_velocity, air_density, step_wind!
+using ..Environment:
+    EnvironmentModel, SampledWind, wind_velocity, air_density, step_wind!, sample_wind!
 using ..Vehicles: AbstractVehicleModel, ActuatorCommand, step_actuators!, dynamics, mass
 using ..Propulsion: step_propulsion!
 using ..Integrators: AbstractIntegrator, step_integrator
@@ -23,7 +24,8 @@ using ..Autopilots:
     AutopilotCommand,
     autopilot_step,
     autopilot_output_type,
-    max_internal_rate_hz
+    max_internal_rate_hz,
+    PX4LockstepAutopilot
 using ..Estimators: AbstractEstimator, TruthEstimator, estimate!
 using ..Scenario: AbstractScenario, ScriptedScenario, scenario_step
 import ..Powertrain
@@ -62,6 +64,14 @@ Base.@kwdef struct SimulationConfig
 
     # Determinism.
     seed::UInt64 = 0
+
+    # Safety guardrails.
+    #
+    # If true (default), fail fast when `dt_autopilot` is slower than the fastest
+    # configured internal autopilot task rate. Running those tasks slower than
+    # configured is deterministic, but it violates the intended "PX4-in-lockstep"
+    # timing contract and can invalidate stability/performance conclusions.
+    strict_lockstep_rates::Bool = true
 end
 
 ############################
@@ -126,6 +136,60 @@ end
 @inline function _seed_to_int(s::UInt64)::Int
     # Keep within Int range deterministically.
     return Int(s % UInt64(typemax(Int)))
+end
+
+"""Wrap the environment wind in a sample-and-hold adapter for RK4 determinism."""
+function _wrap_sampled_wind(env::EnvironmentModel, pos_ned::Vec3, t::Float64)
+    if env.wind isa SampledWind
+        sample_wind!(env.wind, pos_ned, t)
+        return env
+    end
+
+    sampled = SampledWind(env.wind)
+    sample_wind!(sampled, pos_ned, t)
+    return EnvironmentModel(
+        atmosphere = env.atmosphere,
+        wind = sampled,
+        gravity = env.gravity,
+        origin = env.origin,
+    )
+end
+
+@inline function _origin_matches(a::WorldOrigin, b::WorldOrigin; tol::Float64 = 1e-9)
+    return isapprox(a.lat_deg, b.lat_deg; atol = tol) &&
+           isapprox(a.lon_deg, b.lon_deg; atol = tol) &&
+           isapprox(a.alt_msl_m, b.alt_msl_m; atol = tol)
+end
+
+"""Align PX4 home and environment origin when one side is default.
+
+If both sides are custom and mismatch, emit a warning.
+"""
+function _sync_world_origin(env::EnvironmentModel, autopilot::AbstractAutopilot)
+    autopilot isa PX4LockstepAutopilot || return env
+
+    env_origin = env.origin
+    ap_origin = autopilot.home
+    _origin_matches(env_origin, ap_origin) && return env
+
+    default_origin = WorldOrigin()
+    env_default = _origin_matches(env_origin, default_origin)
+    ap_default = _origin_matches(ap_origin, default_origin)
+
+    if env_default && !ap_default
+        return EnvironmentModel(
+            atmosphere = env.atmosphere,
+            wind = env.wind,
+            gravity = env.gravity,
+            origin = ap_origin,
+        )
+    elseif ap_default && !env_default
+        autopilot.home = env_origin
+        return env
+    end
+
+    @warn "World origin mismatch between environment and PX4 home; set them to match" env_origin=env_origin autopilot_home=ap_origin
+    return env
 end
 
 function _make_rngs(seed::UInt64, rng_master::Union{Nothing,AbstractRNG})
@@ -264,11 +328,26 @@ function SimulationInstance(;
     if max_hz !== nothing
         dt_req = 1.0 / Float64(max_hz)
         if ap_dt > dt_req + 1e-12
-            @warn "dt_autopilot is larger than the fastest configured autopilot task period; PX4 loops will run too slowly" dt_autopilot=ap_dt required_dt=dt_req max_task_rate_hz=max_hz
+            msg = "dt_autopilot is larger than the fastest configured autopilot task period; internal loops will run too slowly"
+            if cfg.strict_lockstep_rates
+                throw(
+                    ArgumentError(
+                        "$(msg). Set strict_lockstep_rates=false to override (dt_autopilot=$(ap_dt) s, required_dt=$(dt_req) s for max_task_rate_hz=$(max_hz)).",
+                    ),
+                )
+            else
+                @warn msg dt_autopilot=ap_dt required_dt=dt_req max_task_rate_hz=max_hz strict_lockstep_rates=cfg.strict_lockstep_rates
+            end
         end
     end
 
     rng_wind, rng_est, rng_misc = _make_rngs(cfg.seed, rng)
+
+    # Align PX4 home/origin before wrapping wind.
+    env = _sync_world_origin(env, autopilot)
+
+    # Hold wind constant over each physics step for deterministic integration.
+    env = _wrap_sampled_wind(env, vehicle.state.pos_ned, cfg.t0)
 
     # Preallocate in-memory log capacity (nice perf win for long runs).
     if log isa SimLog
@@ -344,6 +423,9 @@ function step!(sim::SimulationInstance)
     # Scenario produces high-level autopilot commands and an approximate landed flag.
     cmd, landed = scenario_step(sim.scenario, t, x0, sim)
 
+    # Sample wind once per tick so it remains constant across RK4 stages.
+    wind_now = sample_wind!(sim.env.wind, x0.pos_ned, t)
+
     # Battery model -> PX4 battery_status injection (sampled at start of interval).
     batt = status(sim.battery)
 
@@ -395,7 +477,6 @@ function step!(sim::SimulationInstance)
     u_cmd = ActuatorCommand(motors = motors, servos = servos)
 
     # Compute air-relative velocity in body frame for inflow-aware propulsion.
-    wind_now = wind_velocity(sim.env.wind, x0.pos_ned, t)
     v_air_ned = wind_now - x0.vel_ned
     v_air_body = quat_rotate_inv(x0.q_bn, v_air_ned)
 
@@ -406,7 +487,7 @@ function step!(sim::SimulationInstance)
     N = length(p.units)
     duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
     # Atmosphere expects MSL altitude. NED origin is typically at the home location.
-    alt_msl_m = sim.env.origin_alt_msl_m - x0.pos_ned[3]
+    alt_msl_m = sim.env.origin.alt_msl_m - x0.pos_ned[3]
     ρ = air_density(sim.env.atmosphere, alt_msl_m)
     prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, v_air_body, dt)
     I_bus = prop_out.bus_current_a
@@ -421,11 +502,10 @@ function step!(sim::SimulationInstance)
     # Logging (multi-rate). Contract: log the *pre-step* state at time t.
     if due(sim.log_trig, step)
         # Environment sampled at the log time/state.
-        wind = wind_velocity(sim.env.wind, x0.pos_ned, t)
-        alt_msl_m_log = sim.env.origin_alt_msl_m - x0.pos_ned[3]
+        wind = wind_now
+        alt_msl_m_log = sim.env.origin.alt_msl_m - x0.pos_ned[3]
         rho = air_density(sim.env.atmosphere, alt_msl_m_log)
-        v_air_ned_log = wind - x0.vel_ned
-        v_air_body_log = quat_rotate_inv(x0.q_bn, v_air_ned_log)
+        v_air_body_log = v_air_body
 
         # PX4 setpoints (if present).
         pos_sp = (
@@ -470,6 +550,7 @@ function step!(sim::SimulationInstance)
             t,
             x0,
             u_cmd;
+            time_us = time_us(sim),
             wind_ned = wind,
             rho = rho,
             air_vel_body = (v_air_body_log[1], v_air_body_log[2], v_air_body_log[3]),

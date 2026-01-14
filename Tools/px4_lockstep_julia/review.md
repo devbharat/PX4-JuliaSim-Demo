@@ -1,299 +1,267 @@
+## Consolidated review — `px4_lockstep_julia_latest3.zip` + `px4_lockstep_latest3.zip`
+
+This is a fresh review of the *current* codebase (Julia + C lockstep library), integrating the previous review and the patches you documented at the bottom of the prior `review.md`.
+
+Note: the original review was based on static inspection; the status callouts below now reflect implemented fixes and associated tests.
+
+- Julia: `src/PX4Lockstep.jl`, `src/sim/*.jl`, `test/runtests.jl`
+- C: `include/px4_lockstep/px4_lockstep.h`, `src/px4_lockstep.cpp`
+
+---
+
 ## 0) System contract (what the simulator must guarantee)
 
-This is how your code *currently implies* the system is supposed to behave, plus the invariants that should be made explicit.
+This defines the intended contracts and invariants your code implies today. Where something is ambiguous, I call it out explicitly, but still proceed with best-effort assumptions.
 
 ### Lockstep + determinism contract with PX4
 
-**Goal:** If I run the same scenario twice (same seed, same initial state, same model params, same `libpx4_lockstep` build), I should get the same PX4 outputs and the same simulated trajectory.
+**Goal:** Given the same scenario, seed, initial conditions, model params, and the same `libpx4_lockstep` build, you should get identical:
 
-Concretely:
+- PX4 outputs per autopilot tick
+- Sim trajectory (truth)
+- Logs (byte-identical CSV on the same machine/software stack)
 
-* **Single source of simulated time**
-  There is a simulated time `t` (seconds) and a corresponding PX4 time `time_us` (microseconds). PX4 must be stepped with **strictly monotonic** `time_us`.
+Your current implementation largely achieves this by enforcing an **integer microsecond** timebase and stepping everything off **integer step counters**.
 
-* **Fixed time increment per PX4 step**
-  Each call to `px4_lockstep_step()` should advance PX4 by a **constant** `Δt_px4` (in µs). If you choose `Δt_px4 = dt_autopilot`, then **every** PX4 step must be separated by exactly `dt_autopilot` in simulated time.
+**Contract / invariants:**
 
-* **Cadence and replayability**
+- **Single source of time**
+  - Physics time advances in fixed steps `dt` (seconds) with `dt_us = round(dt*1e6)` enforced exact (`Simulation._dt_to_us`).
+  - Lockstep time is `time_us = t0_us + step * dt_us` (`Simulation.time_us(sim)`), strictly monotonic.
 
-  * Given identical inputs at each PX4 step (state estimate + flags + battery), PX4 should produce identical actuator outputs.
-  * The simulator must call PX4 at a deterministic cadence and must not allow occasional “missed” or “early” calls.
+- **Fixed PX4 cadence**
+  - PX4 is stepped at `dt_autopilot = ap_steps * dt` (exact integer multiple; enforced by `_multiple_steps`).
+  - PX4 stepping uses integer step scheduling (`StepTrigger`) — no float drift/jitter in cadence.
 
-**Best-effort assumption (because it’s ambiguous):**
-You’re intentionally running the plant at `dt` (physics) and PX4 at `dt_autopilot` (controller), with ZOH between PX4 updates. That’s a valid contract, but only if `dt_autopilot` is enforced as an **exact integer multiple** of `dt` and you don’t allow drift/jitter.
+- **Replayability**
+  - All randomness is derived from deterministic seeds and uses explicit RNG objects (split into `rng_wind`, `rng_est`, `rng_misc`).
+  - No threading in the Julia sim loop (single-threaded, deterministic ordering).
+  - C-side lockstep relies on injected `time_us` via `hrt_lockstep_set_absolute_time()` and does not reference wall-clock time (assumed; must remain true).
+
+- **Controller ZOH semantics**
+  - Between PX4 ticks, the actuator outputs are held constant (`sim.last_out` sample-and-hold).
+  - Plant is advanced at `dt` with those held commands (plus actuator/motor dynamics inside the plant).
 
 ### State definitions / frames
 
-From your code:
+From Julia code (`Types.jl`, `RigidBody.jl`, `Vehicles.jl`, `Simulation.jl`) and the C injection layer:
 
-* **World frame:** NED
+- **World frame:** NED
+  - `pos_ned = (x_n, y_e, z_d)` [m]
+  - `vel_ned` [m/s]
+  - gravity is positive down: `g_ned = (0,0,+g)`.
 
-  * Position `pos_ned = (x_n, y_e, z_d)` in meters.
-  * Velocity `vel_ned` in m/s.
-  * Gravity is positive down: `g_ned = (0,0,+g)`.
+- **Body frame:** FRD
+  - +X forward, +Y right, +Z down.
 
-* **Body frame:** FRD (implied throughout, and explicitly in `Propulsion.jl`)
+- **Attitude:**
+  - `q_bn` is quaternion rotating **Body → NED** in `(w,x,y,z)` order.
+  - `quat_deriv(q_bn, ω_body)` uses `q̇ = 0.5*q⊗ω` consistent with Body→NED (good).
 
-  * +X forward, +Y right, +Z down.
+- **Body rates:**
+  - `ω_body = (p,q,r)` rad/s in body FRD.
 
-* **Attitude representation:** `q_bn` is quaternion rotating **Body → NED** (w,x,y,z).
-
-  * `quat_to_dcm(q_bn)` returns `R_bn` (Body→NED).
-  * `yaw_from_quat(q_bn)` is yaw about NED +Z (down) using the standard PX4-style heading convention.
-
-* **Wind convention:** `wind_velocity()` returns **air velocity relative to ground** in NED.
-
-  * Vehicle air-relative velocity (vehicle relative air) is `v_rel_ned = vel_ned - wind_ned`. (Used for drag in `Vehicles.jl`.)
-  * Air velocity relative vehicle is `v_air_ned = wind_ned - vel_ned`. (Used for propulsion inflow in `Simulation.jl` and logged as `air_vel_body` after rotation.)
+- **Wind conventions:**
+  - `wind_velocity(...)` returns wind velocity in NED: **air relative ground**.
+  - Two “relative wind” vectors appear:
+    - Vehicle velocity relative air (airspeed): `v_rel_ned = vel_ned - wind_ned` (used for drag in `Vehicles.jl`).
+    - Air velocity relative vehicle (flow past vehicle): `v_air_ned = wind_ned - vel_ned` (used for inflow in `Simulation.jl`, logged as `air_vel_body` after rotation).
+  - This dual convention is fine, but it must remain *explicit* to avoid sign bugs.
 
 ### Update ordering (per physics tick)
 
-Based on `Simulation.step!`:
+From `Simulation.step!` (Julia):
 
-1. **Advance environment disturbance state** (e.g., turbulence)
-   `step_wind!(wind, pos, t, dt, rng)`.
-
-2. **Scenario step**
-   Produces high-level PX4 commands (`arm`, mission/RTL request) and a “landed” boolean.
-
-3. **Battery status sample for PX4**
-   `batt = status(battery_model)` (note: this is “previous-step” because you update the battery *after* computing current).
-
-4. **Estimator injection + PX4 step** (multi-rate)
-   If PX4 is “due”:
-
-   * `est = estimate!(estimator, rng, t, truth_state, dt_hint)`
-   * `out = autopilot_step(px4, t, est, cmd, landed, batt)`
-
-   Otherwise: hold last PX4 output.
-
-5. **Actuator command sanitize + actuator dynamics**
-
-   * clamp motors to [0,1], servos to [-1,1]
-   * apply actuator dynamics at physics rate `dt`.
-
-6. **Propulsion update at physics rate**
-   Using held motor duties, battery voltage, density, and **air velocity relative vehicle in body frame**, produce thrust/torque/current.
-
-7. **Rigid-body dynamics integration over dt**
-   Integrate with Euler/RK4 using **piecewise-constant** forces/torques for this tick (`u_dyn` held over dt).
-
-8. **Battery state update**
-   Step battery using the propulsion-computed bus current.
-
-9. **Log** (multi-rate)
-   Log truth state (currently: post-integration state but timestamped with the pre-step `t`).
-
-10. **Advance sim time**: `t ← t + dt`
+1. Snapshot truth state `x0` (pre-step) for consistent logging.
+2. Advance wind disturbance state once per physics tick:
+   - `step_wind!(sim.env.wind, x0.pos_ned, t, dt, rng_wind)`
+3. Scenario step:
+   - produces `cmd::AutopilotCommand` and `landed::Bool`.
+4. Sample wind once per tick (sample-and-hold):
+   - `sample_wind!(sim.env.wind, x0.pos_ned, t)`
+   - this held sample is used for drag, propulsion, and logging across RK4 stages.
+5. Sample battery status for injection into PX4:
+   - `batt = status(sim.battery)` (sampled at start of interval).
+6. If autopilot is due:
+   - `estimate!(...)` at fixed `dt_hint = sim.ap_dt`
+   - `autopilot_step(..., time_us(sim), est..., cmd; landed, battery=batt)`
+   - store `sim.last_out`.
+7. Convert PX4 outputs to actuator commands:
+   - sanitize NaNs and clamp motors to [0,1]
+8. Step actuator dynamics at physics dt.
+9. Step propulsion (motor/prop) using:
+   - duty commands
+   - battery voltage sample (`batt.voltage_v`)
+   - density `ρ(alt_msl)`
+   - air-relative velocity in body frame
+10. Integrate rigid-body dynamics with Euler/RK4 using held propulsion output.
+11. Update battery model using propulsion bus current.
+12. If logging is due:
+   - log the **pre-step** snapshot `x0` and other sampled values.
 
 ### Multi-rate stepping semantics
 
-Your implementation intends:
+- **Physics dt**: fixed (`cfg.dt`)
+- **Autopilot dt**: fixed integer multiple of dt:
+  - `dt_autopilot = ap_steps * dt`
+- **Logging dt**: fixed integer multiple of dt
 
-* Physics runs at `dt`.
-* PX4 is updated at `dt_autopilot` (≥ dt), and PX4 outputs are held constant between updates (ZOH).
-* Logging happens at `dt_log` (≥ dt).
-
-**Critical invariant (should be explicit):** `dt_autopilot / dt` and `dt_log / dt` must be integers (or you accept jitter, which breaks strict determinism).
+**Key invariant:** `dt_autopilot` and `dt_log` must be exact multiples of `dt` (enforced).
 
 ### Estimator injection semantics
 
-* The estimator runs **only when PX4 is stepped** (not every physics tick).
-* Noise/bias processes advance at the estimator’s call times (with `dt = t - last_t`).
-* Optional delay is implemented as a ring buffer with a fixed sample period `dt_est` and `delay_steps = round(delay_s/dt_est)`.
+The estimator is *not* raw sensor simulation; it’s “EKF-like output injection”.
 
-**Best-effort assumption:** you want estimator noise/bias/delay to be aligned to the PX4 update rate (i.e., estimator sample rate == PX4 step rate), unless you intentionally introduce mismatched rates.
+- Estimator is evaluated only when PX4 is stepped, and is advanced with **fixed dt_hint** (not `t - last_t`).
+- Noise/bias processes are stepped deterministically using the estimator RNG stream.
+- Optional delay is quantized in steps (ring buffer) and now enforces `dt_hint == dt_est`.
 
-### Ambiguities (but I’ll proceed)
+### Ambiguities (resolved)
 
-1. **Does PX4 lockstep require being stepped at the physics tick?**
-   Your config includes internal PX4 task rates (250 Hz, etc.). It’s unclear whether `libpx4_lockstep` internally catches up tasks if you step it at 100 Hz. I’ll assume it tolerates it, but it’s a correctness risk.
+These were correctness traps in earlier revisions; they are now handled explicitly:
 
-2. **Logging timestamp semantics**
-   You log `new_state` with time `t` (pre-step). That is either:
+1. **World origin**
+- `HomeLocation` is now an alias of `WorldOrigin`, and `EnvironmentModel` stores the same origin.
+- `SimulationInstance` synchronizes defaults and warns if both sides are custom but mismatched.
 
-   * an unintended off-by-dt, or
-   * an intentional “state at end of interval starting at t”.
-     Either way, it must be clearly defined and tested.
+2. **Wind sampling semantics**
+- Wind is stepped, then sampled once per tick via `SampledWind`, and held constant across RK4 stages.
+- Logs record the held sample alongside `time_us` for unambiguous correlation.
 
-3. **Wind OU process discretization**
-   Your OU is Euler–Maruyama (dt-dependent). If you truly want deterministic *and* dt-invariant statistics, you should use the exact OU discretization.
+3. **Gust boundaries**
+- Gusts are half-open (`[t_on, t_off)`) and combined with sample-and-hold wind so forcing is constant over each tick.
+
+4. **Multiple lockstep handles**
+- The Julia wrapper now enforces one active handle by default; `allow_multiple_handles=true` is an explicit opt-out.
+
+5. **Battery warning semantics**
+- Battery models now emit warnings based on SOC thresholds, but you may still want to verify the mapping vs PX4 params.
 
 ---
 
 ## 1) Determinism + lockstep audit (highest priority)
 
-### A) Determinism breakers I see in your code
+You fixed the biggest determinism killers (strict lockstep rate enforcement, sampled wind semantics, delayed-estimator dt checks, half-open gusts, ABI handshake). The remaining risks are mostly C-side scheduling behavior.
 
-#### 1) **Float-based periodic scheduling causes cadence jitter**
+### A) Determinism breakers / risks still present
 
-Your `PeriodicTrigger` accumulates `t_next += period` in Float64 and compares against `t`.
+Most earlier issues here are now resolved (strict lockstep rate checking, deterministic
+wind sampling, gust boundary semantics, delayed estimator dt checks, and handle guards).
+The main remaining determinism risk is on the C side:
 
-That **will drift** over long runs even when `period/dt` is an integer. It’s not theoretical — it shows up in your own log:
+#### 1) **C-side StepRateLimiter drift/jitter and “first tick doesn’t run” behavior**
+`StepRateLimiter::should_run()` uses:
 
-* In `sim_log.csv`, `time_s` increments are **mostly 0.010**, but there are **0.008** and **0.012** steps (exactly ±1 physics tick at dt=0.002).
+```cpp
+if ((now_us - last_run_us) >= period_us) { last_run_us = now_us; return true; }
+```
 
-That means your “periodic” logging (and very likely PX4 stepping too) is occasionally running after 4 or 6 physics steps instead of 5.
+Two issues:
 
-**Impact:**
+- **No catch-up**: if dt is bigger than period, the loop runs slower, not multiple times.
+- **Phase jitter**: setting `last_run_us = now_us` (instead of `+= period_us`) causes drift if `dt_us` doesn’t divide `period_us`.
+- **First tick**: with `last_run_us=0` and `now_us=0`, nothing runs at t=0 (often fine, but it’s a semantic choice worth making explicit).
 
-* PX4 step cadence is not constant → violates lockstep contract.
-* Estimator dt becomes variable → noise/bias evolves with jitter.
-* ZOH intervals are inconsistent → controller discretization changes run-to-run if any floating tie breaks differ.
+**Where:** `px4_lockstep.cpp` — `StepRateLimiter`.
 
-This is a P0.
-
-#### 2) **Simulation time represented as Float64 + additive accumulation**
-
-`sim.t = t + dt` accumulates rounding error. On its own that’s usually fine, but combined with float-trigger scheduling it becomes a determinism hazard.
-
-Even if it’s deterministic on one machine, it is fragile: any refactor that changes evaluation order can change the last-bit rounding and alter when triggers fire.
-
-#### 3) **RNG stream coupling across subsystems**
-
-You correctly pass an `rng` everywhere and seed with `MersenneTwister(cfg.seed)`. Good.
-
-But you use **one RNG stream** for:
-
-* OU wind
-* estimator noise
-* bias AR(1)
-* potentially future noise sources
-
-**Impact:** a tiny change in one subsystem (one extra `randn`) changes the entire future trajectory. This isn’t “nondeterministic” per run, but it’s a determinism *maintenance trap* (regression tests become extremely brittle and “unrelated changes” invalidate golden logs).
-
-#### 4) **OU turbulence discretization is dt-dependent**
-
-Euler–Maruyama changes statistical properties with dt. If someone changes dt (or you add physics sub-stepping), the wind statistics change, and you might incorrectly blame controllers.
-
-This is more “model correctness” than determinism, but it’s a reproducibility trap.
-
-#### 5) **C ABI boundary: layout + lifetime assumptions**
-
-Risks:
-
-* Struct layout mismatch (padding/alignment) between Julia structs and the C ABI.
-* Reentrancy: global `_LIB_HANDLE` + `_SYMBOL_CACHE` + handle finalizer.
-* Pointer lifetime: you’re good in `step!` because you pass by value/Ref and return a copied `LockstepOutputs`.
-
-What’s missing is a **layout/version handshake**. If the C side changes struct fields, you can get silent corruption.
-
-#### 6) **Logging side effects**
-
-Not a numerical nondeterminism source (since sim time is not wall clock), but heavy allocation/IO increases GC frequency. If any finalizers touch simulation resources (e.g. lockstep handles), you can get weird nondeterministic teardown behavior in test harnesses.
+---
 
 ### B) Checklist of invariants to add as asserts/tests
 
-These are “make it impossible to silently drift” checks.
+These are “if violated, stop immediately” invariants.
 
-#### Timebase and scheduling invariants
+#### Timebase + scheduling invariants
 
-* **`dt > 0` and finite**.
-* **`dt_us = round(Int, dt * 1e6)` and `abs(dt_us*1e-6 - dt) < 1e-12`**
-  If not, you have a fractional µs step and lockstep will be messy unless you do rational time.
-* **`dt_autopilot_steps = dt_autopilot / dt` is integer within tolerance**
-  Same for `dt_log`. Enforce at init:
+- Assert `dt_us == round(dt*1e6)` exactly (already enforced).
+- Assert `t0_us` microsecond-quantized (already enforced).
+- Assert `dt_autopilot` and `dt_log` are exact multiples of `dt` (already enforced).
+- Assert lockstep `time_us` is strictly monotonic and increments by exactly `dt_autopilot_us` between PX4 steps.
+  - Store last PX4 step time in `PX4LockstepAutopilot` and assert `Δ == dt_ap_us`.
 
-  * `abs(dt_autopilot_steps - round(dt_autopilot_steps)) < 1e-12`
-  * then store `ap_steps::Int = Int(round(...))`
-* **PX4 step cadence invariant**
-  When stepping PX4 at sim step `k`, assert:
-
-  * `time_us == k * dt_us` (or if stepping at ap cadence: `time_us == ap_k * ap_dt_us`)
-  * `time_us - last_time_us == ap_steps * dt_us` exactly.
-* **Trigger determinism**
-  Over long runs, trigger indices must be exactly periodic:
-
-  * For ap_steps=5, triggers at k ∈ {0,5,10,15,...} exactly.
+- **For PX4 lockstep only:** assert `dt_autopilot <= 1/max_internal_rate_hz` unless explicitly overridden.
 
 #### RNG invariants
 
-* No use of global RNG (`rand()` / `randn()` without rng). Add a CI grep test for `randn(` not followed by `rng` in your repo.
-* Each stochastic subsystem owns its own RNG stream or deterministic substream ID.
+- Assert wind/estimator/misc RNG are distinct objects (already true).
+- Add a “no global RNG” guard in CI by grepping for `rand(` / `randn(` without an explicit RNG argument (you already pass RNG everywhere).
 
 #### State validity invariants
 
-* Quaternions always normalized within tolerance:
+- Quaternion must be finite and normalized within tolerance each physics step:
+  - `abs(norm(q) - 1) < 1e-9` and all components finite.
+- No NaNs in truth state:
+  - `isfinite.(pos, vel, ω)`.
 
-  * `abs(norm(q_bn) - 1) < 1e-10` after each integration step.
-* Finite checks in the hot loop:
-
-  * no NaNs in state, forces, battery voltage/current, motor outputs.
-* Motor commands in range:
-
-  * `0 ≤ motors[i] ≤ 1`, `-1 ≤ servos[i] ≤ 1`.
-* Battery voltage clamped / non-negative.
+- Actuator commands must be finite:
+  - After sanitize/clamp, motor duties must be finite in [0,1].
 
 #### ABI invariants
 
-* At startup, assert `sizeof(LockstepInputs)` / `sizeof(LockstepOutputs)` matches what the C lib expects (needs a C API hook, see refactors below).
+- ABI version must match (already checked).
+- Struct size must match (already checked).
+- **Add (optional but strong):** offset checks for every field (see below).
 
-### C) Concrete refactors to guarantee determinism (and “don’t do X” rules)
+#### “One handle per process” invariant
 
-#### Refactor 1 (P0): **Replace Float64 scheduling with integer step scheduling**
+- Implemented: `PX4Lockstep.create()` enforces a single active handle by default and decrements on `destroy()`.
 
-Do not schedule periodic tasks by accumulating `t_next` in Float64.
+---
 
-Instead:
+### C) Concrete refactors to harden determinism (and “don’t do X” rules)
 
-* Maintain:
+#### Refactor 1 (P0): Make PX4 step-rate mismatch a hard error by default
+- Add `strict_lockstep_rates::Bool = true` to `SimulationConfig` or `PX4LockstepAutopilot`.
+- If `strict_lockstep_rates && ap_dt > 1/max_hz`: throw `ArgumentError`.
+- Keep the warning behavior only when the user opts out.
 
-  * `step::Int` (physics ticks)
-  * `dt_us::Int` (integer microseconds per physics tick)
-  * `time_us::UInt64 = step * dt_us`
-* Compute `t = step * dt` only for convenience/logging, not for scheduling.
-* Multi-rate triggers become:
+**Why:** This prevents “looks stable” results from a fundamentally wrong PX4 timing.
 
-  * `if step % ap_steps == 0` (or equivalently track next_ap_step)
+**Status:** Implemented (strict by default; opt-out warns).
 
-This eliminates drift completely.
+#### Refactor 2 (P0): Fix `DelayedEstimator` dt mismatch
+- Store `dt_est_us` (or `dt_est`) in `DelayedEstimator`.
+- In `estimate!(::DelayedEstimator, ..., dt_hint)`:
+  - assert `abs(dt_hint - dt_est) <= 1e-12` (or compare microseconds).
+  - if mismatch: throw with a clear message.
 
-#### Refactor 2 (P0): **Define explicit “sample time” semantics**
+**Status:** Implemented (microsecond-quantized enforcement).
 
-Pick one and enforce it everywhere:
+#### Refactor 3 (P0/P1): Make gusts half-open intervals and/or step-quantized
+- Change GustStep to:
+  - active if `t >= t_on && t < t_off`
+- Change OUWind step gust to:
+  - `t < step_until_s` not `<=`
+- Better (preferred): remove `t` dependence entirely for step gusts:
+  - model gust as state set/cleared by events at tick boundaries.
 
-* **Option A (recommended): “state is at time t”**
-  Log the *pre-integration* state with timestamp `t`.
-  If you want post-state, use `t+dt`.
+**Status:** Implemented half-open bounds + `SampledWind` sample-and-hold, so gust forcing is constant across RK4 stages.
 
-* **Option B: “state is at end of interval”**
-  Log the *post-integration* state with timestamp `t+dt`.
+#### Refactor 4 (P1): Improve C-side StepRateLimiter to avoid drift
+- Add an `initialized` flag so first call runs immediately (optional).
+- Replace `last_run_us = now_us` with:
+  - `last_run_us += period_us` (possibly in a while loop if you want catch-up)
+- If you do **not** want catch-up, still prefer:
+  - `last_run_us = last_run_us + period_us * floor((now-last_run)/period_us)` to keep phase-locked.
 
-Right now you log post-state with pre-time. That will poison analysis and any attempt to compare to PX4 internal logs.
+#### Refactor 5 (P1): Optional ABI offset handshake
+Size checks are good, but offsets are better.
 
-#### Refactor 3 (P0/P1): **Split RNG streams per subsystem**
+Add C functions:
 
-Maintain a deterministic RNG plan, e.g.:
+- `px4_lockstep_get_inputs_offsets(uint32_t *out, size_t n)`
+- `px4_lockstep_get_outputs_offsets(uint32_t *out, size_t n)`
 
-* `rng_wind = MersenneTwister(seed ⊻ 0xWIND…)`
-* `rng_est  = MersenneTwister(seed ⊻ 0xEST…)`
-* `rng_bias = MersenneTwister(seed ⊻ 0xBIAS…)`
+where the array contains `offsetof(px4_lockstep_inputs_t, field)` for each field in a fixed order.
+On Julia side, compute offsets using `fieldoffset` and compare.
 
-Or use a counter-based RNG / stable “substream” derivation.
+This eliminates the “same size, wrong layout” failure mode.
 
-Rule: *Adding noise somewhere must not change the wind history*.
+#### “Don’t do X” rules
 
-#### Refactor 4 (P0/P1): **Add an ABI/version handshake**
-
-Add a small C function in `libpx4_lockstep` like:
-
-* `uint32_t px4_lockstep_abi_version();`
-* `size_t px4_lockstep_sizeof_inputs();`
-* `size_t px4_lockstep_sizeof_outputs();`
-
-Then in Julia `create()` assert these match `sizeof(LockstepInputs)` etc.
-
-Without this, you’re one PX4 update away from silent breakage.
-
-#### Refactor 5 (P1): **“Don’t do X” rules**
-
-Write these down in CONTRIBUTING.md and enforce with tests:
-
-* Don’t use Float64 time comparisons for cadence (only for reporting).
-* Don’t use global RNG.
-* Don’t iterate over `Dict`/`Set` in anything that influences physics/IO ordering; if you must, sort keys first.
-* Don’t let GC/finalizers drive correctness (always explicitly `close!` handles).
-* Don’t call lockstep from multiple threads. Assert `Threads.nthreads() == 1` for this package if you want hard guarantees.
+- Don’t schedule anything periodic using float comparisons (`t >= next_t`); always schedule using step counters or integer microseconds.
+- Don’t call `rand()` / `randn()` without an explicit RNG object.
+- Don’t rely on `Dict`/`Set` iteration order for anything that affects stepping order.
+- Don’t create more than one lockstep handle per process unless you’ve proven the C runtime is re-entrant.
 
 ---
 
@@ -301,143 +269,118 @@ Write these down in CONTRIBUTING.md and enforce with tests:
 
 ### Risk items table
 
-Here’s a concrete risk table (symptom → root cause → test → fix). I’m prioritizing things that can silently be wrong due to frames/units or discrete-time semantics.
+| Subsystem | Symptom you’d see | Likely root cause | How to test (concrete) | Recommended fix |
+|---|---|---|---|---|
+| PX4 lockstep cadence | Flight “works” but different stability/response vs PX4 SITL | `dt_autopilot` slower than fastest PX4 loop (if strict guard disabled) | Log `time_us` per PX4 step + confirm `Δ=dt_ap_us`; compare against configured rates; run a step response and compare to reference SITL | Implemented: `strict_lockstep_rates` defaults to error; opt-out warns |
+| DelayedEstimator | Delay sweep results don’t match configured delay | `delay_steps` computed from `dt_est` but stepping uses `dt_hint` | Unit test: ramp input; configured 50 ms delay at 10 ms dt should yield exact 5-step lag | Implemented: `dt_est_us` stored; mismatch throws |
+| Wind/gust boundaries | Small “kinks” at gust end; RK4 behaves oddly on boundary ticks | inclusive `t<=t_off`; RK4 intermediate evaluation crosses boundary | Test: gust duration exactly one tick, verify wind constant across that tick including RK4 stages | Implemented: half-open intervals + sample-and-hold wind per tick |
+| Wind sampling phase | Logged wind at t=0 is already “advanced”; confusing correlation with state | `step_wind!` called before logging at same t | Determinism test: log wind and confirm whether it represents [t,t+dt) sample | Implemented: `SampledWind` provides a held sample; logs record held wind + `time_us` |
+| Home alt vs density alt | PX4 altitude and atmosphere density disagree | PX4 uses `HomeLocation.alt_msl_m`, atmosphere uses `origin.alt_msl_m` | Create sim where these differ by 500 m; compare hover throttle required vs PX4 estimate | Implemented: shared `WorldOrigin` + sync/warn on mismatch |
+| Battery/prop coupling | Voltage sag response is delayed by 1 tick; thrust slightly “too high” at step changes | Propulsion uses pre-step `batt.voltage_v` and battery is updated after current computed | Step duty from 0→hover and check bus voltage and thrust response timing | Solve bus voltage under load (one iteration is enough) or document explicit “sampled voltage” semantics |
+| Battery warning / failsafe | PX4 never triggers RTL/land on low battery | SOC warnings may not match PX4 config thresholds | Force SOC low and verify `battery_warning` changes and PX4 nav_state transitions to RTL | Battery models emit SOC-based warnings; verify mapping vs PX4 params |
+| Quaternion integration | Long-run attitude drift; RK4 accuracy lower than expected | Normalizing quaternion inside RK4 stages (projection) alters vector field | Unit test: constant body rate for 60s vs analytic; compare yaw error scaling vs dt^4 | Normalize only at end of step, or use Lie-group (SO(3)) integrator |
+| Contact model | Bouncy ground, chatter, or occasional NaNs at high impact | stiff penalty model + RK4 + discontinuity | Drop test from 2m at various dt; ensure no NaNs and penetration bounded | Add penetration clamp + energy dissipation; consider splitting contact integration or using semi-implicit step for contact |
+| Propulsion inflow | Inflow correction affects climb and descent identically | inflow factor depends on `mu^2` (signless) | Compare thrust at +Vax vs -Vax same magnitude; should differ if modeling ascent/descent asymmetry | Decide model intent; if you care, use sign-aware inflow model or induced velocity model |
+| Motor model | Current spikes clipped; unrealistic transients | quasi-static current clamp and explicit ω integration | Step duty from 0→1; validate ω and current are stable and plausible | Fine for now; later add electrical inductance if needed (fidelity) |
+| C StepRateLimiter | Slight drift of loop execution phase, especially for odd dt/rates | `last_run_us=now_us` update rule | In C harness, log actual run times for a module when dt doesn’t divide period | Make limiter phase-locked (`+=period_us`), consider catch-up policy |
+| Multiple PX4 handles | Strange cross-talk between sims or nondeterministic init | global static PX4/uORB state reused | Unit test: create/destroy twice and ensure outputs identical; create two in parallel should error | Implemented: handle guard; `allow_multiple_handles=true` opt-out |
+| Logging contract | Confusion about whether log row is pre-step or post-step | You log pre-step truth but after stepping wind | Add explicit log field `time_us` + state “sample instant” in header | Implemented: `time_us` column + held wind sample per tick |
+| Autopilot command timing | Mission/arm happens 1 tick later than expected | scenario updates at dt, autopilot sampled at dt_autopilot | Integration test: arm_time not aligned to dt_autopilot; confirm it arms at next PX4 tick | Document as ZOH sampling; provide helper that snaps event times to PX4 ticks |
 
-| Subsystem                              | Symptom you’d see                                                                                  | Likely root cause in this codebase                                                                     | How to test (specific)                                                                             | Recommended fix                                                                                                                                                              |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Multi-rate scheduling**              | Occasional “hiccups” in PX4 update intervals; controller feels inconsistent; logs show dt jitter   | `PeriodicTrigger` float accumulation (`t_next += period`)                                              | Run 90s, record trigger step indices, assert they’re exact multiples (no ±1 tick slips)            | Use integer step counters for all periodic tasks                                                                                                                             |
-| **Logging**                            | First log sample already “moved”; derivative plots look phase-shifted; hard to compare to PX4 logs | Logging post-integration state with pre-step timestamp (`log!(t, new_state)`)                          | Check: at time=0, pos/vel should equal initial; currently it doesn’t                               | Define “sample time” contract; log pre-state at `t` or post-state at `t+dt`                                                                                                  |
-| **Rigid-body 6DOF**                    | Yaw/roll/pitch drift, or wrong sign yaw response                                                   | Quaternion convention mismatch vs ω integration / DCM formula                                          | Integrate known constant ω, compare to analytic quaternion; check yaw sign                         | Keep q_bn convention documented; add unit tests for yaw sign and DCM orthonormality                                                                                          |
-| **Rigid-body drag**                    | Tilted flight has wrong drag direction; high attitude behaves weirdly                              | Drag computed in NED with linear coefficient, not body-axis aero drag                                  | Simulate 90° roll with forward speed; check drag direction vs body frame                           | If you want simple drag: compute in body frame and rotate back, or explicitly document NED-linear drag assumption                                                            |
-| **Integrator (RK4) + quaternion**      | RK4 accuracy lower than expected; small attitude errors accumulate                                 | Normalizing quaternion in intermediate RK4 stages (`rb_add` normalizes) changes RK stages              | Constant ω test: compare RK4 vs exact; look for dt-dependent bias                                  | Use exponential map for attitude integration, or integrate rotation vector separately; normalize only at end-of-step                                                         |
-| **Integrator + discontinuities**       | Contacts cause instability or nonphysical bounce with RK4                                          | Contact force discontinuous at z=0, RK4 overshoots                                                     | Drop test from 1m: measure penetration and rebound energy                                          | Consider semi-implicit / symplectic integration for contact or clamp penetration; add damping on both compression/extension                                                  |
-| **Actuator dynamics (1st order)**      | Wrong effective time constant; dt changes behavior                                                 | First-order update uses `α = clamp(dt/τ,0,1)` (Euler-ish), not exact                                   | Step response: compare to analytic `1-exp(-t/τ)`; allow <1% error                                  | Use exact discretization `α = 1 - exp(-dt/τ)`                                                                                                                                |
-| **Actuator dynamics (2nd order)**      | Overshoot beyond limits; instability if dt large                                                   | Semi-implicit Euler without output clamping                                                            | Step input with ω_n high and dt near stability limit                                               | Add explicit output saturation + rate limiting; optionally discretize with Tustin for stability                                                                              |
-| **Propulsion duty→ω→thrust**           | Thrust vs duty scaling wrong; hover duty weird                                                     | Motor constants / units mismatch (Kv, Ke, Kt), or ESC model mismatch                                   | Static check: at ω_hover and ρ, thrust formula must match calibrated thrust                        | Keep calibration test: `prop_thrust(ω_hover)=T_hover` and `prop_torque(ω_hover)=Q_hover` within 1e-9                                                                         |
-| **Propulsion inflow**                  | Inflow correction “does nothing” or wrong sign; ascent/descent symmetry unintended                 | Uses `mu^2` → symmetric; `v_air_body` is **air velocity relative vehicle**, not “vehicle relative air” | Construct simple case: vel down 1 m/s, wind 0, verify Vax positive and matches convention          | Rename variables (`v_air_rel_vehicle_body`), document sign; if you need descent-only effects, make factor sign-aware                                                         |
-| **Propulsion energy consistency**      | Battery power doesn’t match mechanical power trends; throttle cuts feel wrong                      | Clamp motor current to ≥0 → no regen; energy removed with no accounting                                | Spin at ω, set duty=0: ω decays but battery current stays ~0 (ok) — but energy accounting mismatch | Either (a) explicitly accept “no regen” and add dissipative sink model, or (b) allow negative current and route to battery/sink                                              |
-| **Reaction torque / rotor directions** | Yaw response inverted or unstable                                                                  | Wrong `rotor_dir` sign or mapping from PX4 motor order to geometry                                     | Apply +Δ to yaw command (or differential motor commands) and check yaw acceleration sign           | Add a “sign test” harness; document motor order mapping; enforce with unit tests                                                                                             |
-| **Battery Thevenin**                   | Voltage sag unstable with stiff parameters; SOC drift                                              | Parameter unit mismatch or stiff RC if τ small; SOC clamp hides issues                                 | Constant current discharge: compare to analytic V(t) and SOC(t)                                    | Add parameter validation (R,C>0); use exact RC discretization (you already do); add tests                                                                                    |
-| **Battery injection timing**           | PX4 sees delayed voltage sag; low-voltage failsafe late/early                                      | `status(battery)` sampled before stepping battery for current of this tick                             | Compare logged batt_v vs current: sag appears one tick late                                        | Decide explicitly: “battery is sampled at start of tick” vs “instantaneous”; if needed, predict sag using current from previous tick or do a fixed-point iteration (careful) |
-| **Environment OU wind**                | Wind variance changes when dt changes; “turbulence strength” depends on step size                  | Euler–Maruyama discretization                                                                          | Run long sim at dt=0.01 and dt=0.02; compare var(v_gust)                                           | Use exact OU discretization: `v=ϕ v + σ sqrt(1-ϕ²) ξ` (same as your AR(1))                                                                                                   |
-| **GustStep wrapper**                   | GustStep(mean=OUWind) produces constant (non-evolving) mean turbulence                             | `step_wind!(::GustStep)=nothing` doesn’t delegate to mean                                              | Wrap OUWind in GustStep and check v_gust evolves over time                                         | Implement `step_wind!(w::GustStep, ...) = step_wind!(w.mean, ...)`                                                                                                           |
-| **Contacts**                           | Vehicle penetrates ground too much or oscillates                                                   | Penalty spring/damper tuning; damping only on compression                                              | Drop test: max penetration and settle time                                                         | Add symmetric damping and/or velocity projection; enforce stable penetration bounds                                                                                          |
-| **Estimator injection**                | Delay off by one; noise rate mismatch; bias stats wrong                                            | Delay steps computed by rounding; estimator only steps at PX4 rate; dt jitter from triggers            | Feed a ramp truth and verify output is exactly delayed by N samples; check noise PSD vs expected   | Enforce `delay_s = N*dt_est` exactly; align estimator update steps to PX4 schedule using integer ticks                                                                       |
-| **PX4 bridge mapping**                 | Mission works “most of the time” but odd nav transitions                                           | Missing/incorrect required signals or wrong landed behavior                                            | Compare PX4 uORB expectations: does it need additional flags/sensor validity?                      | Add a “bridge conformance” test suite: required fields present, consistent frames, monotonic time_us                                                                         |
+### Specific “golden tests” (unit + integration) — 10+ with signals and tolerances
 
-### Specific “golden tests” (unit + integration) — at least 10, with signals and tolerances
+Below are tests I would add (or ensure exist) that are *directly* tied to the contracts and the common failure modes. I’m being specific about signals and what “pass” means.
 
-I’m listing tests that you can actually automate and that will catch the frame/sign bugs you *will* otherwise rediscover later.
+#### A) Determinism / scheduling (P0)
 
-#### Timebase / scheduling (P0)
+1) **Bitwise replay test (same seed, same config)**
+- Run the same sim twice.
+- Dump CSV logs.
+- **Pass:** files are byte-identical (or row-by-row exact equality for every numeric field).
+- If you can’t guarantee byte-identical across platforms, require exact on the same machine and allow small tolerances cross-platform.
 
-1. **Periodic cadence test (no drift)**
+2) **PX4 cadence test**
+- Instrument `PX4LockstepAutopilot` to record every `time_us` passed to `px4_lockstep_step`.
+- **Pass:** `diff(time_us)` is exactly constant and equals `dt_autopilot_us` for the whole run.
 
-* Setup: dt=0.002, ap_steps=5, log_steps=5, run step counter to 100k.
-* Signals: indices where PX4/log triggers fire.
-* Assert: `trigger_steps == 0:5:...` exactly (integer equality).
-* Tolerance: 0.
+3) **Multi-rate alignment test**
+- Choose `dt=0.002`, `dt_autopilot=0.01`, `dt_log=0.02`.
+- **Pass:** autopilot steps on steps {0,5,10,...}, logs on {0,10,20,...}. No drift after 10k steps.
 
-2. **PX4 time_us monotonic + constant increment**
+#### B) Estimator injection (P0)
 
-* Setup: step PX4 for 10k controller updates.
-* Signals: `time_us` passed to lockstep.
-* Assert: strictly increasing; `Δtime_us == ap_steps * dt_us` every call.
-* Tolerance: 0.
+4) **DelayedEstimator step-quantized delay**
+- Build `DelayedEstimator(inner=TruthEstimator(), delay_s=0.05, dt_est=0.01)`.
+- Feed a known input: `pos_ned = (t,0,0)` sampled at 0.01.
+- **Pass:** output `pos_ned.x` equals input from exactly 5 steps earlier (no fractional drift), for all steps after fill.
+- Also add a **negative test**: call `estimate!(..., dt_hint=0.02)` and assert it throws.
 
-3. **Log timestamp semantics test**
-   Pick your contract and enforce it:
+#### C) Wind / gust correctness (P0/P1)
 
-* If logging pre-state at `t`: first sample must equal initial state exactly.
-* If logging post-state at `t+dt`: first sample time must be `dt` and state must match 1-step integration.
-* Tolerance: exact equality for time stamps; state tol ~1e-12 for floats if deterministic.
+5) **Gust duration quantization test**
+- Use `EventScenario.wind_step_at!(t_start=1.0, duration=0.03)` with `dt=0.01`.
+- **Pass:** gust is active for exactly 3 logged ticks (or your chosen quantization rule), and never partially within a tick.
 
-#### Rigid-body + integrators (P0/P1)
+6) **OUWind stationary variance test (statistical)**
+- Run OUWind alone with `tau=1.0`, `sigma=(1,1,1)`, `dt=0.01` for 200s (with fixed seed).
+- Compute empirical variance of each component over the last 150s.
+- **Pass:** variance within e.g. ±10% of `sigma^2`. (This is a regression guard more than physics truth.)
 
-4. **Free-fall analytic check**
+#### D) Rigid body + integrators (P0/P1)
 
-* Setup: no thrust, no drag, no wind, no contact, initial pos=0, vel=0.
-* Expected: `vel_z(t)=g t`, `pos_z(t)=0.5 g t^2` in NED.
-* Signals: pos_z, vel_z at t=1.0.
-* Tolerance:
+7) **Free-fall analytic test (no drag, no thrust)**
+- Set mass/inertia arbitrary, no thrust, no drag.
+- Start at `pos_z=0`, `vel_z=0`.
+- Integrate for 1.0s.
+- **Pass:** `vel_z ≈ g*t` and `pos_z ≈ 0.5*g*t^2` with tolerance:
+  - Euler: error O(dt), set tolerance ~ `2*dt*g`
+  - RK4: much tighter, e.g. 1e-6–1e-5 depending on dt.
 
-  * RK4 with dt=0.01: pos error < 1e-6 m, vel error < 1e-6 m/s
-  * Euler: looser, but still bounded/predictable.
+8) **Constant body-rate attitude test (already partially present)**
+- Hold ω=(0,0,1) rad/s and integrate 10s.
+- **Pass:** yaw error < 1e-6 rad (RK4) at dt=1e-3, and error scales ~dt^4 when halving dt.
 
-5. **Constant-rate quaternion integration**
+#### E) Actuators + propulsion (P1)
 
-* Setup: ω_body = (0,0,π) rad/s, start q=identity, integrate 1.0 s.
-* Expected: yaw = π rad (mod wrap), quaternion near `(0,0,0,1)` (or sign-flipped).
-* Signals: `q_bn`, `yaw_from_quat(q_bn)`.
-* Tolerance: angle error < 1e-4 rad; `|‖q‖-1| < 1e-12`.
+9) **First-order actuator exact time constant**
+- For `FirstOrderActuators{1}(τ=0.05)` with dt=0.01:
+- Step input from 0→1 at t=0.
+- **Pass:** after one τ (0.05s), output is `1 - exp(-1) ≈ 0.632` within 1e-3.
 
-6. **DCM orthonormality invariant**
+10) **Yaw torque sign test (rotor_dir correctness)**
+- Freeze attitude level, apply equal thrust but set rotor directions with known pattern.
+- Introduce a small differential that should yield positive yaw acceleration.
+- **Pass:** sign of `ω_dot.z` matches expected given rotor_dir and km sign.
 
-* Setup: random q, compute R=quat_to_dcm(q).
-* Assert: `R*R'` ≈ I, det(R) ≈ +1.
-* Tolerance: `‖R*R' - I‖_F < 1e-12`, `|det(R)-1| < 1e-12`.
+11) **Battery sag timing test**
+- Apply a step in duty at t=0, log `batt_v` and `bus_current_a`.
+- **Pass:** whichever semantics you choose, the response is consistent:
+  - If “voltage under load same tick”: sag begins at t=0 tick.
+  - If “sampled voltage”: sag begins at t=dt tick (but then document it).
 
-#### Actuators (P1)
+11b) **Battery warning threshold test**
+- Configure battery thresholds (e.g. SOC-based) and drive SOC below each threshold.
+- **Pass:** `battery_warning` transitions through expected levels at the correct SOC/voltage, and PX4 reacts (e.g. nav_state enters RTL) if commander is enabled.
 
-7. **First-order actuator exact step response**
+#### F) Contact model (P1)
 
-* Setup: τ=0.1, dt=0.01, cmd steps 0→1 at t=0, simulate 1s.
-* Expected: y(t) = 1 - exp(-t/τ).
-* Signal: y[k].
-* Tolerance: max abs error < 1e-4 (with exact discretization it’ll be much smaller).
+12) **Drop test stability**
+- Drop from 1m with zero thrust, dt=0.002.
+- **Pass:** no NaNs; penetration `pos_z` never exceeds e.g. 1 cm (tune to your stiffness); total energy decreases after impact (with damping).
 
-#### Propulsion / frames / signs (P0/P1)
+#### G) C ABI + integration safety (P0/P1)
 
-8. **Air-relative velocity convention test**
+13) **ABI mismatch test**
+- Temporarily override expected ABI version in Julia (or mock C getter).
+- **Pass:** `create()` throws with a message that includes expected/actual and struct sizes.
 
-* Setup: wind=0, q=identity, vel_ned=(0,0,+1) m/s (descending).
-* Expected: `v_air_ned = wind - vel = (0,0,-1)`; `v_air_body.z = -1`; `Vax = -v_air_body.z = +1`.
-* Signals: computed `v_air_body`, computed Vax in propulsion.
-* Tolerance: exact equality for these small integers (within 1e-12).
+14) **Single-handle enforcement test**
+- Create a handle, then attempt to create a second without destroying the first.
+- **Pass:** second create throws (or returns error code) with a clear message.
 
-9. **Prop calibration identity**
-
-* Setup: default Iris prop params. Compute thrust at ω_hover and ρ=1.225.
-* Expected: `T(ω_hover)=thrust_hover_per_rotor` exactly (since you calibrate kT that way).
-* Signal: prop_thrust result.
-* Tolerance: < 1e-12 relative error.
-
-10. **Yaw torque sign test**
-
-* Setup: hover state, inject differential motor duties that should produce +yaw moment (per your rotor_dir convention).
-* Expected: ω_dot_z sign (body) matches convention you document; yaw acceleration sign matches.
-* Signal: `τ_body.z`, `ω_dot.z`.
-* Tolerance: sign only (≠0 and correct sign).
-
-#### Battery / powertrain (P1)
-
-11. **Thevenin transient analytic check**
-
-* Setup: constant current draw I=10A for 1s, known R0,R1,C1, constant OCV.
-* Expected: `v1(t)=I*R1*(1-exp(-t/τ))`, `V=OCV - I*R0 - v1`.
-* Signal: battery voltage after 1s.
-* Tolerance: < 1e-4 V.
-
-12. **SOC coulomb counting**
-
-* Setup: capacity=5Ah, discharge at 5A for 3600s equivalent (scaled test time).
-* Expected: SOC drops by exactly 1.0 over 1 hour at 5A.
-* Signal: SOC.
-* Tolerance: < 1e-6.
-
-#### Wind / estimator (P1)
-
-13. **OU stationary variance dt-invariance**
-
-* Setup: σ=1, τ=5s. Run long sequence at dt=0.01 and dt=0.02.
-* Expected: var(v_gust) ≈ σ² in both cases (after burn-in) and the two variances are within ~5%.
-* Tolerance: |var-1| < 0.05; |var_dt1-var_dt2| < 0.05.
-
-14. **Delay buffer exactness**
-
-* Setup: delay_s=0.03, dt_est=0.01 → 3 steps. Feed deterministic ramp.
-* Expected: output = input shifted by exactly 3 samples.
-* Tolerance: 0 (exact) for positions if you use isbits values.
+15) **PX4 step monotonic test**
+- Call lockstep step with time_us decreasing (intentional).
+- **Pass:** Julia wrapper throws before calling C, or C returns error and Julia surfaces it.
 
 ---
 
@@ -447,125 +390,114 @@ I’m listing tests that you can actually automate and that will catch the frame
 
 #### Keep
 
-* **Subsystem separation in `Sim/`** (Types, RigidBody, Environment, Propulsion, Powertrain, Estimators, Contacts, Scenario, Events). This is the right level of modularity for maintainable flight sim code.
-* **Single-threaded, fixed-step core**. Determinism is dramatically easier here.
-* **StaticArrays for small vectors/quats**. Good for performance and clarity.
+- **Microsecond-quantized timebase** (`dt_us`, `t0_us`) and step-based scheduling (`StepTrigger`). This is the right foundation.
+- **RNG stream splitting** per subsystem.
+- **Clear module separation** inside `PX4Lockstep.Sim`:
+  - Environment / RigidBody / Integrators / Vehicles / Propulsion / Powertrain / Logging.
+- **C ABI wrapper remains dependency-light** (StaticArrays + stdlib deps).
 
 #### Change
 
-* **Timebase abstraction**: Float64 time as the “truth” is the root cause of your cadence drift. Replace with integer ticks.
-* **Multi-rate scheduler**: stop using `PeriodicTrigger` with float accumulation.
-* **Autopilot output typing**: `last_out::Any` is both a performance problem and a correctness risk (it hides type errors and encourages “just getproperty whatever”). Make outputs concrete.
-* **Wind OU discretization**: re-use your AR(1) exact form to make it dt-stable.
-* **Gust wrapper semantics**: if you keep `GustStep`, it must delegate stepping to the wrapped wind model.
+- **Unify “world origin” concept** (implemented):
+  - `WorldOrigin` is now shared by PX4 and `EnvironmentModel`, with automatic sync/warn on mismatch.
+
+- **Make sampling semantics explicit and testable** (implemented)
+  - Wind is sampled once per tick (`SampledWind`), held across RK4 stages, and logs include `time_us`.
+
+- **Harden lockstep handle lifecycle** (implemented)
+  - Single active handle enforced by default; `allow_multiple_handles=true` is an explicit opt-out.
+
+- **Delay estimator correctness** (implemented)
+  - `DelayedEstimator` stores `dt_est_us` and rejects mismatched `dt_hint`.
 
 #### Remove (or quarantine)
 
-* **Including Sim in the base wrapper module** if you truly want a dependency-light wrapper. Right now, `PX4Lockstep` can’t be used without pulling in Sim codepaths at load time.
-* **Float-time periodic triggers** (full removal, not “tweak eps”).
+- The float-based `autopilot_step(ap, t::Float64, ...)` overload should be treated as a convenience only.
+  - Keep it, but mark as “not for lockstep-critical paths” (you already did), and avoid calling it from the sim engine.
 
 ### Module boundaries / dependency direction
 
-You said “wrapper should stay small” — but today the package-level dependencies include StaticArrays, Random, Printf, Aqua, JET, JuliaFormatter. The wrapper isn’t actually light in practice.
+Right now you include `Sim` from inside `PX4Lockstep` (single package). That’s fine while deps stay light.
 
-If you care about that contract, use **Julia package extensions**:
+Long-term, if Sim grows (terrain, geo, file formats, plotting), you will want either:
 
-* Base package `PX4Lockstep` contains only the C ABI wrapper (Libdl only).
-* `ext/PX4LockstepSimExt.jl` defines `PX4Lockstep.Sim` and brings in StaticArrays/Random/Printf/etc.
+- a separate package `PX4LockstepSim.jl`, or
+- make Sim an optional extension package using Julia’s package extension mechanism.
 
-That gives you a clean dependency direction without a separate repo.
+Don’t do this yet unless you start pulling in heavy deps.
 
 ### Type design and dispatch patterns
 
-* `SimulationInstance{E,V,A,EST,I,S,B,L,C,R}` is aggressively parametric. That can be good for performance, but compile-time might get painful as you add options.
-* The bigger issue is `last_out::Any`. That defeats specialization at exactly the spot you don’t want it.
-
-**Fix:** make `SimulationInstance` parametric on output type, or store:
-
-* `last_out::Union{Nothing,LockstepOutputs}` for PX4
-* or define an `AbstractAutopilotOutput` trait.
+- `SimulationInstance{...}` is heavily parametric — good for type stability, but compile times can climb.
+- `EventScheduler` uses `Vector{AbstractEvent}` (dynamic dispatch each tick). For a small number of events, fine; for lots of events, you may want a typed scheduler.
 
 ### Data ownership / mutation
 
-You’re mostly doing the right thing:
+Good pattern overall:
 
-* Immutable “params”, mutable “state” (vehicle state, propulsion ω, battery state).
-* But you still allocate in hot loops (propulsion arrays, closure creation). That will force GC eventually.
+- truth state is immutable `RigidBodyState`, replaced each step
+- models like batteries, wind, actuators are mutable and stepped in-place
+
+One minor sharp edge:
+
+- `dynfun = DynamicsWithContact(vehicle.model, env, contact)` captures env/contact by value.
+  - If someone replaces `sim.env` or `sim.contact`, dynfun won’t see it.
+  - Either document “env/contact objects are not replaced after construction” or rebuild dynfun if they are.
 
 ### Configuration ergonomics
 
-Overall decent (`@kwdef` structs). A few improvements that pay off:
+You’re in a good place: defaults run, but power users can swap models.
 
-* Enforce all discrete-time relationships at construction (dt ratios must be integer).
-* Make “model wiring” explicit and validated: if a vehicle requires propulsion, make it non-optional in that vehicle type rather than runtime `error`.
+A few high-payoff tweaks:
+
+- Implemented: `EnvironmentModel` now takes `origin::WorldOrigin`, and PX4 home syncs to it.
+- Provide a `SimDefaults.iris_px4_lockstep()` helper that returns a fully consistent stack (origin, density, rotor geometry, PX4 config).
 
 ### Logging API
 
-Current logging is explicit and fast-ish, but schema evolution will hurt:
+- `SimLog` + `log_to_csv` is fine and deterministic.
+- Implemented: `time_us` added to logs (`schema_version=2`).
 
-* `_CSV_HEADER` must be updated manually.
-* log fields are positional in CSV and must remain aligned.
-
-**Better pattern:**
-Versioned schema + column selection:
-
-* `LogSchema(version=1, columns=[...])`
-* sink writes header including schema version
-* add fields in a backward-compatible way.
-
-Also: decide the sample-time contract (see P0).
+Also consider logging lockstep config hash and sim config at the top of CSV (as comment lines) for provenance.
 
 ### Error handling / diagnostics
 
-* Some “silent” returns (e.g., failure injection ignoring bad indices) should become warnings in debug mode.
-* Add `@assert` guards behind a `cfg.debug::Bool` or compile-time flag so you can flip between “fast” and “paranoid”.
+The sim is correctly “fail fast” in many places (bad dt, bad microsecond quantization, ABI mismatch).
+
+Handled “fail louder” cases:
+
+- PX4 cadence mismatch now errors by default (`strict_lockstep_rates`).
+- DelayedEstimator dt mismatch now errors on mismatch.
+- Multiple lockstep handles are guarded by default.
+
+Remaining:
+
+- C StepRateLimiter drift/jitter (needs phase-locked update).
 
 ### 3–5 concrete API changes that will pay off
 
-1. **Introduce `SimTime`**
-
+1) **World origin unification** (implemented)
 ```julia
-struct SimTime
-    step::Int
-    dt::Float64
-    dt_us::Int
+struct WorldOrigin
+  lat_deg::Float64
+  lon_deg::Float64
+  alt_msl_m::Float64
 end
-time_s(st::SimTime) = st.step * st.dt
-time_us(st::SimTime) = UInt64(st.step * st.dt_us)
 ```
+Use it in both `EnvironmentModel` and `PX4LockstepAutopilot`.
 
-Use `step` for scheduling, `time_s` only for reporting.
+2) **Add `time_us` to log schema** (implemented)
+- store `UInt64` or `Float64(time_us)*1e-6` plus the integer.
 
-2. **Replace `PeriodicTrigger` with `StepTrigger`**
+3) **Strict lockstep rate option** (implemented)
+- add `strict_lockstep_rates=true` default for PX4 autopilots.
 
-```julia
-struct StepTrigger
-    period_steps::Int
-end
-due(tr::StepTrigger, step::Int) = (step % tr.period_steps == 0)
-```
+4) **DelayedEstimator stores dt** (implemented)
+- `DelayedEstimator(inner; delay_s, dt_est)` should store `dt_est_us` and enforce.
 
-3. **Make autopilot output type explicit**
-
-* `autopilot_step(::PX4LockstepAutopilot, ...)::LockstepOutputs`
-* store `last_out::Union{Nothing,LockstepOutputs}` (no `Any`)
-
-4. **Change `step_integrator` API to avoid per-tick closure allocation**
-   Pass a callable struct (functor) or the simulation + state directly:
-
-```julia
-step_integrator!(integrator, sim, state, u_dyn, t, dt)
-```
-
-so you don’t create a new closure each tick.
-
-5. **Standardize naming for air-relative velocity**
-   Rename:
-
-* `v_air_ned` → `v_air_rel_vehicle_ned` (air velocity relative vehicle)
-* `v_rel_ned` → `v_vehicle_rel_air_ned` (vehicle relative air)
-
-This removes a whole class of sign bugs.
+5) **LockstepSession** (optional)
+- A small wrapper that manages “one PX4 runtime per process” and ensures clean shutdown.
+- Current code enforces a single handle by default without a separate session type.
 
 ---
 
@@ -573,380 +505,311 @@ This removes a whole class of sign bugs.
 
 ### What I would profile in Julia (and what to look for)
 
-Even without threads, performance matters because GC pressure and unpredictable allocations make debugging miserable.
+Even without threads, you want the sim to run fast enough for long sweeps.
 
-Use:
+Profile targets:
 
-* `@time` / `@allocated` around a loop of `step!` (10k steps)
-* `@code_warntype step!(sim)` to catch red `Any`
-* `Profile.@profile` + `Profile.print()` for hotspots
-* `BenchmarkTools.@btime` for microbenching (dev dependency is fine)
+- `Simulation.step!`
+- `Vehicles.dynamics(::IrisQuadrotor, ...)`
+- `Propulsion.step_propulsion!` / `_step_unit!`
+- `Integrators.step_integrator!` (Euler/RK4)
+- `Logging.log_sample!`
 
-**Signatures to look for:**
+In Julia, look for:
 
-* Allocations per tick > 0 (ideally near-zero in the core loop)
-* Type instability: `Any`, `Abstract...` containers in hot loops
-* Closure allocations (anonymous function created each tick)
-* Repeated heap allocations from `zeros(...)` in propulsion
+- allocations per tick (`@allocated step!(sim)` should be ~0 in steady state)
+- type instabilities (`@code_warntype step!(sim)`; any `Any` in hot path is a red flag)
+- dynamic dispatch in inner loops (often from abstract containers)
 
-### Concrete allocation hot spots in your code
+### Concrete allocation hot spots to watch
 
-* `Propulsion.step_propulsion!` allocates `zeros(Float64,N)` arrays every tick (`omegas`, `thrusts`, `torques`).
-  At 500 Hz this is guaranteed GC churn.
+1) **`MVector` usage in propulsion**
+`MVector` is a mutable struct. In Julia, mutable structs generally heap-allocate unless scalar-replaced.
 
-* `Simulation.step!` builds an anonymous function `f = (τ,state,uu)->...` every tick.
-  That is very likely allocating (and even if it’s optimized away sometimes, don’t rely on it).
+If you see allocations in `step_propulsion!`, replace `MVector` with `ntuple`/`SVector` construction:
 
-* `last_out::Any` forces dynamic dispatch / boxing when you do `getproperty(out, ...)`.
+- build `NTuple{N,Float64}` with `ntuple` and then `SVector(...)`.
 
-* `SimLog` pushes onto growing vectors; if you know the run length, preallocate capacity (or allocate exact length if fixed).
+2) **EventScheduler dynamic dispatch**
+`Vector{AbstractEvent}` + calling `_should_fire` per event per tick can become costly if you start adding lots of events.
+Not urgent unless you go heavy on event-driven scenarios.
+
+3) **Frequent `exp()` calls**
+- `FirstOrderActuators` uses `exp(-dt/τ)` every tick.
+- `OUWind` uses `exp(-dt/τ)` every tick.
+- `AR1` uses `exp(-dt/τ)` every tick.
+
+Since dt is constant, you can precompute coefficients (α, ϕ) once per sim config and store them inside these models when constructed.
+**Status:** Implemented via cached coefficients in each model.
 
 ### Numerical stability concerns
 
-* **RK4 + discontinuities** (contacts, saturation, gust on/off) can be worse than Euler because it samples the discontinuity multiple times in one step and can overshoot. If you care about contact realism, consider:
+- **RK4 + discontinuities**: contact steps are discontinuous. RK4 assumes smoothness.
+  - Either:
+    - keep dt small and accept it, or
+    - treat contact forcing as tick-quantized (constant over dt), which makes RK4 “honest” again.
 
-  * event detection (stop integration at contact),
-  * or a contact-stable integrator (semi-implicit) for the contact axis,
-  * or increase damping and clamp penetration.
+- **Contact stiffness**: penalty methods can go unstable if `k*dt^2/m` is too large.
+  - Add a guideline/assert like:
+    - `dt < 0.2*sqrt(m/k)` (rule of thumb) for stability.
 
-* **Actuator and motor integration** is explicit Euler. Stability is dt-dependent. Add guards:
-
-  * assert `dt < 0.2 * τ_motor` or similar heuristic,
-  * or use exact discretization where possible (first-order states).
-
-* **Battery RC** can get stiff if τ is small. Your exact discretization for v1 is good; keep that.
-
-All fixes above preserve determinism because they are purely algorithmic and single-threaded.
+- **SecondOrderActuators**: semi-implicit Euler is OK at typical dt, but can go unstable for large ωn.
+  - Add a warning if `ωn*dt > ~0.3` (tunable).
 
 ---
 
 ## 5) Prioritized improvement backlog
 
-### P0 (must-fix for correctness + determinism)
+Effort scale:
+- **S**: 1–4 hours
+- **M**: 1–3 days
+- **L**: 1–2+ weeks
 
-**P0-1: Replace Float64 periodic triggers with integer step scheduling**
+### P0 (completed)
 
-* **Rationale:** Your own log shows cadence jitter (0.008/0.012 instead of 0.010). That breaks lockstep determinism and controller semantics.
-* **Plan:**
+**P0 — Enforce correct PX4 cadence by default**
+- **Rationale:** Prevents invalid “lockstep” runs where PX4 loops execute too slowly.
+- **Plan:**
+  - Add `strict_lockstep_rates=true`.
+  - If `max_internal_rate_hz` is known and `ap_dt > 1/max_hz`, throw.
+  - Provide opt-out if needed.
+- **Effort:** S
+- **Acceptance criteria:**
+  - With default settings, a mismatched dt triggers an exception with clear message.
+  - With opt-out, it only warns.
+  - **Status:** Implemented.
 
-  * Add `step::Int` to `SimulationInstance`
-  * Precompute `ap_steps`, `log_steps` as integers at init; assert they’re valid
-  * Replace `PeriodicTrigger` with step modulo or next-step counters
-* **Effort:** M
-* **Acceptance criteria:**
+**P0 — Fix DelayedEstimator dt mismatch**
+- **Rationale:** Silent wrong delay is unacceptable for delay sensitivity tests.
+- **Plan:**
+  - Store `dt_est_us` in `DelayedEstimator`.
+  - Compare against `dt_hint` (microsecond-quantized) in `estimate!`.
+- **Effort:** S
+- **Acceptance criteria:**
+  - Unit test passes for correct dt.
+  - Unit test throws for mismatch.
+  - **Status:** Implemented.
 
-  * Over 100k physics steps, PX4 is stepped exactly every `ap_steps` with zero jitter.
-  * Log sample times are exactly periodic (no ±dt slips).
-  * Regression: `unique(diff(time_s)) == {dt_log}` exactly.
+**P0 — Gust boundary semantics (half-open / tick-quantized)**
+- **Rationale:** Avoid within-step switching with RK4; make gust timing unambiguous.
+- **Plan:**
+  - Change `<=` to `<` for end bounds.
+  - Optionally rework step gust to be set/cleared via events only.
+- **Effort:** S
+- **Acceptance criteria:**
+  - A gust scheduled for exactly N ticks remains constant across each tick’s RK4 stages.
+  - Integration test: gust active for correct number of ticks.
+  - **Status:** Implemented (half-open + sample-and-hold wind).
 
-**P0-2: Define and enforce log sample-time semantics**
-
-* **Rationale:** You currently log post-step state with pre-step timestamp; that is analytically wrong and will mask/control bugs.
-* **Plan:**
-
-  * Decide: log pre-state at `t` OR post-state at `t+dt`
-  * Update `Simulation.step!` and plotting scripts accordingly
-  * Add a unit test that checks the first sample matches initial conditions (or has correct timestamp)
-* **Effort:** S
-* **Acceptance criteria:**
-
-  * First log sample is consistent with declared semantics.
-  * A free-fall analytic test passes using log values without extra manual time shifts.
-
-**P0-3: Make PX4 stepping cadence and `time_us` increment exact**
-
-* **Rationale:** Lockstep libraries typically assume deterministic time increments; jitter defeats the whole point.
-* **Plan:**
-
-  * Derive `time_us` from integer tick counters, not from Float64 `t*1e6`
-  * Assert `time_us` increments exactly by constant Δ each PX4 step
-* **Effort:** S
-* **Acceptance criteria:**
-
-  * `Δtime_us` is constant across the entire run (exact integer equality).
-
-**P0-4: Add ABI/layout handshake for LockstepInputs/Outputs**
-
-* **Rationale:** Silent corruption risk whenever the C ABI changes.
-* **Plan:**
-
-  * Add C-side functions for ABI version and struct sizes (if you own that lib)
-  * Assert in Julia at `create()`
-* **Effort:** M (depends on C side access)
-* **Acceptance criteria:**
-
-  * Wrapper throws a clear error if ABI mismatches rather than running with garbage.
+**P0 — Add `time_us` to log schema**
+- **Rationale:** Debugging lockstep without time_us in logs is pain; also validates contract.
+- **Plan:**
+  - Add column `time_us` to log row.
+  - Populate with `Simulation.time_us(sim)` for the logged tick.
+- **Effort:** S
+- **Acceptance criteria:**
+  - CSV includes `time_us`.
+  - Cadence test can be written purely from logs.
+  - **Status:** Implemented (`schema_version=2`).
 
 ### P1 (high payoff, reduces “future debugging tax”)
 
-**P1-1: Split RNG streams per subsystem**
+**P1 — Unify world origin between PX4 injection and atmosphere**
+- **Rationale:** Prevent subtle altitude/density inconsistencies.
+- **Plan:**
+  - Introduce `WorldOrigin` and use it in both `EnvironmentModel` and `PX4LockstepAutopilot`.
+  - Warn or assert if mismatch.
+- **Effort:** M
+- **Acceptance criteria:**
+  - Single source of truth for `(lat,lon,alt)`.
+  - Hover thrust matches when density changes with altitude.
+  - **Status:** Implemented (`WorldOrigin` + sync/warn).
 
-* **Rationale:** Keeps regression tests stable; avoids “change wind because I added sensor noise”.
-* **Plan:**
+**P1 — Decide and codify wind sampling semantics**
+- **Rationale:** Avoid phase confusion; ensure “wind held constant over dt” is actually true in RK4.
+- **Plan options (pick one):**
+  1) Sample wind at tick start, store `wind_sample_ned`, use that everywhere (drag + propulsion + log).
+  2) Step wind at end of tick so state corresponds to “value at t”.
+- **Effort:** M
+- **Acceptance criteria:**
+  - Documented semantics.
+  - Wind is constant across RK4 stage evaluations.
+  - **Status:** Implemented (`SampledWind` sample-and-hold).
 
-  * Add `rng_wind`, `rng_est`, `rng_noise` fields
-  * Seed via deterministic mixing of `cfg.seed`
-* **Effort:** S
-* **Acceptance criteria:**
+**P1 — Battery/proplusion coupling improvement**
+- **Rationale:** Remove 1-tick lag in voltage sag and improve energy consistency.
+- **Plan:**
+  - One-iteration corrector:
+    - compute current from V_prev
+    - update battery RC state
+    - recompute V under load and current
+    - optionally average
+  - Or solve algebraic loop explicitly (future).
+- **Effort:** M
+- **Acceptance criteria:**
+  - Step duty response shows voltage sag timing consistent with chosen semantics.
+  - No numerical instability.
 
-  * Adding a new noise source does not change wind history (verified by wind-only golden test).
 
-**P1-2: Replace OUWind Euler–Maruyama with exact OU discretization**
+**P1 — Implement battery warning semantics (if PX4 expects it)**
+- **Rationale:** If PX4 uses `battery_status.warning`, you currently can’t test battery failsafe behavior (RTL/land) in lockstep.
+- **Plan:**
+  - Decide source of truth: compute warning in sim from SOC/voltage, or confirm PX4 computes warning and stop injecting it.
+  - If sim-computed: implement threshold mapping (none/low/critical/emergency/failsafe) and test transitions.
+- **Effort:** S/M
+- **Acceptance criteria:**
+  - With a scripted SOC drain, `battery_warning` changes at the configured thresholds.
+  - PX4 transitions to expected failsafe modes when commander is enabled.
+  - **Status:** Partially implemented (SOC-based warnings emitted; verify mapping vs PX4 params).
 
-* **Rationale:** dt-dependent wind stats is a correctness trap.
-* **Plan:**
+**P1 — Improve C StepRateLimiter**
+- **Rationale:** Avoid drift/jitter in module scheduling; make behavior explicit.
+- **Plan:**
+  - phase-lock limiter (`+= period_us`)
+  - decide catch-up policy (probably “no catch-up, but phase-locked”)
+  - optionally run once at t=0
+- **Effort:** M
+- **Acceptance criteria:**
+  - Module run timestamps match expected periodic schedule for a variety of dt/period combos.
 
-  * Use `ϕ = exp(-dt/τ)` and `v = ϕ v + σ*sqrt(1-ϕ^2)*ξ`
-  * Reuse your existing AR(1) pattern
-* **Effort:** S
-* **Acceptance criteria:**
+**P1 — Enforce “one lockstep handle per process”**
+- **Rationale:** Prevent non-obvious corruption in Monte Carlo/sweeps.
+- **Plan:**
+  - global refcount or singleton guard in Julia wrapper.
+- **Effort:** S/M
+- **Acceptance criteria:**
+  - Second `create()` errors unless previous handle destroyed.
+  - **Status:** Implemented (guard + `allow_multiple_handles` opt-out).
 
-  * Stationary variance matches σ² within 5%.
-  * Variance is stable when dt changes (dt-invariance test).
+**P1 — Precompute dt-dependent coefficients**
+- **Rationale:** Speed without sacrificing determinism.
+- **Plan:**
+  - Store `α`, `ϕ` etc in AR1/OUWind/FirstOrderActuators once per dt.
+- **Effort:** M
+- **Acceptance criteria:**
+  - `@allocated step!(sim)` stays ~0.
+  - tick runtime decreases measurably.
+  - **Status:** Implemented (AR1/AR1Vec/OUWind/FirstOrderActuators cache dt coefficients).
 
-**P1-3: Fix GustStep stepping delegation**
+### P2 (nice to have, but don’t distract from core correctness)
 
-* **Rationale:** `GustStep(mean=OUWind)` is currently broken (mean never advances).
-* **Plan:** implement `step_wind!(w::GustStep, ...) = step_wind!(w.mean, ...)`
-* **Effort:** XS
-* **Acceptance criteria:** wrapping OUWind in GustStep still produces evolving turbulence.
+**P2 — Lie group attitude integration**
+- **Rationale:** More accurate and robust attitude propagation, especially for large rates.
+- **Plan:**
+  - implement SO(3) exponential update: `R_{k+1} = R_k * Exp(ω*dt)`
+  - keep quaternion as storage, convert via exp map
+- **Effort:** M/L
+- **Acceptance criteria:**
+  - constant-rate test shows improved accuracy vs RK4 projection.
 
-**P1-4: Remove `last_out::Any` (type stability)**
-
-* **Rationale:** `Any` in the hot loop kills specialization and hides interface mistakes.
-* **Plan:** make it `Union{Nothing,LockstepOutputs}` (for PX4 sim) or parametric output type.
-* **Effort:** S
-* **Acceptance criteria:**
-
-  * `@code_warntype step!(sim)` shows no `Any` on the critical path.
-
-**P1-5: Kill per-tick allocations in propulsion**
-
-* **Rationale:** `zeros(...)` every tick will force GC churn; hurts performance and can complicate determinism in test harnesses.
-* **Plan:**
-
-  * Use `NTuple{N,Float64}` or `MVector{N,Float64}` buffers stored in the propulsion state
-  * Return `SVector` without allocating intermediate arrays
-* **Effort:** M
-* **Acceptance criteria:**
-
-  * `@allocated` for 10k `step!` iterations is ~0 (or a small constant not proportional to steps).
-
-**P1-6: Avoid per-tick closure creation in integrator call**
-
-* **Rationale:** likely allocates; also harder to reason about type stability.
-* **Plan:** pass a functor or call a dedicated `dynamics_step!(...)`.
-* **Effort:** M
-* **Acceptance criteria:** no closure allocations; simpler `@code_warntype`.
-
-**P1-7: Actuator model discretization upgrades**
-
-* **Rationale:** wrong time constants when dt changes; can destabilize control tuning.
-* **Plan:** use exact discretization for 1st order; clamp outputs for 2nd order.
-* **Effort:** S
-* **Acceptance criteria:** step response matches analytic within 1e-4.
-
-**P1-8: Document and test rotor ordering + yaw torque sign**
-
-* **Rationale:** classic “it flies but yaw is weird” pitfall; hard to debug later.
-* **Plan:** add a dedicated test that applies known differential thrust and checks yaw acceleration sign and magnitude.
-* **Effort:** S
-* **Acceptance criteria:** sign test passes and is locked in CI.
-
-### P2 (nice to have, but don’t distract from core determinism/correctness)
-
-**P2-1: Battery sensing model (explicit sampling delay + noise)**
-
-* **Rationale:** More realistic than accidental 1-tick delay.
-* **Plan:** model a voltage/current low-pass + sensor delay explicitly, and decide what PX4 sees.
-* **Effort:** M
-* **Acceptance criteria:** battery measurement dynamics are explicit and tested.
-
-**P2-2: More realistic drag/aero model (body-axis, quadratic)**
-
-* **Rationale:** Current NED-linear drag is “toy” level; might be ok for now.
-* **Effort:** M/L
-* **Acceptance criteria:** body-axis aero drag produces expected behavior in tilted flight tests.
-
-**P2-3: Contact model upgrades (moment, friction cone, static friction)**
-
-* **Rationale:** Only needed if you care about landing/ground handling realism.
-* **Effort:** L
-* **Acceptance criteria:** stable landing + taxi scenarios with bounded penetration.
+**P2 — Typed event scheduler**
+- **Rationale:** Performance + clarity if you get heavy on events.
+- **Plan:** parametric scheduler storing concrete event types.
+- **Effort:** M
+- **Acceptance criteria:** less dynamic dispatch in `step_events!`.
 
 ---
 
 ## Fast wins in a weekend (highest ROI)
 
-1. **Integer step scheduling + `time_us` from ticks** (P0-1 + P0-3)
-2. **Fix logging timestamp semantics** (P0-2)
-3. **Remove `last_out::Any`** (P1-4)
-4. **Fix GustStep stepping** (P1-3)
-5. **Exact OU discretization** (P1-2)
-6. Add 5 core tests in CI:
-
-   * scheduler cadence
-   * time_us increments
-   * free-fall
-   * quaternion constant-rate
-   * delay buffer exactness
-
-These will dramatically improve confidence and make every future change cheaper.
+1) Make PX4 cadence mismatch a hard error by default (done).
+2) Fix DelayedEstimator dt mismatch (done).
+3) Switch gust intervals to half-open `[t_on, t_off)` (done).
+4) Add `time_us` column to logs (done).
+5) Add a guard against multiple lockstep handles (done).
+6) Replace `MVector` in `step_propulsion!` if it shows allocations (pending).
 
 ---
 
-## Things not worth doing yet (until P0/P1 are done)
+## Things not worth doing yet (until remaining P1s are done)
 
-* Full Dryden/von Kármán turbulence / spatially correlated wind fields
-* Full IMU + baro + GPS sensor simulation feeding EKF2 (you intentionally bypassed it; keep the scope tight)
-* Terrain meshes, multi-contact landing gear, restitution modeling
-* Multi-threading for performance (it will destroy your determinism story unless you’re extremely disciplined)
-* Switching to a big ODE framework (adds dependency weight + hides ZOH/multi-rate semantics unless you’re careful)
-
----
-
-If you want one “north star” principle to keep this project sane: **use integers for simulated time and scheduling, and treat Float64 time as a derived view.** Everything else (PX4 lockstep cadence, estimator delay correctness, log alignment, regression stability) gets much easier once you do that.
-
+- Full WGS84/ECEF geodesy everywhere (origin unification is done; finish remaining P1s first).
+- High-fidelity rotor aerodynamics (BEMT) before you lock down timing, sign conventions, and test coverage.
+- Multithreading / parallel Monte Carlo inside one process (PX4 lockstep almost certainly isn’t re-entrant).
+- Fancy terrain/contact (slopes, friction) before stabilizing the simple flat-ground model.
+- Sensor-level simulation (IMU/mag/baro/GPS) before your “EKF-output injection” path is rock-solid and well-tested.
 
 ---
 
-# Update: Implemented fixes (Jan 2026)
+## Fidelity feature ideas (roadmap — after correctness/perf)
 
-This section records what was implemented in response to the review.
+These are **feature** ideas, not correctness fixes. I’m listing them because they will eventually matter for realism, but they should not distract from determinism/correctness work.
 
-## ✅ Done
+### World / geodesy
+- WGS84 ellipsoid origin + local tangent plane (ENU/NED) transforms (replace spherical approximation).
+- ECEF representation + consistent gravity direction with latitude.
+- Earth rotation / Coriolis (usually small, but can matter for long flights).
+- Geoid vs ellipsoid altitude (if you care about matching PX4 SITL assumptions).
 
-### P0 / determinism contract
+### Atmosphere / environment
+- Full ISA (multiple layers to 86 km) + humidity (optional).
+- Wind shear with altitude, log-law boundary layer profiles.
+- Dryden / von Kármán turbulence models (tunable intensity vs altitude/airspeed).
+- Thermals + convective updrafts (useful for fixed-wing / soaring).
+- Orographic wind / ridge lift (if you simulate terrain).
 
-1) **Integer-step scheduling for multi-rate tasks (no Float64 drift)**
-   - Replaced `PeriodicTrigger` with `Scheduling.StepTrigger`.
-   - `SimulationInstance` now schedules autopilot + logging with `due(trig, step)` where `step` is an integer physics tick.
-   - `dt_autopilot` and `dt_log` are **required to be integer multiples of `dt`** (enforced).
+### Aerodynamics / multirotor specifics
+- Rotor induced velocity model (momentum theory) and descent “vortex ring state” approximation.
+- Ground effect on thrust (function of height/rotor radius).
+- Blade element / BEMT table for thrust/torque vs advance ratio.
+- Frame drag with CdA in body axes instead of simple linear drag in NED.
 
-2) **Log sample-time semantics are now defined and consistent**
-   - The logging contract is now: **log the pre-step state `x_k` at time `t_k`**.
-   - In the engine, logging happens after the physics update (for convenience), but it logs the saved snapshot `x0` and `t` from the start of the tick.
-   - This fixes the previous “post-state with pre-time” inconsistency.
+### Sensors / estimation paths
+- Raw IMU (accel/gyro) simulation with bias + noise + temperature drift.
+- Magnetometer + Earth field model.
+- Barometer with noise + lag + bias (altitude estimation).
+- GPS noise/latency with discrete update rate (5–10 Hz).
+- Option to run EKF2 in PX4 and feed raw sensors (for full-stack testing).
 
-3) **PX4 time injection uses an exact microsecond clock**
-   - `SimulationInstance` derives `time_us` from the integer step counter:
-     `time_us = t0_us + step * dt_us`.
-   - `dt` is enforced to be **exactly representable as an integer number of microseconds**.
-   - `t0` is enforced to be **non-negative and microsecond-quantized**.
+### Powertrain / failures
+- Battery temperature-dependent OCV and internal resistance.
+- Motor/ESC thermal model + derating.
+- Motor failure modes (stuck, partial loss, noise) beyond on/off.
+- Prop damage / imbalance (vibration injection to IMU).
 
-### P1 / high-signal realism + performance / maintenance
+### Numerical methods / integration
+- Lie group integration for attitude (SO(3)).
+- Symplectic/semi-implicit integrator option for better energy behavior.
+- Event detection for contact (hit ground exactly) to reduce penetration sensitivity.
+- Optional fixed-point iteration for coupled battery–motor electrical loop.
 
-4) **RNG streams split by subsystem**
-   - Simulation now creates independent RNG streams (`rng_wind`, `rng_est`, `rng_misc`) derived from the base seed using SplitMix64.
-   - This prevents “noise coupling” when adding/removing randomness in one subsystem.
-
-5) **OU wind update is now the exact discretization**
-   - `OUWind.step_wind!` now uses:
-     `v[k+1] = ϕ v[k] + σ sqrt(1-ϕ^2) ξ`, `ϕ = exp(-dt/τ)`.
-   - This preserves the intended stationary variance across different `dt`.
-
-6) **GustStep now advances its wrapped mean wind**
-   - `GustStep.step_wind!` delegates to `step_wind!(mean, ...)`.
-
-7) **Removed the `last_out::Any` type-instability trap**
-   - Added `Autopilots.autopilot_output_type(ap)`.
-   - `SimulationInstance` stores `last_out::Union{Nothing,O}` where `O` is the autopilot’s concrete output type.
-
-8) **Removed per-tick propulsion allocations**
-   - `Propulsion.step_propulsion!` no longer allocates heap arrays each tick; it uses `MVector`/`SVector` buffers.
-
-9) **Removed per-tick closure allocations in integrator calls**
-   - `SimulationInstance` caches a `DynamicsWithContact` functor and passes it to the integrator.
-
-10) **First-order actuator dynamics uses the exact ZOH discretization**
-   - `FirstOrderActuators` now uses `α = 1 - exp(-dt/τ)`.
-
-11) **Log preallocation**
-   - Added `Logging.reserve!(log::SimLog, n)` and the engine calls it based on `t_end/dt_log`.
-
-## ✅ Tests added/updated
-
-- Updated scheduling test to `StepTrigger`.
-- Added regression tests for:
-  - `GustStep` stepping delegation.
-  - Exact first-order actuator discretization.
-  - Engine microsecond clock increments and log pre-step semantics using a dummy autopilot.
-
-*(Note: tests could not be executed in the current environment because Julia was not available, but they should run in a normal Julia dev environment.)*
-
-## 🔜 Next (recommended)
-
-### ABI / integration safety
-
-- **Add ABI compatibility handshake between Julia ↔︎ libpx4_lockstep**
-  - Add exported functions on the C/C++ side (e.g. `px4_lockstep_abi_version()`) and require the Julia side to validate before stepping.
-
-### Additional high-signal tests
-
-- Add analytic/closed-form regression tests:
-  - free-fall under gravity (pos/vel vs closed form)
-  - constant-rate quaternion integration (small-angle and longer time)
-  - delay buffer edge cases (DelayedEstimator)
-  - cadence tests: verify exact autopilot/log firing times over long horizons
-
-### Battery/prop sampling semantics (make it explicit)
-
-- Decide and document whether battery voltage sag/current draw are “sample-at-start-of-tick” or “sample-at-end-of-tick”.
-- If needed, consider a predictor/corrector update for battery voltage within a tick to remove the 1-tick lag.
-
-### Wind model roadmap
-
-- Once OU is stable and deterministic, add a Dryden-ish or von Karman turbulence option (still seeded and stateful).
+---
 
 
 ---
 
-## 2026-01-14 — Patch: ABI handshake + altitude ref + rotor_dir ownership + estimator cadence + propulsion midpoint
+## P0/P1 fixes implemented (current)
 
-### Implemented (done)
+The following P0/P1 items from this review have been implemented in this codebase:
 
-1) **C-ABI compatibility handshake (P0)**
-- Added C-side exported functions:
-  - `px4_lockstep_abi_version()`
-  - `px4_lockstep_sizes(uint32_t* in_sz, uint32_t* out_sz, uint32_t* cfg_sz)`
-- Julia `PX4Lockstep.create(...)` now calls the handshake and hard-errors on:
-  - ABI version mismatch
-  - struct size mismatch (`LockstepInputs/Outputs/Config`)
-  - non-isbits structs
-- Added a Julia unit test for the pure `_check_abi!` helper (does not require the shared library).
+1) **Enforce correct PX4 cadence by default**
+   - Added `SimulationConfig.strict_lockstep_rates::Bool = true`.
+   - `SimulationInstance` now **throws** when `ap_dt` is slower than the fastest enabled PX4 task rate.
+   - Previous behavior (warning-only) is available via `strict_lockstep_rates=false`.
 
-2) **Altitude reference consistency (P0)**
-- Added `origin_alt_msl_m::Float64` to `EnvironmentModel` (default `0.0`).
-- Physics + logging now compute atmosphere at `alt_msl = origin_alt_msl_m - pos_ned.z`.
-- Updated the Iris mission example to wire `origin_alt_msl_m = DEFAULT_HOME.alt_msl_m`.
-- Added a unit test verifying density matches ISA at home altitude and at +100 m.
+2) **Fix `DelayedEstimator` dt mismatch**
+   - `DelayedEstimator` stores `dt_est_us` and validates `dt_hint` at runtime.
 
-3) **Rotor direction / yaw-torque ownership cleanup (P0/P1)**
-- Removed `rotor_dir` and `km` from `Vehicles.QuadrotorParams`.
-- Propulsion now owns rotor direction as the *single source of truth*:
-  - `Propulsion.step_propulsion!` outputs **signed** `shaft_torque_nm[i] = rotor_dir[i] * Q_i`.
-- Vehicle dynamics now consumes signed shaft torques directly (no extra rotor_dir sign).
-- Added a unit test that spins only rotor 3 and verifies yaw acceleration sign.
+3) **Gust boundary semantics + wind sampling**
+   - Gusts are half-open (`[t_on, t_off)`), and `SampledWind` holds wind constant across RK4 stages.
 
-4) **Estimator cadence determinism (P1)**
-- `NoisyEstimator` now steps using **`dt_hint` only** (no `t - last_t` float differencing).
-- `DelayedEstimator` now requires `delay_s` to be an **exact multiple** of `dt_est`:
-  - enforced via microsecond quantization and integer divisibility
-  - no more silent rounding
-- Added a unit test that confirms non-multiple delay throws.
+4) **Add `time_us` to the log schema**
+   - `time_us` is logged in both `SimLog` and `CSVLogSink` (`CSV_SCHEMA_VERSION = 2`).
 
-5) **Propulsion midpoint output consistency (P1)**
-- `_step_unit!` now computes thrust/torque using **midpoint rotor speed** `ω_mid = 0.5*(ω_old + ω_new)`.
-- This removes the “phase lead” where thrust was computed at `ω_new` but integration used `ω_old`.
+5) **World origin unification**
+   - `WorldOrigin` is shared between PX4 and environment; mismatches are synchronized or warned.
 
-### Additional small robustness improvements
-- **Events are no longer float-time triggered:** `Events.AtTime` now stores integer microseconds internally and compares against the sim’s integer microsecond clock; added `AtStep`.
-- Added a **warning** if `dt_autopilot` is larger than the period implied by the **fastest** PX4 task rate in the lockstep config.
-- Moved tooling deps (`Aqua`, `JET`, `JuliaFormatter`) to `[extras]` + `[targets]` in `Project.toml`.
-- Added `CSV_SCHEMA_VERSION` and emit a `# schema_version=...` comment line in CSV outputs.
+6) **Single-handle guard**
+   - `PX4Lockstep.create()` enforces one active handle by default with an `allow_multiple_handles` opt-out.
 
-### What’s next
-- Add a small **power consistency** regression test for propulsion (`Q*ω <= V*I*η + ε`).
-- Consider making `AtTime` accept non-microsecond inputs by rounding (currently strict).
-- Decide whether the CSV schema version should be a **column** (more tool-friendly) vs a comment line (current).
-- If desired, move rotor-speed `ω` into the integrated state (so RK4 covers motor+prop dynamics too).
+7) **Precomputed dt coefficients**
+   - `AR1`, `AR1Vec`, `OUWind`, and `FirstOrderActuators` cache dt-dependent coefficients.
+
+### Next steps TODO
+
+If you continue with the remaining P1 items from the review, the next steps that will pay off most are:
+
+- **C-side determinism tightening:** phase-lock `StepRateLimiter` (avoid drift/jitter).
+- **Battery/prop coupling:** decide on sampled vs instantaneous voltage and close the loop.
+- **Battery warning mapping:** verify SOC thresholds vs PX4 params and add a regression test.
+- Add explicit **lockstep invariants** around time injection (monotonic `time_us`, expected delta) and make failures loud.

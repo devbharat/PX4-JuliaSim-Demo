@@ -19,6 +19,8 @@ const LIB_ENV = "PX4_LOCKSTEP_LIB"
 const PX4_LOCKSTEP_ABI_VERSION = UInt32(1)
 const _LIB_HANDLE = Ref{Ptr{Cvoid}}(C_NULL)
 const _SYMBOL_CACHE = Dict{Tuple{Ptr{Cvoid},Symbol},Ptr{Cvoid}}()
+const _HANDLE_LOCK = ReentrantLock()
+const _HANDLE_COUNT = Ref{Int}(0)
 
 _lib_extension() =
     Sys.isapple() ? ".dylib" : Sys.islinux() ? ".so" : Sys.iswindows() ? ".dll" : ""
@@ -76,6 +78,26 @@ function _resolve_symbol(lib::Ptr{Cvoid}, sym::Symbol)
     return get!(_SYMBOL_CACHE, key) do
         Libdl.dlsym(lib, sym)
     end
+end
+
+function _acquire_handle!(allow_multiple_handles::Bool)
+    lock(_HANDLE_LOCK) do
+        if !allow_multiple_handles && _HANDLE_COUNT[] > 0
+            error(
+                "Only one libpx4_lockstep handle may be active per process. " *
+                "Close the existing handle or pass allow_multiple_handles=true (unsafe).",
+            )
+        end
+        _HANDLE_COUNT[] += 1
+    end
+    return nothing
+end
+
+function _release_handle!()
+    lock(_HANDLE_LOCK) do
+        _HANDLE_COUNT[] = max(0, _HANDLE_COUNT[] - 1)
+    end
+    return nothing
 end
 
 Base.@kwdef struct LockstepConfig
@@ -188,21 +210,28 @@ end
 function create(
     config::LockstepConfig = LockstepConfig();
     libpath::Union{Nothing,AbstractString} = nothing,
+    allow_multiple_handles::Bool = false,
 )
-    lib = _load_library(libpath)
-    # Fail fast if the shared library does not match the Julia-side struct layout.
-    _abi_handshake!(lib)
-    fn = _resolve_symbol(lib, :px4_lockstep_create)
-    handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
-    handle == C_NULL && error("px4_lockstep_create returned NULL")
-    lockstep = LockstepHandle(handle, lib, Ref{LockstepOutputs}(), config)
-    finalizer(lockstep) do instance
-        try
-            destroy(instance)
-        catch
+    _acquire_handle!(allow_multiple_handles)
+    try
+        lib = _load_library(libpath)
+        # Fail fast if the shared library does not match the Julia-side struct layout.
+        _abi_handshake!(lib)
+        fn = _resolve_symbol(lib, :px4_lockstep_create)
+        handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
+        handle == C_NULL && error("px4_lockstep_create returned NULL")
+        lockstep = LockstepHandle(handle, lib, Ref{LockstepOutputs}(), config)
+        finalizer(lockstep) do instance
+            try
+                destroy(instance)
+            catch
+            end
         end
+        return lockstep
+    catch
+        _release_handle!()
+        rethrow()
     end
-    return lockstep
 end
 
 function destroy(handle::LockstepHandle)
@@ -210,6 +239,7 @@ function destroy(handle::LockstepHandle)
     fn = _resolve_symbol(handle.lib, :px4_lockstep_destroy)
     ccall(fn, Cvoid, (Ptr{Cvoid},), handle.ptr)
     handle.ptr = C_NULL
+    _release_handle!()
     return nothing
 end
 

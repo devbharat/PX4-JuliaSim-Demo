@@ -24,7 +24,7 @@ export AbstractLogSink, SimLog, CSVLogSink, close!, log!, write_csv
 export reserve!
 
 # Bump this when you add/remove/rename columns in the CSV output.
-const CSV_SCHEMA_VERSION = 1
+const CSV_SCHEMA_VERSION = 2
 
 ############################
 # Log sinks
@@ -38,6 +38,7 @@ This keeps allocations low while still being easy to export to CSV.
 """
 mutable struct SimLog <: AbstractLogSink
     t::Vector{Float64}
+    time_us::Vector{UInt64}
 
     # truth state
     pos_ned::Vector{NTuple{3,Float64}}
@@ -84,6 +85,7 @@ end
 function SimLog()
     return SimLog(
         Float64[],
+        UInt64[],
         NTuple{3,Float64}[],
         NTuple{3,Float64}[],
         NTuple{4,Float64}[],
@@ -120,6 +122,7 @@ This is a convenience to reduce allocations in long runs when using the in-memor
 function reserve!(log::SimLog, n::Int)
     n <= 0 && return log
     sizehint!(log.t, n)
+    sizehint!(log.time_us, n)
     sizehint!(log.pos_ned, n)
     sizehint!(log.vel_ned, n)
     sizehint!(log.q_bn, n)
@@ -247,6 +250,8 @@ const _CSV_HEADER = join(
         "mission_seq",
         "mission_count",
         "mission_finished",
+        # lockstep clock
+        "time_us",
     ],
     ",",
 )
@@ -270,6 +275,7 @@ function log!(
     t::Float64,
     x::RigidBodyState,
     cmd::ActuatorCommand;
+    time_us::UInt64 = UInt64(round(Int, t * 1e6)),
     wind_ned::Vec3,
     rho::Float64,
     air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
@@ -288,6 +294,7 @@ function log!(
     rotor_thrust::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
 )
     push!(sink.t, t)
+    push!(sink.time_us, time_us)
     push!(sink.pos_ned, (x.pos_ned[1], x.pos_ned[2], x.pos_ned[3]))
     push!(sink.vel_ned, (x.vel_ned[1], x.vel_ned[2], x.vel_ned[3]))
     push!(sink.q_bn, (x.q_bn[1], x.q_bn[2], x.q_bn[3], x.q_bn[4]))
@@ -327,6 +334,7 @@ function log!(
     t::Float64,
     x::RigidBodyState,
     cmd::ActuatorCommand;
+    time_us::UInt64 = UInt64(round(Int, t * 1e6)),
     wind_ned::Vec3,
     rho::Float64,
     air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
@@ -416,13 +424,17 @@ function log!(
     # px4
     @printf(
         io,
-        "%d,%d,%d,%d,%d\n",
+        "%d,%d,%d,%d,%d,",
         nav_state,
         arming_state,
         mission_seq,
         mission_count,
         mission_finished
     )
+
+    # lockstep clock
+    print(io, time_us)
+    print(io, "\n")
 
     return nothing
 end
@@ -501,13 +513,17 @@ function write_csv(log::SimLog, path::AbstractString)
 
             @printf(
                 io,
-                "%d,%d,%d,%d,%d\n",
+                "%d,%d,%d,%d,%d,",
                 log.nav_state[i],
                 log.arming_state[i],
                 log.mission_seq[i],
                 log.mission_count[i],
                 log.mission_finished[i]
             )
+
+            # lockstep clock
+            print(io, log.time_us[i])
+            print(io, "\n")
         end
     end
     return nothing

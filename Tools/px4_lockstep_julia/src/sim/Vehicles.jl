@@ -73,13 +73,28 @@ modeling effort.
 mutable struct FirstOrderActuators{N} <: AbstractActuatorModel
     τ::Float64
     y::SVector{N,Float64}
+    last_dt::Float64
+    last_tau::Float64
+    alpha::Float64
 end
 
 function FirstOrderActuators{N}(;
     τ::Float64 = 0.05,
     y0 = zero(SVector{N,Float64}),
 ) where {N}
-    return FirstOrderActuators{N}(τ, SVector{N,Float64}(y0))
+    return FirstOrderActuators{N}(τ, SVector{N,Float64}(y0), NaN, NaN, 1.0)
+end
+
+@inline function _ensure_coeffs!(a::FirstOrderActuators, dt::Float64)
+    if dt != a.last_dt || a.τ != a.last_tau
+        if !(isfinite(a.τ) && a.τ > 0.0) || dt <= 0.0
+            a.alpha = 1.0
+        else
+            a.alpha = 1.0 - exp(-dt / a.τ)
+        end
+        a.last_dt = dt
+        a.last_tau = a.τ
+    end
 end
 
 @inline function step_actuators!(
@@ -90,13 +105,8 @@ end
     # Exact discretization of ẏ = (u - y)/τ assuming ZOH on u across dt:
     #   y[k+1] = exp(-dt/τ) y[k] + (1-exp(-dt/τ)) u[k]
     # This keeps the effective time constant correct even if dt changes.
-    τ = a.τ
-    if !(isfinite(τ) && τ > 0.0) || dt <= 0.0
-        a.y = cmd
-        return a.y
-    end
-    α = 1.0 - exp(-dt / τ)
-    a.y = (1.0 - α) * a.y + α * cmd
+    _ensure_coeffs!(a, dt)
+    a.y = (1.0 - a.alpha) * a.y + a.alpha * cmd
     return a.y
 end
 

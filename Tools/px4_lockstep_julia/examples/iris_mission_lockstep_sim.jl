@@ -34,8 +34,11 @@ const EST_YAW_SIGMA_RAD = deg2rad(2.0)
 const EST_RATE_SIGMA_RAD_S = Sim.Types.vec3(0.02, 0.02, 0.03)
 const EST_BIAS_TAU_S = 20.0
 const EST_POS_BIAS_SIGMA_M = Sim.Types.vec3(0.5, 0.5, 0.5)
-const EST_DELAY_S = 0.01
-const EST_DT = 0.01
+# IMPORTANT: the sim currently steps the estimator at the *autopilot cadence* (`dt_autopilot`).
+# `DelayedEstimator` therefore requires `dt_est == dt_autopilot` and `delay_s` to be an exact
+# multiple of that dt to keep the delay behavior deterministic.
+const EST_DELAY_S = 0.008
+const EST_DT = 0.004
 
 # Simulation rates.
 const SIM_DT = 0.002
@@ -82,7 +85,7 @@ function run_example()
         wind = Sim.Environment.OUWind(mean=WIND_MEAN, σ=WIND_SIGMA, τ_s=WIND_TAU_S)
         env = Sim.Environment.EnvironmentModel(
             wind=wind,
-            origin_alt_msl_m=DEFAULT_HOME.alt_msl_m,
+            origin=DEFAULT_HOME,
         )
 
         model = Sim.Vehicles.IrisQuadrotor()

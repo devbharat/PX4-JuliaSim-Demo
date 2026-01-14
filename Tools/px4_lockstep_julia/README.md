@@ -40,6 +40,12 @@ Outputs:
   * includes position/velocity setpoints for tracking plots
   * includes air-relative velocity in body axes (`air_bx/air_by/air_bz`) for inflow-aware propulsion debugging
 
+Notes:
+
+* `libpx4_lockstep` is not re-entrant; by default only one lockstep handle is allowed per
+  process. For Monte Carlo, launch separate processes or pass
+  `allow_multiple_handles=true` when calling `PX4Lockstep.create` / `Sim.Autopilots.init!`.
+
 ## Python plotting
 
 Lightweight Python scripts live in `Tools/px4_lockstep_julia/scripts`.
@@ -120,7 +126,10 @@ base_est = Sim.Estimators.NoisyEstimator(
     pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
 )
 
-est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.01, dt_est=0.01)
+# NOTE: `DelayedEstimator` is step-quantized. In this sim, the estimator is stepped at the
+# autopilot cadence (`dt_autopilot` / effective `ap_dt`), so `dt_est` must match that cadence
+# and `delay_s` must be an exact multiple.
+est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.008, dt_est=0.004)
 
 sim = Sim.Simulation.SimulationInstance(
     ...,
@@ -142,6 +151,10 @@ sim_cfg = Sim.Simulation.SimulationConfig(
 )
 ```
 
+For `PX4LockstepAutopilot`, the simulator checks that `dt_autopilot` is not slower than
+the fastest enabled internal PX4 task rate (derived from the lockstep config). This is
+enforced by default; set `strict_lockstep_rates=false` to override.
+
 ### Extending
 
 To add a new aircraft model, implement a new `AbstractVehicleModel` and a corresponding `dynamics(model, env, t, state, u)` method that returns a `RigidBodyDeriv`.
@@ -155,6 +168,7 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 * The framework uses NED as the world frame to match PX4.
 * Controller outputs are treated as piecewise-constant over each sim `dt`, which is the standard assumption for fixed-step closed-loop simulation.
 * Wind turbulence is advanced once per tick (seeded RNG) and held constant over the integration step for determinism.
+* CSV logs include `time_us` (exact lockstep microsecond time) as of `schema_version=2`.
 
 ## Example Run
 ```PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
@@ -162,6 +176,5 @@ python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --outp
 ```
 <img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
 <img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />
-
 
 

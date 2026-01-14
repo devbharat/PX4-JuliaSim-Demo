@@ -13,7 +13,7 @@ the vehicle layer, not here.
 """
 module Environment
 
-using ..Types: Vec3, vec3
+using ..Types: Vec3, WorldOrigin, vec3
 using Random
 
 export AbstractAtmosphere,
@@ -21,13 +21,16 @@ export AbstractAtmosphere,
     air_temperature,
     air_pressure,
     air_density,
+    WorldOrigin,
     AbstractWind,
     NoWind,
     ConstantWind,
+    SampledWind,
     GustStep,
     OUWind,
     wind_velocity,
     step_wind!,
+    sample_wind!,
     set_mean_wind!,
     add_step_gust!,
     AbstractGravity,
@@ -112,9 +115,45 @@ end
 wind_velocity(w::ConstantWind, ::Vec3, ::Float64) = w.v_ned
 step_wind!(::ConstantWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
 
+"""Sample-and-hold wrapper for a wind model.
+
+`SampledWind` holds the most recent sampled wind value and returns it from
+`wind_velocity(...)` regardless of time/position. This keeps wind forcing constant
+across RK4 stages within a physics tick.
+"""
+mutable struct SampledWind{W<:AbstractWind} <: AbstractWind
+    inner::W
+    sample_ned::Vec3
+end
+
+SampledWind(inner::W) where {W<:AbstractWind} = SampledWind(inner, vec3(0.0, 0.0, 0.0))
+
+function wind_velocity(w::SampledWind, ::Vec3, ::Float64)
+    return w.sample_ned
+end
+
+function step_wind!(
+    w::SampledWind,
+    pos_ned::Vec3,
+    t::Float64,
+    dt::Float64,
+    rng::AbstractRNG,
+)
+    step_wind!(w.inner, pos_ned, t, dt, rng)
+    return nothing
+end
+
+"""Sample the wrapped wind model and hold the value for the current tick."""
+function sample_wind!(w::SampledWind, pos_ned::Vec3, t::Float64)
+    w.sample_ned = wind_velocity(w.inner, pos_ned, t)
+    return w.sample_ned
+end
+
+sample_wind!(w::AbstractWind, pos_ned::Vec3, t::Float64) = wind_velocity(w, pos_ned, t)
+
 """A simple step gust.
 
-Adds `gust_v_ned` between `[t_on, t_off]`.
+Adds `gust_v_ned` between `[t_on, t_off)`.
 
 This is intentionally simple and deterministic; it can be replaced with Dryden/von Karman
 models later.
@@ -128,7 +167,8 @@ end
 
 function wind_velocity(w::GustStep, pos_ned::Vec3, t::Float64)
     v = wind_velocity(w.mean, pos_ned, t)
-    return (t >= w.t_on && t <= w.t_off) ? (v + w.gust_v_ned) : v
+    # Half-open interval avoids an extra "end tick" and makes scheduling behavior explicit.
+    return (t >= w.t_on && t < w.t_off) ? (v + w.gust_v_ned) : v
 end
 
 """Advance the wrapped mean wind model.
@@ -162,11 +202,31 @@ Base.@kwdef mutable struct OUWind <: AbstractWind
     # Optional deterministic step gust for scenarios.
     step_gust::Vec3 = vec3(0.0, 0.0, 0.0)
     step_until_s::Float64 = -Inf
+    last_dt::Float64 = NaN
+    last_tau_s::Float64 = NaN
+    phi::Float64 = 0.0
+    scale::Float64 = 0.0
 end
 
 function wind_velocity(w::OUWind, ::Vec3, t::Float64)
-    gust = (t <= w.step_until_s) ? w.step_gust : vec3(0.0, 0.0, 0.0)
+    # Half-open end time to make duration unambiguous at tick boundaries.
+    gust = (t < w.step_until_s) ? w.step_gust : vec3(0.0, 0.0, 0.0)
     return w.mean + w.v_gust + gust
+end
+
+@inline function _ensure_ou_coeffs!(w::OUWind, dt::Float64)
+    if dt != w.last_dt || w.τ_s != w.last_tau_s
+        if dt <= 0.0
+            w.phi = 0.0
+            w.scale = 0.0
+        else
+            τ = max(1e-6, w.τ_s)
+            w.phi = exp(-dt / τ)
+            w.scale = sqrt(max(0.0, 1.0 - w.phi^2))
+        end
+        w.last_dt = dt
+        w.last_tau_s = w.τ_s
+    end
 end
 
 function step_wind!(w::OUWind, ::Vec3, ::Float64, dt::Float64, rng::AbstractRNG)
@@ -176,19 +236,18 @@ function step_wind!(w::OUWind, ::Vec3, ::Float64, dt::Float64, rng::AbstractRNG)
     #   v[k+1] = ϕ v[k] + σ * sqrt(1-ϕ^2) * ξ,   ξ ~ N(0,1)
     # where ϕ = exp(-dt/τ).
     if dt <= 0.0
+        _ensure_ou_coeffs!(w, dt)
         return nothing
     end
 
-    τ = max(1e-6, w.τ_s)
-    ϕ = exp(-dt / τ)
-    scale = sqrt(max(0.0, 1.0 - ϕ^2))
+    _ensure_ou_coeffs!(w, dt)
 
     # Sample independent N(0,1) for each axis.
     w.v_gust =
-        ϕ * w.v_gust + vec3(
-            w.σ[1] * scale * randn(rng),
-            w.σ[2] * scale * randn(rng),
-            w.σ[3] * scale * randn(rng),
+        w.phi * w.v_gust + vec3(
+            w.σ[1] * w.scale * randn(rng),
+            w.σ[2] * w.scale * randn(rng),
+            w.σ[3] * w.scale * randn(rng),
         )
     return nothing
 end
@@ -198,6 +257,7 @@ function set_mean_wind!(w::OUWind, v_ned::Vec3)
     w.mean = v_ned
     return nothing
 end
+set_mean_wind!(w::SampledWind, v_ned::Vec3) = set_mean_wind!(w.inner, v_ned)
 set_mean_wind!(::AbstractWind, ::Vec3) =
     throw(ArgumentError("set_mean_wind! not supported for this wind type"))
 
@@ -210,6 +270,8 @@ function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now::Float64, duration_s::Flo
     w.step_until_s = t_now + max(0.0, duration_s)
     return nothing
 end
+add_step_gust!(w::SampledWind, dv_ned::Vec3, t_now::Float64, duration_s::Float64) =
+    add_step_gust!(w.inner, dv_ned, t_now, duration_s)
 add_step_gust!(::AbstractWind, ::Vec3, ::Float64, ::Float64) =
     throw(ArgumentError("add_step_gust! not supported for this wind type"))
 
@@ -249,24 +311,35 @@ end
 
 """A composable environment model.
 
-`origin_alt_msl_m` defines the mean-sea-level (MSL) altitude of the local NED origin.
-
-This matters for atmosphere models: in a typical PX4 local frame, `pos_ned = (0,0,0)`
-corresponds to the *home* location, not sea level. Using `origin_alt_msl_m` keeps the
-physics (density) consistent with the lat/lon/alt fed to PX4.
+`origin` defines the local NED reference in lat/lon/alt (MSL). This keeps the atmosphere
+density and PX4 global coordinates consistent.
 """
 struct EnvironmentModel{A<:AbstractAtmosphere,W<:AbstractWind,G<:AbstractGravity}
     atmosphere::A
     wind::W
     gravity::G
-    origin_alt_msl_m::Float64
+    origin::WorldOrigin
 end
 
 EnvironmentModel(;
     atmosphere::AbstractAtmosphere = ISA1976(),
     wind::AbstractWind = NoWind(),
     gravity::AbstractGravity = UniformGravity(9.80665),
-    origin_alt_msl_m::Float64 = 0.0,
-) = EnvironmentModel(atmosphere, wind, gravity, origin_alt_msl_m)
+    origin::WorldOrigin = WorldOrigin(),
+    origin_alt_msl_m::Union{Nothing,Float64} = nothing,
+) = begin
+    if origin_alt_msl_m !== nothing
+        if origin != WorldOrigin()
+            @warn "origin_alt_msl_m ignored because origin is explicitly set" origin_alt_msl_m=origin_alt_msl_m origin=origin
+        else
+            origin = WorldOrigin(
+                lat_deg = origin.lat_deg,
+                lon_deg = origin.lon_deg,
+                alt_msl_m = origin_alt_msl_m,
+            )
+        end
+    end
+    EnvironmentModel(atmosphere, wind, gravity, origin)
+end
 
 end # module Environment

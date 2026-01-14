@@ -16,6 +16,7 @@ using StaticArrays
 export Vec3,
     Mat3,
     Quat,
+    WorldOrigin,
     vec3,
     quat_normalize,
     quat_conj,
@@ -36,6 +37,13 @@ const Mat3 = SMatrix{3,3,Float64,9}
 
 """Quaternion `(w,x,y,z)` representing rotation Body → NED."""
 const Quat = SVector{4,Float64}
+
+"""World origin used for NED ↔ LLA conversions and atmosphere sampling."""
+Base.@kwdef struct WorldOrigin
+    lat_deg::Float64 = 47.397742
+    lon_deg::Float64 = 8.545594
+    alt_msl_m::Float64 = 488.0
+end
 
 @inline vec3(x::Real, y::Real, z::Real) = Vec3(Float64(x), Float64(y), Float64(z))
 

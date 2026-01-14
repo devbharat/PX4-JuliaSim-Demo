@@ -75,15 +75,16 @@ end
     @test ou.v_gust[1] != 0.0
 end
 
-@testset "Environment ISA altitude uses origin_alt_msl_m" begin
+@testset "Environment ISA altitude uses origin.alt_msl_m" begin
     atm = Sim.Environment.ISA1976()
-    env = Sim.Environment.EnvironmentModel(atmosphere = atm, origin_alt_msl_m = 1000.0)
-    # At z=0 (at home origin), MSL altitude should be origin_alt.
-    rho0 = Sim.Environment.air_density(env.atmosphere, env.origin_alt_msl_m - 0.0)
+    origin = Sim.Types.WorldOrigin(alt_msl_m = 1000.0)
+    env = Sim.Environment.EnvironmentModel(atmosphere = atm, origin = origin)
+    # At z=0 (at home origin), MSL altitude should be origin alt.
+    rho0 = Sim.Environment.air_density(env.atmosphere, env.origin.alt_msl_m - 0.0)
     @test isapprox(rho0, Sim.Environment.air_density(atm, 1000.0); rtol = 1e-12)
 
     # At z=-100 (100 m above home), MSL altitude should be 1100 m.
-    rho1 = Sim.Environment.air_density(env.atmosphere, env.origin_alt_msl_m - (-100.0))
+    rho1 = Sim.Environment.air_density(env.atmosphere, env.origin.alt_msl_m - (-100.0))
     @test isapprox(rho1, Sim.Environment.air_density(atm, 1100.0); rtol = 1e-12)
 end
 
@@ -171,7 +172,89 @@ end
     # Log is pre-step state at t=0.
     @test length(sim.log.t) == 1
     @test sim.log.t[1] == 0.0
+    @test sim.log.time_us[1] == UInt64(0)
     @test sim.log.pos_ned[1] == (1.0, 2.0, 3.0)
+end
+
+@testset "Simulation holds wind constant across RK4 stages" begin
+    struct TimeWind <: Sim.Environment.AbstractWind end
+    Sim.Environment.wind_velocity(::TimeWind, ::Sim.Types.Vec3, t::Float64) =
+        Sim.Types.vec3(t, 0.0, 0.0)
+
+    Base.@kwdef mutable struct WindOutputs
+        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
+        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
+        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_yaw::Float32 = 0f0
+        trajectory_setpoint_yawspeed::Float32 = 0f0
+        nav_state::Int32 = Int32(0)
+        arming_state::Int32 = Int32(0)
+        mission_seq::Int32 = Int32(0)
+        mission_count::Int32 = Int32(0)
+        mission_finished::Int32 = Int32(0)
+    end
+
+    mutable struct WindAutopilot <: Sim.Autopilots.AbstractAutopilot
+        out::WindOutputs
+    end
+    Sim.Autopilots.autopilot_output_type(::WindAutopilot) = WindOutputs
+
+    function Sim.Autopilots.autopilot_step(
+        ap::WindAutopilot,
+        time_us::UInt64,
+        pos::Sim.Types.Vec3,
+        vel::Sim.Types.Vec3,
+        q::Sim.Types.Quat,
+        ω::Sim.Types.Vec3,
+        cmd::Sim.Autopilots.AutopilotCommand;
+        landed::Bool = false,
+        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
+    )::WindOutputs
+        return ap.out
+    end
+
+    env = Sim.Environment.EnvironmentModel(wind = TimeWind())
+    model = Sim.Vehicles.IrisQuadrotor()
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    hover_T = model.params.mass * 9.80665 / 4.0
+    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
+    vehicle = Sim.Simulation.VehicleInstance(model, Sim.Vehicles.DirectActuators(), Sim.Vehicles.DirectActuators(), propulsion, x0)
+
+    cfg = Sim.Simulation.SimulationConfig(dt = 0.1, t0 = 0.0, t_end = 0.3, dt_autopilot = 0.1, dt_log = 0.1)
+    ap = WindAutopilot(WindOutputs())
+    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
+
+    sim = Sim.Simulation.SimulationInstance(
+        cfg = cfg,
+        env = env,
+        vehicle = vehicle,
+        autopilot = ap,
+        estimator = Sim.Estimators.TruthEstimator(),
+        integrator = Sim.Integrators.RK4Integrator(),
+        scenario = scenario,
+        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
+        log = Sim.Logging.SimLog(),
+        contact = Sim.Contacts.NoContact(),
+    )
+
+    @test sim.env.wind isa Sim.Environment.SampledWind
+    @test isapprox(sim.env.wind.sample_ned[1], 0.0; atol = 1e-12)
+    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == 0.0
+
+    Sim.Simulation.step!(sim)
+    @test isapprox(sim.env.wind.sample_ned[1], 0.0; atol = 1e-12)
+    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == 0.0
+
+    Sim.Simulation.step!(sim)
+    @test isapprox(sim.env.wind.sample_ned[1], sim.cfg.dt; atol = 1e-12)
+    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == sim.cfg.dt
 end
 
 @testset "Logging.SimLog push" begin
@@ -189,6 +272,7 @@ end
     wind = Sim.Types.vec3(0.0, 0.0, 0.0)
     Sim.Logging.log!(log, 0.0, x, cmd; wind_ned = wind, rho = 1.2)
     @test length(log.t) == 1
+    @test log.time_us[1] == UInt64(0)
     @test log.pos_ned[1] == (1.0, 2.0, 3.0)
 end
 
@@ -341,6 +425,97 @@ end
         delay_s = 0.015,
         dt_est = dt_est,
     )
+
+    # The runtime stepping cadence must match the configured dt_est.
+    x = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0))
+    @test_throws ErrorException Sim.Estimators.estimate!(est, rng, 0.0, x, 2 * dt_est)
+end
+
+@testset "Simulation strict_lockstep_rates errors on autopilot rate mismatch" begin
+    # Minimal autopilot that advertises a fast internal loop rate.
+    Base.@kwdef mutable struct RateOutputs
+        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
+        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
+        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_yaw::Float32 = 0f0
+        trajectory_setpoint_yawspeed::Float32 = 0f0
+        nav_state::Int32 = Int32(0)
+        arming_state::Int32 = Int32(0)
+        mission_seq::Int32 = Int32(0)
+        mission_count::Int32 = Int32(0)
+        mission_finished::Int32 = Int32(0)
+    end
+
+    mutable struct RateAutopilot <: Sim.Autopilots.AbstractAutopilot
+        out::RateOutputs
+    end
+    Sim.Autopilots.autopilot_output_type(::RateAutopilot) = RateOutputs
+    Sim.Autopilots.max_internal_rate_hz(::RateAutopilot) = 250
+
+    function Sim.Autopilots.autopilot_step(
+        ap::RateAutopilot,
+        time_us::UInt64,
+        pos::Sim.Types.Vec3,
+        vel::Sim.Types.Vec3,
+        q::Sim.Types.Quat,
+        ω::Sim.Types.Vec3,
+        cmd::Sim.Autopilots.AutopilotCommand;
+        landed::Bool = false,
+        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
+    )::RateOutputs
+        return ap.out
+    end
+
+    env = Sim.Environment.EnvironmentModel()
+    model = Sim.Vehicles.IrisQuadrotor()
+    x0 = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0))
+    hover_T = model.params.mass * 9.80665 / 4.0
+    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
+    vehicle = Sim.Simulation.VehicleInstance(model, Sim.Vehicles.DirectActuators(), Sim.Vehicles.DirectActuators(), propulsion, x0)
+    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
+
+    # dt_autopilot=0.01 (100 Hz) is slower than required for a 250 Hz loop.
+    cfg_bad = Sim.Simulation.SimulationConfig(dt = 0.01, t0 = 0.0, t_end = 0.01, dt_autopilot = 0.01, dt_log = 0.01)
+    ap = RateAutopilot(RateOutputs())
+
+    @test_throws ArgumentError Sim.Simulation.SimulationInstance(
+        cfg = cfg_bad,
+        env = env,
+        vehicle = vehicle,
+        autopilot = ap,
+        estimator = Sim.Estimators.TruthEstimator(),
+        integrator = Sim.Integrators.EulerIntegrator(),
+        scenario = scenario,
+        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
+        log = Sim.Logging.SimLog(),
+        contact = Sim.Contacts.NoContact(),
+    )
+
+    # Opt-out should only warn (and succeed).
+    cfg_ok = Sim.Simulation.SimulationConfig(
+        dt = 0.01,
+        t0 = 0.0,
+        t_end = 0.01,
+        dt_autopilot = 0.01,
+        dt_log = 0.01,
+        strict_lockstep_rates = false,
+    )
+
+    sim = Sim.Simulation.SimulationInstance(
+        cfg = cfg_ok,
+        env = env,
+        vehicle = vehicle,
+        autopilot = ap,
+        estimator = Sim.Estimators.TruthEstimator(),
+        integrator = Sim.Integrators.EulerIntegrator(),
+        scenario = scenario,
+        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
+        log = Sim.Logging.SimLog(),
+        contact = Sim.Contacts.NoContact(),
+    )
+    @test sim.cfg.strict_lockstep_rates == false
 end
 
 @testset "Cadence: 10-minute schedule has exact hits and constant time_us deltas" begin

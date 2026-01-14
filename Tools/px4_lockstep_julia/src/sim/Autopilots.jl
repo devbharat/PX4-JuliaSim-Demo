@@ -15,7 +15,7 @@ This allows swapping PX4 in/out without rewriting the sim.
 """
 module Autopilots
 
-using ..Types: Vec3, Quat, vec3, yaw_from_quat
+using ..Types: Vec3, Quat, WorldOrigin, vec3, yaw_from_quat
 using ..Powertrain: BatteryStatus
 
 # C ABI wrapper lives in the top-level `PX4Lockstep` module.
@@ -23,6 +23,7 @@ using PX4Lockstep: LockstepHandle, LockstepInputs, LockstepOutputs
 using PX4Lockstep: create, destroy, load_mission, step!
 
 export HomeLocation,
+    WorldOrigin,
     AutopilotCommand,
     AbstractAutopilot,
     PX4LockstepAutopilot,
@@ -37,14 +38,10 @@ const EARTH_RADIUS_M = 6.378137e6
 
 """Home location used to convert local NED to lat/lon/alt.
 
-This implementation uses a spherical Earth approximation, which is adequate for local
-missions and trajectories in early SITL.
+Alias for `WorldOrigin` so the simulation and PX4 share a single origin definition.
+The conversion uses a spherical Earth approximation (adequate for local missions).
 """
-Base.@kwdef struct HomeLocation
-    lat_deg::Float64 = 47.397742
-    lon_deg::Float64 = 8.545594
-    alt_msl_m::Float64 = 488.0
-end
+const HomeLocation = WorldOrigin
 
 """High-level commands into the autopilot.
 
@@ -112,14 +109,23 @@ function max_internal_rate_hz(ap::PX4LockstepAutopilot)
     return max_hz > 0 ? Int(max_hz) : nothing
 end
 
-"""Create and initialize the PX4 lockstep autopilot."""
+"""Create and initialize the PX4 lockstep autopilot.
+
+Only one lockstep handle is supported per process by default. Use
+`allow_multiple_handles=true` at your own risk if you know the PX4
+lockstep runtime is re-entrant.
+"""
 function init!(;
     config = nothing,
     libpath = nothing,
     home::HomeLocation = HomeLocation(),
     edge_trigger::Bool = false,
+    allow_multiple_handles::Bool = false,
 )
-    h = isnothing(config) ? create(; libpath = libpath) : create(config; libpath = libpath)
+    h =
+        isnothing(config) ?
+        create(; libpath = libpath, allow_multiple_handles = allow_multiple_handles) :
+        create(config; libpath = libpath, allow_multiple_handles = allow_multiple_handles)
     return PX4LockstepAutopilot(h, home, edge_trigger, AutopilotCommand())
 end
 

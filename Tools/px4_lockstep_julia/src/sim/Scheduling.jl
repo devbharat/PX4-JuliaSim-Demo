@@ -1,52 +1,42 @@
 """PX4Lockstep.Sim.Scheduling
 
-Small deterministic scheduling helpers (multi-rate stepping).
+Deterministic multi-rate scheduling helpers.
 
-The sim is fundamentally a fixed-step integrator for the continuous-time plant, but
-controllers, estimators, logging, etc. are *discrete-time* tasks that often run at lower
-rates.
+The simulator is a fixed-step (constant `dt`) hybrid system. Controllers, estimators and
+logging often run at lower rates than the physics loop.
 
-This module provides a minimal PeriodicTrigger to implement sample-and-hold logic
-without introducing threads or wall-clock time.
+**Important:** Scheduling must never be driven by Float64 time comparisons, because
+floating point accumulation can cause cadence jitter (e.g. a "0.01" task occasionally
+firing at 0.008/0.012 when `dt=0.002`).
+
+This module therefore schedules periodic tasks using **integer physics step counters**.
 """
 module Scheduling
 
-export PeriodicTrigger, due!, reset!
+export StepTrigger, due
 
-"""A periodic trigger for deterministic multi-rate simulation.
+"""A periodic trigger based on integer physics steps.
 
-`due!(tr, t)` returns true when `t` has reached the next trigger time, and advances the
-internal `t_next` so it can be called repeatedly.
+`StepTrigger(period_steps; offset_steps=0)` is considered due when:
 
-Notes:
-- `t` is simulation time (seconds), not wall clock.
-- If the simulation runs slower than the trigger (e.g. due to a time jump), `due!` will
-  catch up by advancing multiple periods.
+    step >= offset_steps && (step - offset_steps) % period_steps == 0
+
+This yields *exact* cadences when `period_steps` is an integer.
 """
-mutable struct PeriodicTrigger
-    period::Float64
-    t_next::Float64
+struct StepTrigger
+    period_steps::Int
+    offset_steps::Int
 
-    function PeriodicTrigger(period::Float64, t0::Float64 = 0.0)
-        period > 0 || throw(ArgumentError("period must be > 0"))
-        return new(period, t0)
+    function StepTrigger(period_steps::Int; offset_steps::Int = 0)
+        period_steps > 0 || throw(ArgumentError("period_steps must be > 0"))
+        offset_steps >= 0 || throw(ArgumentError("offset_steps must be >= 0"))
+        return new(period_steps, offset_steps)
     end
 end
 
-@inline function reset!(tr::PeriodicTrigger, t0::Float64 = 0.0)
-    tr.t_next = t0
-    return tr
-end
-
-@inline function due!(tr::PeriodicTrigger, t::Float64; eps::Float64 = 1e-12)
-    if t + eps >= tr.t_next
-        # Advance at least once, then catch up if the loop lagged.
-        while t + eps >= tr.t_next
-            tr.t_next += tr.period
-        end
-        return true
-    end
-    return false
+@inline function due(tr::StepTrigger, step::Int)::Bool
+    step < tr.offset_steps && return false
+    return ((step - tr.offset_steps) % tr.period_steps) == 0
 end
 
 end # module Scheduling

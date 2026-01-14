@@ -131,7 +131,15 @@ function wind_velocity(w::GustStep, pos_ned::Vec3, t::Float64)
     return (t >= w.t_on && t <= w.t_off) ? (v + w.gust_v_ned) : v
 end
 
-step_wind!(::GustStep, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+"""Advance the wrapped mean wind model.
+
+`GustStep` is a purely *additive* wrapper. If the wrapped `mean` wind is stateful
+(e.g. `OUWind`), it must still be stepped so the gust process evolves.
+"""
+function step_wind!(w::GustStep, pos_ned::Vec3, t::Float64, dt::Float64, rng::AbstractRNG)
+    step_wind!(w.mean, pos_ned, t, dt, rng)
+    return nothing
+end
 
 """Ornstein–Uhlenbeck (OU) turbulence wind.
 
@@ -162,13 +170,26 @@ function wind_velocity(w::OUWind, ::Vec3, t::Float64)
 end
 
 function step_wind!(w::OUWind, ::Vec3, ::Float64, dt::Float64, rng::AbstractRNG)
-    τ = max(1e-3, w.τ_s)
-    # Euler-Maruyama discretization.
-    α = -1.0/τ
-    β = sqrt(2.0/τ)
+    # Exact discrete-time OU update (dt-invariant stationary variance).
+    #
+    # For each axis:
+    #   v[k+1] = ϕ v[k] + σ * sqrt(1-ϕ^2) * ξ,   ξ ~ N(0,1)
+    # where ϕ = exp(-dt/τ).
+    if dt <= 0.0
+        return nothing
+    end
+
+    τ = max(1e-6, w.τ_s)
+    ϕ = exp(-dt / τ)
+    scale = sqrt(max(0.0, 1.0 - ϕ^2))
+
     # Sample independent N(0,1) for each axis.
-    ξ = vec3(randn(rng), randn(rng), randn(rng))
-    w.v_gust = w.v_gust + (α .* w.v_gust) * dt + (w.σ .* (β * sqrt(max(dt, 0.0)))) .* ξ
+    w.v_gust =
+        ϕ * w.v_gust + vec3(
+            w.σ[1] * scale * randn(rng),
+            w.σ[2] * scale * randn(rng),
+            w.σ[3] * scale * randn(rng),
+        )
     return nothing
 end
 

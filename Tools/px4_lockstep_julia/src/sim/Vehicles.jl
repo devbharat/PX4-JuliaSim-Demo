@@ -87,7 +87,15 @@ end
     cmd::SVector{N,Float64},
     dt::Float64,
 ) where {N}
-    α = clamp(dt / a.τ, 0.0, 1.0)
+    # Exact discretization of ẏ = (u - y)/τ assuming ZOH on u across dt:
+    #   y[k+1] = exp(-dt/τ) y[k] + (1-exp(-dt/τ)) u[k]
+    # This keeps the effective time constant correct even if dt changes.
+    τ = a.τ
+    if !(isfinite(τ) && τ > 0.0) || dt <= 0.0
+        a.y = cmd
+        return a.y
+    end
+    α = 1.0 - exp(-dt / τ)
     a.y = (1.0 - α) * a.y + α * cmd
     return a.y
 end

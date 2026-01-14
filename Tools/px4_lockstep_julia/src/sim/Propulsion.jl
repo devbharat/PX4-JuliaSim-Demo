@@ -403,10 +403,11 @@ function step_propulsion!(
     v_air_body::Vec3,
     dt::Float64,
 ) where {N}
-    thrust = zeros(Float64, N)
-    torque = zeros(Float64, N)
-    omega = zeros(Float64, N)
-    imotor = zeros(Float64, N)
+    # Avoid per-tick heap allocations: use stack-friendly static buffers.
+    thrust = MVector{N,Float64}(undef)
+    torque = MVector{N,Float64}(undef)
+    omega = MVector{N,Float64}(undef)
+    imotor = MVector{N,Float64}(undef)
     Ibus_total = 0.0
 
     # Axial inflow along rotor thrust direction (body -Z).

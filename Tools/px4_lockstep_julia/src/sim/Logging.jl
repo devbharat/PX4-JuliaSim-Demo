@@ -21,6 +21,7 @@ using ..Powertrain: BatteryStatus
 using Printf
 
 export AbstractLogSink, SimLog, CSVLogSink, close!, log!, write_csv
+export reserve!
 
 ############################
 # Log sinks
@@ -106,6 +107,42 @@ function SimLog()
         Int32[],
         Int32[],
     )
+end
+
+"""Hint the expected number of log samples.
+
+This is a convenience to reduce allocations in long runs when using the in-memory
+`SimLog` backend.
+"""
+function reserve!(log::SimLog, n::Int)
+    n <= 0 && return log
+    sizehint!(log.t, n)
+    sizehint!(log.pos_ned, n)
+    sizehint!(log.vel_ned, n)
+    sizehint!(log.q_bn, n)
+    sizehint!(log.ω_body, n)
+    sizehint!(log.pos_sp_ned, n)
+    sizehint!(log.vel_sp_ned, n)
+    sizehint!(log.acc_sp_ned, n)
+    sizehint!(log.yaw_sp, n)
+    sizehint!(log.yawspeed_sp, n)
+    sizehint!(log.motor_cmd4, n)
+    sizehint!(log.motor_cmd12, n)
+    sizehint!(log.rotor_omega_rad_s, n)
+    sizehint!(log.rotor_thrust_n, n)
+    sizehint!(log.wind_ned, n)
+    sizehint!(log.air_density, n)
+    sizehint!(log.air_vel_body, n)
+    sizehint!(log.batt_voltage_v, n)
+    sizehint!(log.batt_current_a, n)
+    sizehint!(log.batt_remaining, n)
+    sizehint!(log.batt_warning, n)
+    sizehint!(log.nav_state, n)
+    sizehint!(log.arming_state, n)
+    sizehint!(log.mission_seq, n)
+    sizehint!(log.mission_count, n)
+    sizehint!(log.mission_finished, n)
+    return log
 end
 
 """Streaming CSV sink.

@@ -26,6 +26,7 @@ export HomeLocation,
     AutopilotCommand,
     AbstractAutopilot,
     PX4LockstepAutopilot,
+    autopilot_output_type,
     init!,
     close!,
     load_mission!,
@@ -56,6 +57,16 @@ end
 
 abstract type AbstractAutopilot end
 
+"""Return the concrete output type produced by `autopilot_step`.
+
+The simulator uses this to keep the sample-and-hold path type-stable.
+
+For custom autopilots used in tests or prototyping, define:
+
+    autopilot_output_type(::MyAutopilot) = MyOutputType
+"""
+autopilot_output_type(::AbstractAutopilot) = Any
+
 """PX4 autopilot driven through the lockstep shared library."""
 mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     handle::LockstepHandle
@@ -63,6 +74,8 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     edge_trigger::Bool
     last_cmd::AutopilotCommand
 end
+
+autopilot_output_type(::PX4LockstepAutopilot) = LockstepOutputs
 
 """Create and initialize the PX4 lockstep autopilot."""
 function init!(;
@@ -112,7 +125,7 @@ Returns:
 """
 function autopilot_step(
     ap::PX4LockstepAutopilot,
-    t::Float64,
+    time_us::UInt64,
     state_pos_ned::Vec3,
     state_vel_ned::Vec3,
     q_bn::Quat,
@@ -122,7 +135,6 @@ function autopilot_step(
     battery::BatteryStatus = BatteryStatus(),
 )::LockstepOutputs
 
-    time_us = UInt64(round(Int, t * 1e6))
     yaw = yaw_from_quat(q_bn)
     lat, lon, alt = _ned_to_lla(state_pos_ned, ap.home)
 
@@ -160,6 +172,36 @@ function autopilot_step(
     out = step!(ap.handle, inputs)
     ap.last_cmd = cmd
     return out
+end
+
+"""Convenience overload: compute `time_us` from `t`.
+
+This exists for backwards compatibility, but **lockstep simulation should prefer** the
+`time_us::UInt64` entry point to avoid float → integer rounding artifacts.
+"""
+function autopilot_step(
+    ap::PX4LockstepAutopilot,
+    t::Float64,
+    state_pos_ned::Vec3,
+    state_vel_ned::Vec3,
+    q_bn::Quat,
+    ω_body::Vec3,
+    cmd::AutopilotCommand;
+    landed::Bool = false,
+    battery::BatteryStatus = BatteryStatus(),
+)::LockstepOutputs
+    time_us = UInt64(round(Int, t * 1e6))
+    return autopilot_step(
+        ap,
+        time_us,
+        state_pos_ned,
+        state_vel_ned,
+        q_bn,
+        ω_body,
+        cmd;
+        landed = landed,
+        battery = battery,
+    )
 end
 
 end # module Autopilots

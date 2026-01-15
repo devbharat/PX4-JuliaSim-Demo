@@ -1,0 +1,366 @@
+"""PX4Lockstep.Sim.Plant
+
+Continuous-time plant state for variable-step integration.
+
+Motivation
+----------
+The existing sim loop updates several subsystems *discretely* once per physics tick
+(actuators, propulsion rotor speed, battery polarization), while integrating only the
+rigid body with an ODE solver.
+
+To support a **full-fledged variable-step integrator**, we need a single “plant state”
+containing *all* continuous states so that adaptive solvers can control error across the
+whole plant, not just the rigid body.
+
+This module provides:
+  * A `PlantState` and `PlantDeriv` data model suitable for allocation-free integration.
+  * A minimal `PlantInput` and `PlantOutputs` (algebraic coupling outputs).
+  * State math helpers (`plant_add`, `plant_scale_add`, `plant_lincomb`) used by ODE
+    integrators.
+  * Compatibility shims to initialize and synchronize the legacy mutable subsystem
+    objects (actuators/propulsion/battery) from/to the continuous `PlantState`.
+
+Design constraints
+------------------
+* Determinism: ODE RHS evaluation must be a **pure** function of (t, x, u) with no RNG.
+* Inputs are piecewise constant between discrete event boundaries (autopilot, wind,
+  failures). Adaptive substeps must never touch RNG or mutate shared state.
+* Keep compatibility while migrating: the sim can still own "legacy" mutable objects,
+  but those should be treated as *parameters* + a mirrored copy of the integrated state.
+
+This file is intentionally a *shell* for the full refactor: it compiles and provides the
+interfaces, while leaving most dynamics details to `PlantSimulation.jl`.
+"""
+module Plant
+
+using StaticArrays
+
+using ..Types: Vec3, quat_normalize
+using ..RigidBody: RigidBodyState, RigidBodyDeriv, rb_add, rb_scale_add
+using ..Vehicles
+using ..Propulsion
+using ..Powertrain
+
+export PlantState,
+    PlantDeriv,
+    PlantInput,
+    PlantOutputs,
+    init_plant_state,
+    sync_components_from_plant!,
+    plant_add,
+    plant_scale_add,
+    plant_lincomb
+
+############################
+# Core plant state
+############################
+
+"""Continuous-time plant state.
+
+Fields:
+* `rb`           : rigid-body state
+* `motors_y`     : motor actuator outputs (12 channels, normalized [0,1])
+* `motors_ydot`  : motor actuator rates (used only for 2nd-order actuator models)
+* `servos_y`     : servo actuator outputs (8 channels, normalized [-1,1])
+* `servos_ydot`  : servo actuator rates
+* `rotor_ω`      : per-rotor angular speeds (rad/s)
+* `batt_soc`     : battery state of charge [0,1]
+* `batt_v1`      : Thevenin polarization voltage state (V), 0 for ideal batteries
+
+Notes:
+* Motors/servos are fixed-size to match PX4 lockstep ABI sizes.
+* Rotor count is a type parameter `N` so the integrator can stay allocation-free.
+"""
+struct PlantState{N}
+    rb::RigidBodyState
+    motors_y::SVector{12,Float64}
+    motors_ydot::SVector{12,Float64}
+    servos_y::SVector{8,Float64}
+    servos_ydot::SVector{8,Float64}
+    rotor_ω::SVector{N,Float64}
+    batt_soc::Float64
+    batt_v1::Float64
+end
+
+function PlantState{N}(;
+    rb::RigidBodyState = RigidBodyState(),
+    motors_y::SVector{12,Float64} = zero(SVector{12,Float64}),
+    motors_ydot::SVector{12,Float64} = zero(SVector{12,Float64}),
+    servos_y::SVector{8,Float64} = zero(SVector{8,Float64}),
+    servos_ydot::SVector{8,Float64} = zero(SVector{8,Float64}),
+    rotor_ω::SVector{N,Float64} = zero(SVector{N,Float64}),
+    batt_soc::Float64 = 1.0,
+    batt_v1::Float64 = 0.0,
+) where {N}
+    return PlantState{N}(rb, motors_y, motors_ydot, servos_y, servos_ydot, rotor_ω, batt_soc, batt_v1)
+end
+
+"""Continuous-time plant derivative."""
+struct PlantDeriv{N}
+    rb::RigidBodyDeriv
+    motors_y_dot::SVector{12,Float64}
+    motors_ydot_dot::SVector{12,Float64}
+    servos_y_dot::SVector{8,Float64}
+    servos_ydot_dot::SVector{8,Float64}
+    rotor_ω_dot::SVector{N,Float64}
+    batt_soc_dot::Float64
+    batt_v1_dot::Float64
+end
+
+function PlantDeriv{N}(;
+    rb::RigidBodyDeriv = RigidBodyDeriv(),
+    motors_y_dot::SVector{12,Float64} = zero(SVector{12,Float64}),
+    motors_ydot_dot::SVector{12,Float64} = zero(SVector{12,Float64}),
+    servos_y_dot::SVector{8,Float64} = zero(SVector{8,Float64}),
+    servos_ydot_dot::SVector{8,Float64} = zero(SVector{8,Float64}),
+    rotor_ω_dot::SVector{N,Float64} = zero(SVector{N,Float64}),
+    batt_soc_dot::Float64 = 0.0,
+    batt_v1_dot::Float64 = 0.0,
+) where {N}
+    return PlantDeriv{N}(rb, motors_y_dot, motors_ydot_dot, servos_y_dot, servos_ydot_dot, rotor_ω_dot, batt_soc_dot, batt_v1_dot)
+end
+
+############################
+# Inputs and algebraic outputs
+############################
+
+"""Plant input held constant between discrete event boundaries.
+
+This type is intentionally minimal; expand as you implement coupled dynamics.
+
+Determinism contract:
+* Construct/update `PlantInput` only at *discrete* event times (autopilot tick, wind tick,
+  failure injection).
+* Never call RNG or mutate shared state inside the ODE RHS evaluation.
+"""
+Base.@kwdef struct PlantInput
+    cmd::Vehicles.ActuatorCommand = Vehicles.ActuatorCommand()
+    wind_ned::Vec3 = zero(Vec3)
+end
+
+"""Algebraic outputs of the plant (coupling + logging).
+
+Shell type; grow it as you implement the coupled plant:
+* rotor outputs (thrust/torque/current)
+* bus voltage/current
+* battery_status injection
+"""
+Base.@kwdef struct PlantOutputs{N}
+    rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
+    bus_current_a::Float64 = 0.0
+    bus_voltage_v::Float64 = NaN
+    battery_status::Union{Nothing,Powertrain.BatteryStatus} = nothing
+end
+
+############################
+# State math (used by integrators)
+############################
+
+@inline function plant_add(x::PlantState{N}, k::PlantDeriv{N}, h::Float64) where {N}
+    return PlantState{N}(
+        rb = rb_add(x.rb, k.rb, h),
+        motors_y = x.motors_y + k.motors_y_dot * h,
+        motors_ydot = x.motors_ydot + k.motors_ydot_dot * h,
+        servos_y = x.servos_y + k.servos_y_dot * h,
+        servos_ydot = x.servos_ydot + k.servos_ydot_dot * h,
+        rotor_ω = x.rotor_ω + k.rotor_ω_dot * h,
+        batt_soc = x.batt_soc + k.batt_soc_dot * h,
+        batt_v1 = x.batt_v1 + k.batt_v1_dot * h,
+    )
+end
+
+@inline function plant_scale_add(
+    x::PlantState{N},
+    k1::PlantDeriv{N},
+    k2::PlantDeriv{N},
+    k3::PlantDeriv{N},
+    k4::PlantDeriv{N},
+    h::Float64,
+) where {N}
+    # Mirrors `RigidBody.rb_scale_add` (classic RK4 combination).
+    w = h / 6.0
+    return PlantState{N}(
+        rb = rb_scale_add(x.rb, k1.rb, k2.rb, k3.rb, k4.rb, h),
+        motors_y = x.motors_y + (k1.motors_y_dot + 2k2.motors_y_dot + 2k3.motors_y_dot + k4.motors_y_dot) * w,
+        motors_ydot = x.motors_ydot + (k1.motors_ydot_dot + 2k2.motors_ydot_dot + 2k3.motors_ydot_dot + k4.motors_ydot_dot) * w,
+        servos_y = x.servos_y + (k1.servos_y_dot + 2k2.servos_y_dot + 2k3.servos_y_dot + k4.servos_y_dot) * w,
+        servos_ydot = x.servos_ydot + (k1.servos_ydot_dot + 2k2.servos_ydot_dot + 2k3.servos_ydot_dot + k4.servos_ydot_dot) * w,
+        rotor_ω = x.rotor_ω + (k1.rotor_ω_dot + 2k2.rotor_ω_dot + 2k3.rotor_ω_dot + k4.rotor_ω_dot) * w,
+        batt_soc = x.batt_soc + (k1.batt_soc_dot + 2k2.batt_soc_dot + 2k3.batt_soc_dot + k4.batt_soc_dot) * w,
+        batt_v1 = x.batt_v1 + (k1.batt_v1_dot + 2k2.batt_v1_dot + 2k3.batt_v1_dot + k4.batt_v1_dot) * w,
+    )
+end
+
+@inline function plant_lincomb(
+    x::PlantState{N},
+    h::Float64,
+    ks::NTuple{K,PlantDeriv{N}},
+    as::NTuple{K,Float64},
+) where {N,K}
+    # Generic linear combination used by adaptive RK methods.
+    # NOTE: keep quaternion normalization to a single normalize at the end (matches `_rb_lincomb`).
+
+    # Rigid-body state fields.
+    pos = x.rb.pos_ned
+    vel = x.rb.vel_ned
+    q = x.rb.q_bn
+    ω = x.rb.ω_body
+
+    # Other continuous states.
+    motors_y = x.motors_y
+    motors_ydot = x.motors_ydot
+    servos_y = x.servos_y
+    servos_ydot = x.servos_ydot
+    rotor_ω = x.rotor_ω
+    batt_soc = x.batt_soc
+    batt_v1 = x.batt_v1
+
+    @inbounds for i = 1:K
+        w = as[i] * h
+        pos = pos + ks[i].rb.pos_dot * w
+        vel = vel + ks[i].rb.vel_dot * w
+        q = q + ks[i].rb.q_dot * w
+        ω = ω + ks[i].rb.ω_dot * w
+
+        motors_y = motors_y + ks[i].motors_y_dot * w
+        motors_ydot = motors_ydot + ks[i].motors_ydot_dot * w
+        servos_y = servos_y + ks[i].servos_y_dot * w
+        servos_ydot = servos_ydot + ks[i].servos_ydot_dot * w
+        rotor_ω = rotor_ω + ks[i].rotor_ω_dot * w
+        batt_soc = batt_soc + ks[i].batt_soc_dot * w
+        batt_v1 = batt_v1 + ks[i].batt_v1_dot * w
+    end
+
+    rb = RigidBodyState(
+        pos_ned = pos,
+        vel_ned = vel,
+        q_bn = quat_normalize(q),
+        ω_body = ω,
+    )
+
+    return PlantState{N}(
+        rb = rb,
+        motors_y = motors_y,
+        motors_ydot = motors_ydot,
+        servos_y = servos_y,
+        servos_ydot = servos_ydot,
+        rotor_ω = rotor_ω,
+        batt_soc = batt_soc,
+        batt_v1 = batt_v1,
+    )
+end
+
+############################
+# Compatibility shims (sync with legacy mutable models)
+############################
+
+# Actuator state extraction.
+@inline _act_state(::Vehicles.DirectActuators, ::Val{N}) where {N} = (zero(SVector{N,Float64}), zero(SVector{N,Float64}))
+@inline _act_state(a::Vehicles.FirstOrderActuators{N}, ::Val{N}) where {N} = (a.y, zero(SVector{N,Float64}))
+@inline _act_state(a::Vehicles.SecondOrderActuators{N}, ::Val{N}) where {N} = (a.y, a.ydot)
+
+@inline function _set_act_state!(::Vehicles.DirectActuators, y, ydot)
+    return nothing
+end
+@inline function _set_act_state!(a::Vehicles.FirstOrderActuators, y, ydot)
+    a.y = y
+    return nothing
+end
+@inline function _set_act_state!(a::Vehicles.SecondOrderActuators, y, ydot)
+    a.y = y
+    a.ydot = ydot
+    return nothing
+end
+
+# Battery state extraction.
+@inline function _battery_state(b::Powertrain.IdealBattery)
+    return (b.soc, 0.0)
+end
+@inline function _battery_state(b::Powertrain.TheveninBattery)
+    return (b.soc, b.v1)
+end
+
+@inline function _set_battery_state!(b::Powertrain.IdealBattery, soc::Float64, v1::Float64)
+    b.soc = soc
+    return nothing
+end
+@inline function _set_battery_state!(b::Powertrain.TheveninBattery, soc::Float64, v1::Float64)
+    b.soc = soc
+    b.v1 = v1
+    return nothing
+end
+
+# Propulsion state extraction.
+function _propulsion_omega(p::Propulsion.QuadRotorSet{N}) where {N}
+    return SVector{N,Float64}(ntuple(i -> Float64(p.units[i].ω_rad_s), N))
+end
+
+function _set_propulsion_omega!(p::Propulsion.QuadRotorSet{N}, ω::SVector{N,Float64}) where {N}
+    @inbounds for i = 1:N
+        p.units[i].ω_rad_s = ω[i]
+    end
+    return nothing
+end
+
+"""Initialize a `PlantState` from the current legacy subsystem states.
+
+This is a convenience bridge so you can migrate gradually.
+
+TODO:
+* Support additional propulsion sets beyond `QuadRotorSet`.
+* Support additional battery models beyond Ideal/Thevenin.
+"""
+function init_plant_state(
+    rb::RigidBodyState,
+    motor_actuators,
+    servo_actuators,
+    propulsion,
+    battery::Powertrain.AbstractBatteryModel,
+)
+    my, mydot = _act_state(motor_actuators, Val(12))
+    sy, sydot = _act_state(servo_actuators, Val(8))
+    soc, v1 = _battery_state(battery)
+
+    propulsion === nothing && error("init_plant_state requires a propulsion model")
+
+    ω = _propulsion_omega(propulsion)
+    N = length(ω)
+
+    return PlantState{N}(
+        rb = rb,
+        motors_y = SVector{12,Float64}(my),
+        motors_ydot = SVector{12,Float64}(mydot),
+        servos_y = SVector{8,Float64}(sy),
+        servos_ydot = SVector{8,Float64}(sydot),
+        rotor_ω = ω,
+        batt_soc = soc,
+        batt_v1 = v1,
+    )
+end
+
+"""Synchronize legacy mutable subsystem objects from the integrated `PlantState`.
+
+This is for compatibility (logging, external tooling). Long-term, the simulation should
+stop mutating subsystem models in the hot loop and treat them as read-only parameters.
+"""
+function sync_components_from_plant!(
+    x::PlantState{N},
+    motor_actuators,
+    servo_actuators,
+    propulsion,
+    battery::Powertrain.AbstractBatteryModel,
+) where {N}
+    _set_act_state!(motor_actuators, x.motors_y, x.motors_ydot)
+    _set_act_state!(servo_actuators, x.servos_y, x.servos_ydot)
+
+    if propulsion !== nothing
+        # Currently only QuadRotorSet is supported.
+        _set_propulsion_omega!(propulsion, x.rotor_ω)
+    end
+
+    _set_battery_state!(battery, x.batt_soc, x.batt_v1)
+
+    return nothing
+end
+
+end # module Plant

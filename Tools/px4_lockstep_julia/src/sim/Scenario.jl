@@ -15,7 +15,8 @@ module Scenario
 using ..Types: Vec3
 using ..RigidBody: RigidBodyState
 using ..Autopilots: AutopilotCommand
-using ..Events: EventScheduler, AbstractEvent, AtTime, When, step_events!
+import ..Events
+using ..Events: EventScheduler, AbstractEvent, AtTime, When, step_events!, next_at_time_us
 using ..Environment: add_step_gust!
 using ..Propulsion: set_motor_enabled!
 import ..Powertrain
@@ -24,6 +25,8 @@ export AbstractScenario,
     ScriptedScenario,
     EventScenario,
     scenario_step,
+    process_events!,
+    next_event_us,
     # Convenience helpers for EventScenario
     arm_at!,
     disarm_at!,
@@ -49,6 +52,23 @@ and by default this forwards to the 3-argument method.
 """
 scenario_step(s::AbstractScenario, t::Float64, x::RigidBodyState, sim) =
     scenario_step(s, t, x)
+
+"""Process any discrete events owned by the scenario at time `t`.
+
+Default: no-op.
+
+This hook exists so event-driven simulators can treat scenario `AtTime` events as true
+event boundaries (and not merely as part of an autopilot tick).
+"""
+process_events!(::AbstractScenario, sim, t::Float64) = nothing
+
+"""Return the next discrete scenario event time (microseconds) strictly in the future.
+
+Default: `nothing`.
+
+Event-driven simulators can include this time as an event boundary.
+"""
+next_event_us(::AbstractScenario, sim)::Union{UInt64,Nothing} = nothing
 
 """A simple time-driven scenario.
 
@@ -124,6 +144,7 @@ Base.@kwdef mutable struct EventScenario <: AbstractScenario
     takeoff_override_delay_s::Union{Nothing,Float64} = 0.5
     _mission_started::Bool = false
     _mission_start_time_s::Float64 = NaN
+    _last_process_us::UInt64 = typemax(UInt64)
 end
 
 @inline function _set_cmd!(
@@ -142,13 +163,7 @@ end
 
 function scenario_step(s::EventScenario, t::Float64, x::RigidBodyState, sim)
     # Apply any pending events.
-    step_events!(s.scheduler, sim, t)
-
-    # Latch mission start to support takeoff override even when mission request is pulsed.
-    if s.cmd.request_mission && !s._mission_started
-        s._mission_started = true
-        s._mission_start_time_s = t
-    end
+    process_events!(s, sim, t)
 
     landed =
         (x.pos_ned[3] >= -s.land_z_thresh_m) && (abs(x.vel_ned[3]) < s.land_vz_thresh_mps)
@@ -161,6 +176,29 @@ function scenario_step(s::EventScenario, t::Float64, x::RigidBodyState, sim)
     end
 
     return s.cmd, landed
+end
+
+function process_events!(s::EventScenario, sim, t::Float64)
+    now_us = Events._sim_now_us(sim)
+    if now_us == s._last_process_us
+        return nothing
+    end
+    s._last_process_us = now_us
+
+    step_events!(s.scheduler, sim, t)
+
+    # Latch mission start to support takeoff override even when mission request is pulsed.
+    if s.cmd.request_mission && !s._mission_started
+        s._mission_started = true
+        s._mission_start_time_s = t
+    end
+    return nothing
+end
+
+@inline function next_event_us(s::EventScenario, sim)::Union{UInt64,Nothing}
+    # Only `AtTime` events are treated as true time boundaries. `When` is evaluated when
+    # `process_events!` is called at event boundaries.
+    return next_at_time_us(s.scheduler, sim)
 end
 
 ############################

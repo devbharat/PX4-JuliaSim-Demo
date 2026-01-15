@@ -16,6 +16,161 @@ function quat_angle_error(q::Sim.Types.Quat, q_ref::Sim.Types.Quat)
     return 2.0 * acos(d)
 end
 
+@testset "Integrators: adaptive RK45 free-fall correctness and determinism" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.RigidBody.RigidBodyState, u)
+        return Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+    end
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    integ1 = Sim.Integrators.RK45Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    # Analytic solution in NED (positive z = down).
+    @test isapprox(x1.vel_ned[3], g; atol = 1e-4)
+    @test isapprox(x1.pos_ned[3], 0.5 * g; atol = 1e-4)
+
+    st = Sim.Integrators.last_stats(integ1)
+    @test st.nfev > 0
+    @test st.naccept > 0
+
+    # Determinism: a fresh integrator produces identical results.
+    integ2 = Sim.Integrators.RK45Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
+@testset "Integrators: adaptive RK45 supports PlantState" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+        rḃ = Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.rb.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+    end
+
+    rb0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+
+    integ1 = Sim.Integrators.RK45Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    @test isapprox(x1.rb.vel_ned[3], g; atol = 1e-4)
+    @test isapprox(x1.rb.pos_ned[3], 0.5 * g; atol = 1e-4)
+
+    # Other state groups remain unchanged for this RHS.
+    @test x1.motors_y == x0.motors_y
+    @test x1.servos_y == x0.servos_y
+    @test x1.rotor_ω == x0.rotor_ω
+    @test x1.batt_soc == x0.batt_soc
+    @test x1.batt_v1 == x0.batt_v1
+
+    # Determinism check.
+    integ2 = Sim.Integrators.RK45Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
+
+@testset "Integrators: plant-aware error norm is opt-in" begin
+    rb0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    ω_hi = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
+    ω_lo = SVector{4,Float64}(90.0, 90.0, 90.0, 90.0)
+
+    x_ref = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_hi, batt_soc = 1.0, batt_v1 = 0.0)
+    x_hi = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_hi, batt_soc = 1.0, batt_v1 = 0.0)
+    x_lo = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_lo, batt_soc = 1.0, batt_v1 = 0.0)
+
+    integ = Sim.Integrators.RK45Integrator(
+        plant_error_control = false,  # default behavior
+        atol_rotor = 1.0,
+        rtol_rotor = 0.0,
+        # Keep RB tolerances finite but RB deltas are zero here.
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+    )
+
+    err_off = Sim.Integrators._err_norm(integ, x_hi, x_lo, x_ref)
+    @test err_off == 0.0
+
+    integ.plant_error_control = true
+    err_on = Sim.Integrators._err_norm(integ, x_hi, x_lo, x_ref)
+    @test err_on > 1.0
+end
+
+
 @testset "Scheduling.StepTrigger" begin
     trig = Sim.Scheduling.StepTrigger(5)
     @test Sim.Scheduling.due(trig, 0)
@@ -174,6 +329,189 @@ end
     @test sim.log.t[1] == 0.0
     @test sim.log.time_us[1] == UInt64(0)
     @test sim.log.pos_ned[1] == (1.0, 2.0, 3.0)
+end
+
+@testset "PlantSimulation respects t_end (no overshoot)" begin
+    # Minimal dummy autopilot so we can run the PlantSimulation engine without libpx4_lockstep.
+    Base.@kwdef mutable struct DummyPSOutputs
+        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
+        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
+        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_yaw::Float32 = 0f0
+        trajectory_setpoint_yawspeed::Float32 = 0f0
+        nav_state::Int32 = Int32(0)
+        arming_state::Int32 = Int32(0)
+        mission_seq::Int32 = Int32(0)
+        mission_count::Int32 = Int32(0)
+        mission_finished::Int32 = Int32(0)
+    end
+
+    mutable struct DummyPSAutopilot <: Sim.Autopilots.AbstractAutopilot
+        out::DummyPSOutputs
+    end
+    Sim.Autopilots.autopilot_output_type(::DummyPSAutopilot) = DummyPSOutputs
+
+    function Sim.Autopilots.autopilot_step(
+        ap::DummyPSAutopilot,
+        time_us::UInt64,
+        pos::Sim.Types.Vec3,
+        vel::Sim.Types.Vec3,
+        q::Sim.Types.Quat,
+        ω::Sim.Types.Vec3,
+        cmd::Sim.Autopilots.AutopilotCommand;
+        landed::Bool = false,
+        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
+    )::DummyPSOutputs
+        # Leave outputs at zero; we only care about timebase correctness here.
+        return ap.out
+    end
+
+    env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.ConstantWind(Sim.Types.vec3(0, 0, 0)))
+    model = Sim.Vehicles.IrisQuadrotor()
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    hover_T = model.params.mass * 9.80665 / 4.0
+    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
+    vehicle = Sim.Simulation.VehicleInstance(
+        model,
+        Sim.Vehicles.DirectActuators(),
+        Sim.Vehicles.DirectActuators(),
+        propulsion,
+        x0,
+    )
+
+    cfg = Sim.PlantSimulation.PlantSimulationConfig(
+        t0 = 0.0,
+        t_end = 0.005,      # 5 ms
+        dt_autopilot = 0.002,
+        dt_wind = 0.002,
+        dt_log = 0.002,
+        seed = 1,
+        strict_lockstep_rates = false,
+    )
+
+    ap = DummyPSAutopilot(DummyPSOutputs())
+    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
+
+    integ = Sim.Integrators.RK45Integrator(h_min = 1e-6, h_max = 0.01)
+    sim = Sim.PlantSimulation.PlantSimulationInstance(
+        cfg = cfg,
+        env = env,
+        vehicle = vehicle,
+        autopilot = ap,
+        estimator = Sim.Estimators.TruthEstimator(),
+        integrator = integ,
+        scenario = scenario,
+        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
+        log = Sim.Logging.SimLog(),
+        contact = Sim.Contacts.NoContact(),
+    )
+
+    Sim.PlantSimulation.run!(sim; close_log = false)
+    @test Sim.PlantSimulation.time_us(sim) == UInt64(5000)
+    @test sim.t_s == Float64(sim.t_us) * 1e-6
+    @test sim.t_us <= sim.t_end_us
+end
+
+@testset "PlantSimulation: AtTime scenario events are true event boundaries" begin
+    # This test verifies that an `AtTime` scenario event scheduled *between* autopilot ticks
+    # becomes its own integration boundary and is applied before the subsequent interval.
+
+    Base.@kwdef mutable struct DummyPSOutputs2
+        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
+        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
+        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
+        trajectory_setpoint_yaw::Float32 = 0f0
+        trajectory_setpoint_yawspeed::Float32 = 0f0
+        nav_state::Int32 = Int32(0)
+        arming_state::Int32 = Int32(0)
+        mission_seq::Int32 = Int32(0)
+        mission_count::Int32 = Int32(0)
+        mission_finished::Int32 = Int32(0)
+    end
+
+    mutable struct DummyPSAutopilot2 <: Sim.Autopilots.AbstractAutopilot
+        out::DummyPSOutputs2
+    end
+    Sim.Autopilots.autopilot_output_type(::DummyPSAutopilot2) = DummyPSOutputs2
+
+    function Sim.Autopilots.autopilot_step(
+        ap::DummyPSAutopilot2,
+        time_us::UInt64,
+        pos::Sim.Types.Vec3,
+        vel::Sim.Types.Vec3,
+        q::Sim.Types.Quat,
+        ω::Sim.Types.Vec3,
+        cmd::Sim.Autopilots.AutopilotCommand;
+        landed::Bool = false,
+        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
+    )::DummyPSOutputs2
+        return ap.out
+    end
+
+    env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.ConstantWind(Sim.Types.vec3(0, 0, 0)))
+    model = Sim.Vehicles.IrisQuadrotor()
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    hover_T = model.params.mass * 9.80665 / 4.0
+    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
+    vehicle = Sim.Simulation.VehicleInstance(
+        model,
+        Sim.Vehicles.DirectActuators(),
+        Sim.Vehicles.DirectActuators(),
+        propulsion,
+        x0,
+    )
+
+    cfg = Sim.PlantSimulation.PlantSimulationConfig(
+        t0 = 0.0,
+        t_end = 0.012,         # 12 ms
+        dt_autopilot = 0.010,  # 10 ms autopilot cadence
+        dt_wind = 0.020,
+        dt_log = 0.020,
+        seed = 1,
+        strict_lockstep_rates = false,
+    )
+
+    ap = DummyPSAutopilot2(DummyPSOutputs2())
+    scenario = Sim.Scenario.EventScenario()
+    Sim.Scenario.fail_motor_at!(scenario, 0.005, 1)  # 5 ms, between AP ticks at 0 and 10 ms
+
+    integ = Sim.Integrators.RK4Integrator()
+    sim = Sim.PlantSimulation.PlantSimulationInstance(
+        cfg = cfg,
+        env = env,
+        vehicle = vehicle,
+        autopilot = ap,
+        estimator = Sim.Estimators.TruthEstimator(),
+        integrator = integ,
+        scenario = scenario,
+        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
+        log = Sim.Logging.SimLog(),
+        contact = Sim.Contacts.NoContact(),
+    )
+
+    # First event interval should end at the scenario boundary (5 ms).
+    Sim.PlantSimulation.step_to_next_event!(sim)
+    @test Sim.PlantSimulation.time_us(sim) == UInt64(5000)
+    # Event is applied at the start of the next step (at t=5 ms).
+    @test sim.scenario.scheduler.fired[1] == false
+
+    Sim.PlantSimulation.step_to_next_event!(sim)
+    @test sim.scenario.scheduler.fired[1] == true
+    @test sim.vehicle.propulsion.units[1].enabled == false
 end
 
 @testset "Simulation holds wind constant across RK4 stages" begin
@@ -549,4 +887,63 @@ end
 
     last_trigger_step = ((total_steps - 1) ÷ ap_steps) * ap_steps
     @test last_us == UInt64(last_trigger_step * dt_us)
+end
+
+
+@testset "PlantSimulation: bus voltage solve (linear + saturated regimes)" begin
+    pset = Sim.Propulsion.default_iris_quadrotor_set()
+    p = pset  # QuadRotorSet{4}
+    ω = SVector{4,Float64}(400.0, 400.0, 400.0, 400.0)
+
+    ocv = 12.6
+    v1 = 0.0
+    R0 = 0.05
+    V_min = 8.0
+
+    # Linear-ish regime: moderate duty and ω so currents are positive but not saturated.
+    duty_lin = SVector{4,Float64}(0.2, 0.2, 0.2, 0.2)
+    V_lin = Sim.PlantSimulation._solve_bus_voltage(p, ω, duty_lin, ocv, v1, R0, V_min)
+    I_lin = Sim.PlantSimulation._bus_current_total(p, ω, duty_lin, V_lin)
+    @test isfinite(V_lin)
+    @test V_lin >= V_min - 1e-9
+    @test V_lin <= (ocv - v1) + 1e-9
+    @test V_lin > V_min + 1e-6
+    @test isapprox(V_lin + R0 * I_lin, ocv - v1; atol = 1e-5)
+
+    # Saturated regime: near-stall at full duty (forces current clamping).
+    ω_stall = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0)
+    duty_sat = SVector{4,Float64}(1.0, 1.0, 1.0, 1.0)
+    V_sat = Sim.PlantSimulation._solve_bus_voltage(p, ω_stall, duty_sat, ocv, v1, R0, V_min)
+    I_sat = Sim.PlantSimulation._bus_current_total(p, ω_stall, duty_sat, V_sat)
+    @test isfinite(V_sat)
+    @test V_sat >= V_min - 1e-9
+    @test V_sat <= (ocv - v1) + 1e-9
+    @test isapprox(V_sat, V_min; atol = 1e-6)
+    res_sat = V_sat + R0 * I_sat - (ocv - v1)
+    if isapprox(V_sat, V_min; atol = 1e-6)
+        @test res_sat >= -1e-6
+    else
+        @test isapprox(res_sat, 0.0; atol = 1e-3)
+    end
+
+    # Current-limited regime (force I_lin >= Imax but avoid V_min clamp).
+    p_sat = Sim.Propulsion.default_iris_quadrotor_set()
+    for unit in p_sat.units
+        unit.motor = Sim.Propulsion.BLDCMotorParams(
+            Kv_rpm_per_volt = unit.motor.Kv_rpm_per_volt,
+            R_ohm = unit.motor.R_ohm,
+            J_kgm2 = unit.motor.J_kgm2,
+            I0_a = unit.motor.I0_a,
+            viscous_friction_nm_per_rad_s = unit.motor.viscous_friction_nm_per_rad_s,
+            max_current_a = 5.0,
+        )
+    end
+
+    ocv_sat = 12.6
+    R0_sat = 0.02
+    V_min_sat = 0.0
+    V_cur = Sim.PlantSimulation._solve_bus_voltage(p_sat, ω_stall, duty_sat, ocv_sat, v1, R0_sat, V_min_sat)
+    I_cur = Sim.PlantSimulation._bus_current_total(p_sat, ω_stall, duty_sat, V_cur)
+    @test V_cur > V_min_sat + 1e-6
+    @test isapprox(V_cur + R0_sat * I_cur, ocv_sat - v1; atol = 1e-3)
 end

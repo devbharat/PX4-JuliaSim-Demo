@@ -105,6 +105,7 @@ The simulation framework is organized as composable modules:
   * truth → estimated state (noise, bias, delay) feeding PX4 without EKF2
 * `PX4Lockstep.Sim.Integrators`
   * fixed-step Euler and RK4 (default)
+  * adaptive (variable-step) RK23 and RK45 (Dormand–Prince) integrators (optional)
 * `PX4Lockstep.Sim.Autopilots`
   * thin bridge from sim truth → PX4 lockstep inputs
 * `PX4Lockstep.Sim.Logging`

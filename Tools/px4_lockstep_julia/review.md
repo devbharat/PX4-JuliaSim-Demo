@@ -1,3 +1,104 @@
+## Var-step merge track update — `px4_lockstep_julia_readytoMerge0.zip`
+
+This section is the **delta review + P0 implementation pass** for the variable-step
+(`PlantSimulation`) engine, based on your `px4_lockstep_julia_readytoMerge0.zip` snapshot.
+
+Focus: **correctness + determinism first**, then performance. Contact/ground is explicitly
+de-prioritized (in-air flight focus).
+
+### P0 completed in this pass
+
+#### P0-A: `AtTime` scenario events are true event boundaries (hybrid-system correct)
+
+**Why this matters**
+
+In the previous fixed-step engine, one-off failures/gusts were effectively quantized to
+`dt_autopilot` or `dt` depending on where they were injected. That can:
+
+* hide timing-sensitive bugs (e.g. motor failure during a maneuver)
+* make results depend on autopilot cadence (bad coupling)
+
+**What’s now true** (PlantSimulation):
+
+* `EventScenario` exposes `next_event_us(...)` which returns the next unfired `AtTime`.
+* `step_to_next_event!` includes that time in the min() alongside periodic triggers and
+  `t_end_us`, guaranteeing the integrator never crosses an `AtTime` discontinuity.
+* `_process_events_at_current_time!` calls `process_events!` *first* so same-timestamp
+  wind/autopilot/log ticks see the modified sim state.
+
+**New test**
+
+* `PlantSimulation: AtTime scenario events are true event boundaries` schedules a
+  `fail_motor_at!(t=0.005)` with `dt_autopilot=0.01` and asserts the first integration
+  interval ends at exactly 5 ms and the motor is disabled before the next interval.
+
+#### P0-B: Harden battery↔bus↔motor bus-voltage solve contract (bisection assumptions + NaN guards)
+
+**Why this matters**
+
+Adaptive integrators amplify “rare” NaN sources: one non-finite RHS evaluation can poison
+the whole step-size controller. The bus solve is the main coupled scalar root find inside
+your RHS, so it needs strong invariants.
+
+**What changed** (`src/sim/PlantSimulation.jl`):
+
+* `_solve_bus_voltage(...)` now:
+  * fails loudly on non-finite battery params or V0
+  * validates the bisection bracket assumptions (monotone I(V), monotone g(V))
+  * provides deterministic fixed-iteration bisection with **stringified state dumps**
+    on any non-finite intermediate
+* `_eval_propulsion_and_bus(...)` now checks `V_bus` and `I_bus_total` are finite and
+  throws immediately with context if not.
+
+### Notes on motor/servo actuator models (your question)
+
+You’re right to question whether **1st/2nd-order “motor actuators”** are needed when you
+already have rotor-ω dynamics in `Propulsion`:
+
+* For multirotors with an explicit rotor speed state **ω**, the physically meaningful lag
+  is primarily **ω̇** (motor+prop inertia + aero torque). In that case, keeping
+  `motor_actuators = DirectActuators()` is typically the most correct default.
+* A first/second-order motor actuator filter can still be useful if you want to model
+  *command-path shaping* (e.g. ESC input filtering, DShot update rate limits), but it’s
+  very easy to double-count dynamics and harm controller realism.
+
+**Recommendation (merge-safe):**
+
+* Keep the actuator types for **servos** (fixed-wing control surfaces) and for any future
+  propulsion models that don’t include ω.
+* For the quadrotor path, default to `DirectActuators` for motors and treat non-direct
+  motor actuators as an “expert mode” configuration.
+
+### P1 implemented in this pass (merge robustness upgrades)
+
+1. **Plant-aware adaptive error norm mode** (optional, default off)
+   * Added an explicit `plant_error_control::Bool` knob on `RK23Integrator` and
+     `RK45Integrator` (default `false`).
+   * When enabled, the adaptive error norm can include scaled terms for:
+     - rotor ω
+     - actuator outputs / rates
+     - battery SOC / V1
+   * Still uses the existing `atol_* = Inf` defaults to ignore groups unless you opt in.
+   * Added a unit test that proves the “opt-in” gating works.
+
+2. **Analytic bus solve in the unsaturated region, with deterministic fallback**
+   * `_solve_bus_voltage(...)` now tries a one-shot analytic solve under the assumption
+     that all active motors are in the linear (unsaturated) region, validates the region
+     assumption, and returns immediately if valid.
+   * If the region assumption fails, it falls back to the existing deterministic
+     region-classified analytic iteration and then to fixed-iteration bisection.
+   * Added unit tests that check the bus equation residual in both linear and saturated
+     regimes.
+
+### Remaining P1 backlog (documented, not implemented here)
+
+1. **Second-order actuator rate-limit semantics**: current “hard-ish” limiter is stable
+   but not strictly equivalent to discrete clamping. Decide on a consistent projection or
+   saturating ODE.
+
+
+---
+
 ## Consolidated review — `px4_lockstep_julia_latest3.zip` + `px4_lockstep_latest3.zip`
 
 This is a fresh review of the *current* codebase (Julia + C lockstep library), integrating the previous review and the patches you documented at the bottom of the prior `review.md`.

@@ -51,4 +51,7 @@ include("Simulation.jl")
 # Experimental/event-driven variable-step engine (shell).
 include("PlantSimulation.jl")
 
+# Deterministic verification utilities and reference problems.
+include("Verification.jl")
+
 end # module Sim

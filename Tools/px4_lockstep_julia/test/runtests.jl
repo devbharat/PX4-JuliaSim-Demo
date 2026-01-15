@@ -6,6 +6,10 @@ using PX4Lockstep
 
 const Sim = PX4Lockstep.Sim
 
+# Verification cases (analytic + invariants). Keep in a separate file so the
+# main test entrypoint stays readable.
+include("verification_cases.jl")
+
 """Return the geodesic rotation error (rad) between two quaternions.
 
 Quaternions are treated as equivalent up to sign (q == -q).

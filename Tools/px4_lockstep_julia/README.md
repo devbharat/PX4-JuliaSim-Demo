@@ -51,6 +51,21 @@ Notes:
 Lightweight Python scripts live in `Tools/px4_lockstep_julia/scripts`.
 See `Tools/px4_lockstep_julia/scripts/README.md` for setup and usage.
 
+## Verification problems (integrator correctness)
+
+This repo includes a small set of deterministic verification problems with analytic
+solutions and/or conserved quantities. These are meant to catch numerical regressions
+and to help you compare solver configurations without needing PX4 in the loop.
+
+Run them from the repo root:
+
+```bash
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/sho.jl
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/pendulum.jl
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/kepler_circular.jl
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/torque_free_rigid_body.jl
+```
+
 ## Developer tooling
 
 Install tooling deps (once):

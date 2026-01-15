@@ -34,6 +34,13 @@ julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
 ```
 
+5. Run the adaptive PlantSimulation example (full-plant RK45):
+
+```bash
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_plantsim.jl
+```
+
 Outputs:
 
 * `sim_log.csv`
@@ -192,5 +199,4 @@ python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --outp
 ```
 <img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
 <img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />
-
 

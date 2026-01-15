@@ -112,6 +112,9 @@ The simulation framework is organized as composable modules:
 * `PX4Lockstep.Sim.Vehicles`
   * rigid-body 6DOF baseline model (Iris quad)
   * actuator dynamics (`DirectActuators`, `FirstOrderActuators`, `SecondOrderActuators`)
+* `PX4Lockstep.Sim.Plant`
+  * `PlantState` / `PlantDeriv` for full continuous plant state (rigid body + actuators + rotors + battery)
+  * `PlantInput` / `PlantOutputs` glue for variable-step integration
 * `PX4Lockstep.Sim.Powertrain`
   * `IdealBattery` baseline
   * `TheveninBattery` (OCV + R0 + RC) for better voltage sag realism
@@ -137,6 +140,8 @@ The simulation framework is organized as composable modules:
   * `SimLog` in-memory logging and `CSVLogSink` streaming logs
 * `PX4Lockstep.Sim.Simulation`
   * deterministic engine: scenario → PX4 → actuators → integrate → log
+* `PX4Lockstep.Sim.PlantSimulation`
+  * event-driven variable-step engine: integrates full plant between event boundaries
 
 ### Estimator injection (noise + delay)
 
@@ -202,4 +207,3 @@ python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --outp
 ```
 <img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
 <img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />
-

@@ -19,13 +19,14 @@ Key architectural idea
   (t, x, u) with **no RNG** and no hidden mutation, so adaptive substeps remain
   deterministic.
 
-Current limitations (non-blocking for flight)
---------------------------------------------
+Current limitations
+-------------------
 * Scenario `AtTime` events are treated as true time boundaries (hybrid system style).
   `When` events are evaluated when `process_events!` is called at boundaries.
 * Battery↔bus↔motor coupling uses an analytic linear-region solve with deterministic
   fallback (region-classified iteration + fixed-iteration bisection).
-* Contact uses a penalty force without event detection (acceptable for "in-air" focus).
+* Contact uses a penalty force without event detection; it is primarily intended for
+  in-air scenarios.
 """
 module PlantSimulation
 
@@ -164,7 +165,7 @@ end
 # Plant dynamics wrapper
 ############################
 
-"""Coupled plant dynamics (shell).
+"""Coupled plant dynamics for the full plant state.
 
 This functor is meant to be the single RHS used by ODE integrators:
 
@@ -179,6 +180,9 @@ Coupled plant RHS implemented here:
 
 Determinism requirements:
 * Must be a pure function: no RNG, no global state, no mutation of `sim.env` / `sim.vehicle`.
+
+Notes:
+* Currently supports `Propulsion.QuadRotorSet` propulsion models.
 """
 struct PlantDynamicsWithContact{M,E,C,AM,AS,P,B}
     model::M
@@ -1003,7 +1007,7 @@ function PlantSimulationInstance(;
     wind0 = sample_wind!(env.wind, vehicle.state.pos_ned, cfg.t0)
     input0 = PlantInput(cmd = ActuatorCommand(), wind_ned = wind0)
 
-    # Cache RHS functor (currently throws until implemented).
+    # Cache RHS functor for ODE integration.
     dynfun = PlantDynamicsWithContact(
         vehicle.model,
         env,
@@ -1082,8 +1086,9 @@ Ordering contract (deterministic):
 
 Notes
 -----
-* Scenario one-off events are currently processed at the autopilot tick, which means
-  event timing resolution is bounded by `dt_autopilot` unless you make it smaller.
+* `AtTime` events are scheduled as true event boundaries via `next_event_us`.
+* `When` events are evaluated when this function runs, so their timing resolution is
+  bounded by the discrete event boundaries (wind/autopilot/log/AtTime).
 """
 function _process_events_at_current_time!(sim::PlantSimulationInstance)
     # Scenario events (AtTime/When).

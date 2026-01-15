@@ -318,7 +318,7 @@ end
 
 """Integrate a `RigidBodyState` forward with a fixed step size.
 
-This is a tiny convenience wrapper used by verification scripts/tests.
+This is a convenience wrapper used by verification scripts and tests.
 
 Arguments:
 * `integrator`: `EulerIntegrator()` or `RK4Integrator()`

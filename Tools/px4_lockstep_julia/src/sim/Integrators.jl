@@ -7,7 +7,8 @@ to preserve deterministic behavior, simplify review, and minimize dependencies.
 
 Design:
 
-* Integrators operate on a `RigidBodyState` and a dynamics function...
+* Integrators operate on `RigidBodyState` (rigid-body-only) or `PlantState` (full plant)
+  with a dynamics function `f(t, x, u)` that returns the matching derivative type.
 * Control inputs are treated as piecewise constant across a sim step. In closed-loop
   simulation this is the standard assumption: the controller produces a command at the
   start of the interval and the physical system evolves under that command until the next
@@ -195,10 +196,10 @@ end
 """Advance state one step.
 
 Arguments:
-* `integrator` : `EulerIntegrator()` or `RK4Integrator()`
-* `f`          : dynamics function `f(t, x, u) -> RigidBodyDeriv`
+* `integrator` : any integrator supported by `step_integrator`
+* `f`          : dynamics function `f(t, x, u)` returning `RigidBodyDeriv` or `PlantDeriv`
 * `t`          : current time (s)
-* `x`          : current state
+* `x`          : current state (`RigidBodyState` or `PlantState`)
 * `u`          : control input (piecewise-constant over dt)
 * `dt`         : step size (s)
 """

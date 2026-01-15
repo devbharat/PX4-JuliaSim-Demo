@@ -28,8 +28,8 @@ Design constraints
 * Keep compatibility while migrating: the sim can still own "legacy" mutable objects,
   but those should be treated as *parameters* + a mirrored copy of the integrated state.
 
-This file is intentionally a *shell* for the full refactor: it compiles and provides the
-interfaces, while leaving most dynamics details to `PlantSimulation.jl`.
+This file focuses on shared plant data structures and helper math; coupled dynamics are
+implemented in `PlantSimulation.jl`.
 """
 module Plant
 
@@ -140,10 +140,8 @@ end
 
 """Algebraic outputs of the plant (coupling + logging).
 
-Shell type; grow it as you implement the coupled plant:
-* rotor outputs (thrust/torque/current)
-* bus voltage/current
-* battery_status injection
+Includes rotor outputs (thrust/torque/current), bus voltage/current, and battery-status
+data. Fields may be `nothing` if not populated by the caller.
 """
 Base.@kwdef struct PlantOutputs{N}
     rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
@@ -304,11 +302,10 @@ end
 
 """Initialize a `PlantState` from the current legacy subsystem states.
 
-This is a convenience bridge so you can migrate gradually.
+This is a convenience bridge for incremental migration.
 
-TODO:
-* Support additional propulsion sets beyond `QuadRotorSet`.
-* Support additional battery models beyond Ideal/Thevenin.
+Currently supports `Propulsion.QuadRotorSet` propulsion and the
+`IdealBattery`/`TheveninBattery` battery models.
 """
 function init_plant_state(
     rb::RigidBodyState,

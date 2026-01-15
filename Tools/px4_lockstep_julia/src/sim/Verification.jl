@@ -49,7 +49,268 @@ export SHOCase,
     rigidbody_rot_energy,
     rigidbody_angmom_body,
     rigidbody_angmom_ned,
-    integrate_fixed
+    integrate_fixed,
+    Trajectory,
+    simulate_trajectory,
+    rk45_reference,
+    resample_trajectory,
+    rb_error,
+    error_series,
+    invariant_series,
+    compare_to_reference
+
+
+########################
+# Trajectory and comparison utilities (reference integration)
+########################
+
+"""A uniformly-sampled trajectory.
+
+`x[k]` corresponds to time `t = (k-1)*dt`.
+
+This representation avoids storing a Float64 time vector and makes it easy to
+resample deterministically (integer index arithmetic).
+"""
+struct Trajectory{X}
+    dt::Float64
+    x::Vector{X}
+end
+
+@inline t_end(tr::Trajectory) = tr.dt * (length(tr.x) - 1)
+
+"""Integrate a state forward and save it on a uniform output grid.
+
+This is the core building block for reference/compare verification.
+
+Arguments:
+* `integrator`: any integrator supported by `step_integrator`
+* `f`: RHS `f(t, x, u)`
+* `x0`: initial state
+* `dt`: output/sample interval (s). The integrator is asked to advance exactly `dt` each step.
+* `t_end`: final time (s). Must be an exact multiple of `dt`.
+
+Returns a `Trajectory` containing states at `t = 0:dt:t_end`.
+"""
+function simulate_trajectory(
+    integrator,
+    f,
+    x0,
+    dt::Float64,
+    t_end::Float64;
+    u = nothing,
+)
+    @assert dt > 0
+    @assert t_end >= 0
+    n = Int(round(t_end / dt))
+    @assert isapprox(n * dt, t_end; atol = 0.0, rtol = 0.0) "t_end must be an exact multiple of dt"
+
+    reset!(integrator)
+
+    x = Vector{typeof(x0)}(undef, n + 1)
+    x[1] = x0
+
+    t = 0.0
+    for k = 1:n
+        x[k + 1] = step_integrator(integrator, f, t, x[k], u, dt)
+        t += dt
+    end
+    return Trajectory{typeof(x0)}(dt, x)
+end
+
+"""Generate a high-accuracy RK45 reference trajectory.
+
+This is intended as a numerical "truth" for cases without analytic solutions.
+
+You typically pick `dt_ref` small enough that you can resample to the solver's
+output grid exactly (e.g. `dt_ref = dt_test/10`).
+"""
+function rk45_reference(
+    f,
+    x0,
+    dt_ref::Float64,
+    t_end::Float64;
+    u = nothing,
+    # Default tolerances are intentionally tight.
+    rtol_pos::Float64 = 1e-10,
+    atol_pos::Float64 = 1e-12,
+    rtol_vel::Float64 = 1e-10,
+    atol_vel::Float64 = 1e-12,
+    rtol_ω::Float64 = 1e-10,
+    atol_ω::Float64 = 1e-12,
+    atol_att_rad::Float64 = 1e-12,
+    h_min::Float64 = 1e-9,
+    h_max::Float64 = dt_ref,
+    quantize_us::Bool = true,
+)
+    rk = RK45Integrator(
+        rtol_pos = rtol_pos,
+        atol_pos = atol_pos,
+        rtol_vel = rtol_vel,
+        atol_vel = atol_vel,
+        rtol_ω = rtol_ω,
+        atol_ω = atol_ω,
+        atol_att_rad = atol_att_rad,
+        h_min = h_min,
+        h_max = h_max,
+        quantize_us = quantize_us,
+    )
+    reset!(rk)
+    return simulate_trajectory(rk, f, x0, dt_ref, t_end; u = u)
+end
+
+"""Resample a uniformly sampled trajectory by integer downsampling.
+
+`dt_new` must be an exact integer multiple of `traj.dt`.
+"""
+function resample_trajectory(tr::Trajectory, dt_new::Float64)
+    @assert dt_new > 0
+    ratio = dt_new / tr.dt
+    k = Int(round(ratio))
+    @assert isapprox(k * tr.dt, dt_new; atol = 0.0, rtol = 0.0) "dt_new must be an exact integer multiple of dt"
+    @assert k >= 1
+    @assert ((length(tr.x) - 1) % k) == 0 "trajectory length must be an exact multiple of resample factor"
+    x_new = tr.x[1:k:end]
+    return Trajectory{eltype(tr.x)}(dt_new, collect(x_new))
+end
+
+"""Rigid-body state error components.
+
+Returns a named tuple with:
+* `pos` : ‖Δp‖ (m)
+* `vel` : ‖Δv‖ (m/s)
+* `att_rad` : SO(3) geodesic angle error (rad)
+* `ω` : ‖Δω‖ (rad/s)
+"""
+@inline function rb_error(x::RigidBodyState, xref::RigidBodyState)
+    pos = norm(x.pos_ned - xref.pos_ned)
+    vel = norm(x.vel_ned - xref.vel_ned)
+    ω = norm(x.ω_body - xref.ω_body)
+
+    # Quaternion angle error: θ = 2 acos(|q⋅qref|)
+    d = abs(dot(x.q_bn, xref.q_bn))
+    d = clamp(d, -1.0, 1.0)
+    att_rad = 2.0 * acos(d)
+    return (pos = pos, vel = vel, att_rad = att_rad, ω = ω)
+end
+
+"""Compute error series vs a reference trajectory.
+
+Both trajectories must share the same uniform grid (`dt` and length).
+
+Returns a named tuple:
+* `t` : time vector (Float64)
+* `pos_err`, `vel_err`, `att_err_rad`, `ω_err` : vectors
+* `max` : (pos, vel, att_rad, ω)
+* `rms` : (pos, vel, att_rad, ω)
+"""
+function error_series(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBodyState})
+    @assert isapprox(ref.dt, sol.dt; atol = 0.0, rtol = 0.0) "dt mismatch"
+    @assert length(ref.x) == length(sol.x) "length mismatch"
+
+    n = length(ref.x)
+    pos_err = Vector{Float64}(undef, n)
+    vel_err = Vector{Float64}(undef, n)
+    att_err = Vector{Float64}(undef, n)
+    ω_err = Vector{Float64}(undef, n)
+
+    for i = 1:n
+        e = rb_error(sol.x[i], ref.x[i])
+        pos_err[i] = e.pos
+        vel_err[i] = e.vel
+        att_err[i] = e.att_rad
+        ω_err[i] = e.ω
+    end
+
+    function _rms(v)
+        s = 0.0
+        @inbounds for x in v
+            s += x * x
+        end
+        return sqrt(s / length(v))
+    end
+
+    max_nt = (
+        pos = maximum(pos_err),
+        vel = maximum(vel_err),
+        att_rad = maximum(att_err),
+        ω = maximum(ω_err),
+    )
+    rms_nt = (
+        pos = _rms(pos_err),
+        vel = _rms(vel_err),
+        att_rad = _rms(att_err),
+        ω = _rms(ω_err),
+    )
+
+    t = collect(0.0:ref.dt:(ref.dt * (n - 1)))
+    return (
+        t = t,
+        pos_err = pos_err,
+        vel_err = vel_err,
+        att_err_rad = att_err,
+        ω_err = ω_err,
+        max = max_nt,
+        rms = rms_nt,
+    )
+end
+
+"""Compute invariant time series and drift series for a trajectory.
+
+`invfun(x) -> NamedTuple` should return scalar invariants (e.g., energy, |L|).
+
+Returns a named tuple:
+* `values` : NamedTuple of vectors (same keys as invfun)
+* `drift`  : NamedTuple of vectors `values[k] - values[k][1]`
+"""
+function invariant_series(invfun, tr::Trajectory)
+    inv0 = invfun(tr.x[1])
+    ks = propertynames(inv0)
+    n = length(tr.x)
+
+    vals = ntuple(_ -> Vector{Float64}(undef, n), length(ks))
+    for (j, k) in enumerate(ks)
+        vals[j][1] = getproperty(inv0, k)
+    end
+
+    for i = 2:n
+        inv = invfun(tr.x[i])
+        for (j, k) in enumerate(ks)
+            vals[j][i] = getproperty(inv, k)
+        end
+    end
+
+    values_nt = NamedTuple{ks}(vals)
+
+    drifts = ntuple(j -> begin
+        v = values_nt[j]
+        d = similar(v)
+        v0 = v[1]
+        @inbounds for i = 1:n
+            d[i] = v[i] - v0
+        end
+        d
+    end, length(ks))
+    drift_nt = NamedTuple{ks}(drifts)
+    return (values = values_nt, drift = drift_nt)
+end
+
+"""Compare a solver trajectory against a reference RK45 trajectory.
+
+This helper is intended for verification scripts:
+* computes error series vs time
+* optionally computes invariant drift series for both solutions
+
+If `invfun` is provided, it must accept `RigidBodyState` and return a `NamedTuple`.
+"""
+function compare_to_reference(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBodyState}; invfun = nothing)
+    err = error_series(ref, sol)
+    if invfun === nothing
+        return (err = err, invariants = nothing)
+    end
+    inv_ref = invariant_series(invfun, ref)
+    inv_sol = invariant_series(invfun, sol)
+    return (err = err, invariants = (ref = inv_ref, sol = inv_sol))
+end
 
 ########################
 # Shared helpers
@@ -79,6 +340,7 @@ function integrate_fixed(
     @assert dt > 0
     @assert t_end >= 0
     n = Int(round(t_end / dt))
+    @assert isapprox(n * dt, t_end; atol = 0.0, rtol = 0.0) "t_end must be an exact multiple of dt for integrate_fixed"
     x = x0
     t = 0.0
     for _ = 1:n

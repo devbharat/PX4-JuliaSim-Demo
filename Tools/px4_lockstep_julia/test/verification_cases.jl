@@ -60,8 +60,10 @@ end
     ω = sqrt(case.g / case.L)
     T = 2π / ω
     dt = 0.01
+    n = Int(round(T / dt))
+    t_end = n * dt
 
-    x_rk4, t_end = V.integrate_fixed(Sim.Integrators.RK4Integrator(), f, x0, dt, T)
+    x_rk4, t_end = V.integrate_fixed(Sim.Integrators.RK4Integrator(), f, x0, dt, t_end)
 
     θ_ref, θdot_ref, _ = V.pendulum_small_angle_analytic(case, t_end)
     @test abs(x_rk4.pos_ned[1] - θ_ref) < 1e-5
@@ -153,4 +155,41 @@ end
     @test abs(E1 - E0) / E0 < 1e-6
     @test norm(L1 - L0) < 1e-4
     @test abs(norm(x.q_bn) - 1.0) < 1e-10
+end
+
+
+@testset "Verification: RK45 reference compare utility" begin
+    # Large-angle pendulum (nonlinear). Use RK45 on a fine grid as numerical truth
+    # and compare RK4 on a coarse grid.
+    case = V.PendulumCase(g = 9.80665, L = 1.0, θ0 = 1.0, θdot0 = 0.0)
+    f = V.pendulum_rhs(case)
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(case.θ0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(case.θdot0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    dt_sol = 0.02
+    dt_ref = dt_sol / 10
+    t_end = 0.4
+
+    ref_fine = V.rk45_reference(f, x0, dt_ref, t_end)
+    ref = V.resample_trajectory(ref_fine, dt_sol)
+    sol = V.simulate_trajectory(Sim.Integrators.RK4Integrator(), f, x0, dt_sol, t_end)
+
+    invfun = (s::Sim.RigidBody.RigidBodyState,) -> (E = V.pendulum_energy(case, s.pos_ned[1], s.vel_ned[1]),)
+    cmp = V.compare_to_reference(ref, sol; invfun = invfun)
+
+    # Basic sanity: arrays are the right size and errors are finite and nonzero.
+    @test length(cmp.err.t) == length(ref.x)
+    @test isfinite(cmp.err.max.pos)
+    @test isfinite(cmp.err.max.vel)
+    @test cmp.err.max.pos > 0.0
+
+    # Reference should drift less in energy than the coarse RK4 solution.
+    drift_ref = maximum(abs.(cmp.invariants.ref.drift.E))
+    drift_sol = maximum(abs.(cmp.invariants.sol.drift.E))
+    @test drift_ref < drift_sol
 end

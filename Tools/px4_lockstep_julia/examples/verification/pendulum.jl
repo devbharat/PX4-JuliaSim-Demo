@@ -24,6 +24,8 @@ function main()
     ω = sqrt(case.g / case.L)
     T = 2π / ω
     dt = 0.01
+    n = Int(round(T / dt))
+    t_end = n * dt
 
     println("\nPendulum (small-angle analytic check)")
     println("====================================")
@@ -33,7 +35,7 @@ function main()
         ("Euler", Sim.Integrators.EulerIntegrator()),
         ("RK4", Sim.Integrators.RK4Integrator()),
     ]
-        x_end, t_end = V.integrate_fixed(integ, f, x0, dt, T)
+        x_end, t_end = V.integrate_fixed(integ, f, x0, dt, t_end)
         θ_ref, θdot_ref, _ = V.pendulum_small_angle_analytic(case, t_end)
         θ_err = abs(x_end.pos_ned[1] - θ_ref)
 

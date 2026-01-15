@@ -71,6 +71,9 @@ julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verif
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/pendulum.jl
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/kepler_circular.jl
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/torque_free_rigid_body.jl
+
+# Reference-trajectory comparison (RK45 "truth"; no analytic solution required)
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_pendulum_large_angle.jl
 ```
 
 ## Developer tooling

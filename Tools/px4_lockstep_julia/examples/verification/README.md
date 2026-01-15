@@ -17,6 +17,24 @@ julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verif
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/torque_free_rigid_body.jl
 ```
 
+## Reference-trajectory comparison (no analytic solution required)
+
+For problems without a convenient analytic time history, you can generate a
+high-accuracy RK45 **reference** trajectory and compare other solvers against it:
+
+```bash
+julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_pendulum_large_angle.jl
+```
+
+This uses:
+
+* `Sim.Verification.rk45_reference(...)` to generate the reference
+* `Sim.Verification.resample_trajectory(...)` for deterministic downsampling
+* `Sim.Verification.compare_to_reference(...)` to compute error vs time and
+  invariant drift vs time
+
+The script also writes a small CSV file for quick plotting.
+
 Notes:
 
 * These scripts are written to run quickly and print a small metrics table.

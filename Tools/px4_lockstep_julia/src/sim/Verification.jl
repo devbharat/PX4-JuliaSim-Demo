@@ -93,14 +93,7 @@ Arguments:
 
 Returns a `Trajectory` containing states at `t = 0:dt:t_end`.
 """
-function simulate_trajectory(
-    integrator,
-    f,
-    x0,
-    dt::Float64,
-    t_end::Float64;
-    u = nothing,
-)
+function simulate_trajectory(integrator, f, x0, dt::Float64, t_end::Float64; u = nothing)
     @assert dt > 0
     @assert t_end >= 0
     n = Int(round(t_end / dt))
@@ -113,7 +106,7 @@ function simulate_trajectory(
 
     t = 0.0
     for k = 1:n
-        x[k + 1] = step_integrator(integrator, f, t, x[k], u, dt)
+        x[k+1] = step_integrator(integrator, f, t, x[k], u, dt)
         t += dt
     end
     return Trajectory{typeof(x0)}(dt, x)
@@ -238,7 +231,15 @@ Notes
     rotor = norm(x.rotor_ω - xref.rotor_ω)
     soc = abs(x.batt_soc - xref.batt_soc)
     v1 = abs(x.batt_v1 - xref.batt_v1)
-    return (pos = rb.pos, vel = rb.vel, att_rad = rb.att_rad, ω = rb.ω, rotor = rotor, soc = soc, v1 = v1)
+    return (
+        pos = rb.pos,
+        vel = rb.vel,
+        att_rad = rb.att_rad,
+        ω = rb.ω,
+        rotor = rotor,
+        soc = soc,
+        v1 = v1,
+    )
 end
 
 """Compute error series vs a reference trajectory.
@@ -283,14 +284,10 @@ function error_series(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBody
         att_rad = maximum(att_err),
         ω = maximum(ω_err),
     )
-    rms_nt = (
-        pos = _rms(pos_err),
-        vel = _rms(vel_err),
-        att_rad = _rms(att_err),
-        ω = _rms(ω_err),
-    )
+    rms_nt =
+        (pos = _rms(pos_err), vel = _rms(vel_err), att_rad = _rms(att_err), ω = _rms(ω_err))
 
-    t = collect(0.0:ref.dt:(ref.dt * (n - 1)))
+    t = collect(0.0:ref.dt:(ref.dt*(n-1)))
     return (
         t = t,
         pos_err = pos_err,
@@ -314,7 +311,10 @@ Returns a named tuple:
 * `v1_err`    : |ΔV1| (V)
 * `max` and `rms` summaries for all components.
 """
-function error_series(ref::Trajectory{PlantState{N}}, sol::Trajectory{PlantState{N}}) where {N}
+function error_series(
+    ref::Trajectory{PlantState{N}},
+    sol::Trajectory{PlantState{N}},
+) where {N}
     @assert isapprox(ref.dt, sol.dt; atol = 0.0, rtol = 0.0) "dt mismatch"
     @assert length(ref.x) == length(sol.x) "length mismatch"
 
@@ -365,7 +365,7 @@ function error_series(ref::Trajectory{PlantState{N}}, sol::Trajectory{PlantState
         v1 = _rms(v1_err),
     )
 
-    t = collect(0.0:ref.dt:(ref.dt * (n - 1)))
+    t = collect(0.0:ref.dt:(ref.dt*(n-1)))
     return (
         t = t,
         pos_err = pos_err,
@@ -428,7 +428,11 @@ This helper is intended for verification scripts:
 
 If `invfun` is provided, it must accept `RigidBodyState` and return a `NamedTuple`.
 """
-function compare_to_reference(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBodyState}; invfun = nothing)
+function compare_to_reference(
+    ref::Trajectory{RigidBodyState},
+    sol::Trajectory{RigidBodyState};
+    invfun = nothing,
+)
     err = error_series(ref, sol)
     if invfun === nothing
         return (err = err, invariants = nothing)
@@ -447,7 +451,11 @@ If `invfun` is provided, it must accept `PlantState{N}` and return a `NamedTuple
 of scalar invariants. This enables "invariant drift" comparisons even for full-plant
 systems (e.g., Kepler energy/angular momentum in the rigid-body subset).
 """
-function compare_to_reference(ref::Trajectory{PlantState{N}}, sol::Trajectory{PlantState{N}}; invfun = nothing) where {N}
+function compare_to_reference(
+    ref::Trajectory{PlantState{N}},
+    sol::Trajectory{PlantState{N}};
+    invfun = nothing,
+) where {N}
     err = error_series(ref, sol)
     if invfun === nothing
         return (err = err, invariants = nothing)
@@ -708,11 +716,13 @@ end
 
 """Rotational kinetic energy T = 0.5 ωᵀ I ω."""
 @inline function rigidbody_rot_energy(I_body::Vec3, ω_body::Vec3)
-    return 0.5 * (I_body[1] * ω_body[1]^2 + I_body[2] * ω_body[2]^2 + I_body[3] * ω_body[3]^2)
+    return 0.5 *
+           (I_body[1] * ω_body[1]^2 + I_body[2] * ω_body[2]^2 + I_body[3] * ω_body[3]^2)
 end
 
 """Angular momentum in body frame: L_body = I ⊙ ω."""
-@inline rigidbody_angmom_body(I_body::Vec3, ω_body::Vec3) = Vec3(I_body[1] * ω_body[1], I_body[2] * ω_body[2], I_body[3] * ω_body[3])
+@inline rigidbody_angmom_body(I_body::Vec3, ω_body::Vec3) =
+    Vec3(I_body[1] * ω_body[1], I_body[2] * ω_body[2], I_body[3] * ω_body[3])
 
 """Angular momentum in NED frame: L_ned = R_bn * L_body."""
 @inline function rigidbody_angmom_ned(q_bn::Quat, I_body::Vec3, ω_body::Vec3)

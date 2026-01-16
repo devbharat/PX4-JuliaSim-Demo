@@ -27,7 +27,8 @@ using ..Autopilots:
     max_internal_rate_hz,
     PX4LockstepAutopilot
 using ..Estimators: AbstractEstimator, TruthEstimator, estimate!
-using ..Scenario: AbstractScenario, ScriptedScenario, scenario_step
+using ..Scenario: AbstractScenario, ScriptedScenario, scenario_step, scenario_faults
+using ..Faults: FaultState, is_motor_disabled
 import ..Powertrain
 using ..Powertrain: AbstractBatteryModel, IdealBattery, BatteryStatus, status
 using ..Logging: AbstractLogSink, SimLog, log!, close!, reserve!
@@ -80,6 +81,12 @@ end
 
 @inline function _sanitize_cmd(x, lo::Float64, hi::Float64)
     isfinite(x) ? clamp(x, lo, hi) : 0.0
+end
+
+@inline function _apply_motor_faults(motors::SVector{12,Float64}, faults::FaultState)
+    return SVector{12,Float64}(
+        ntuple(i -> (is_motor_disabled(faults, i) ? 0.0 : motors[i]), 12),
+    )
 end
 
 """Convert a step size to an *exact* integer microsecond count.
@@ -420,14 +427,24 @@ function step!(sim::SimulationInstance)
     # Advance environment disturbances (e.g. turbulence) deterministically.
     step_wind!(sim.env.wind, x0.pos_ned, t, dt, sim.rng_wind)
 
-    # Scenario produces high-level autopilot commands and an approximate landed flag.
+    # Scenario produces high-level autopilot commands, landed flag, and fault state.
     cmd, landed = scenario_step(sim.scenario, t, x0, sim)
+    faults = scenario_faults(sim.scenario, t, x0, sim)
 
     # Sample wind once per tick so it remains constant across RK4 stages.
     wind_now = sample_wind!(sim.env.wind, x0.pos_ned, t)
 
     # Battery model -> PX4 battery_status injection (sampled at start of interval).
     batt = status(sim.battery)
+    if !faults.battery_connected
+        batt = BatteryStatus(
+            connected = false,
+            voltage_v = 0.0,
+            current_a = 0.0,
+            remaining = batt.remaining,
+            warning = batt.warning,
+        )
+    end
 
     # Estimator + autopilot multi-rate step.
     if (sim.last_out === nothing) || due(sim.ap_trig, step)
@@ -476,6 +493,8 @@ function step!(sim::SimulationInstance)
 
     u_cmd = ActuatorCommand(motors = motors, servos = servos)
 
+    motors_eff = _apply_motor_faults(motors, faults)
+
     # Compute air-relative velocity in body frame for inflow-aware propulsion.
     v_air_ned = wind_now - x0.vel_ned
     v_air_body = quat_rotate_inv(x0.q_bn, v_air_ned)
@@ -485,11 +504,12 @@ function step!(sim::SimulationInstance)
     p === nothing &&
         error("Simulation requires a propulsion model; attach to VehicleInstance.")
     N = length(p.units)
-    duties = SVector{N,Float64}(ntuple(i -> motors[i], N))
+    duties = SVector{N,Float64}(ntuple(i -> motors_eff[i], N))
     # Atmosphere expects MSL altitude. NED origin is typically at the home location.
     alt_msl_m = sim.env.origin.alt_msl_m - x0.pos_ned[3]
     ρ = air_density(sim.env.atmosphere, alt_msl_m)
-    prop_out = step_propulsion!(p, duties, Float64(batt.voltage_v), ρ, v_air_body, dt)
+    V_bus = faults.battery_connected ? Float64(batt.voltage_v) : 0.0
+    prop_out = step_propulsion!(p, duties, V_bus, ρ, v_air_body, dt)
     I_bus = prop_out.bus_current_a
 
     # Integrate rigid body (with optional contact forces).
@@ -497,7 +517,7 @@ function step!(sim::SimulationInstance)
     sim.vehicle.state = new_state
 
     # Update battery based on modeled bus current.
-    Powertrain.step!(sim.battery, I_bus, dt)
+    Powertrain.step!(sim.battery, faults.battery_connected ? I_bus : 0.0, dt)
 
     # Logging (multi-rate). Contract: log the *pre-step* state at time t.
     if due(sim.log_trig, step)

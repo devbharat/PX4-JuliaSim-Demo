@@ -35,8 +35,7 @@ using StaticArrays
 
 using ..Types: Vec3, Quat, WorldOrigin, vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState, RigidBodyDeriv
-using ..Environment:
-    EnvironmentModel, SampledWind, step_wind!, sample_wind!, air_density
+using ..Environment: EnvironmentModel, SampledWind, step_wind!, sample_wind!, air_density
 import ..Vehicles
 using ..Vehicles: AbstractVehicleModel, ActuatorCommand, mass
 import ..Propulsion
@@ -54,17 +53,29 @@ using ..Scenario:
     ScriptedScenario,
     EventScenario,
     scenario_step,
+    scenario_faults,
     process_events!,
     next_event_us
 import ..Powertrain
 using ..Powertrain: AbstractBatteryModel, IdealBattery, BatteryStatus, status
+using ..Faults: FaultState, is_motor_disabled
+
+# Shared protocol: expose algebraic outputs at event boundaries.
+import ..plant_outputs
 using ..Logging: AbstractLogSink, SimLog, log!, close!, reserve!
 using ..Contacts: AbstractContactModel, NoContact
 using ..Contacts: contact_force_ned
 using ..Integrators: AbstractIntegrator, step_integrator
-using ..Plant: PlantState, PlantInput, PlantDeriv, PlantOutputs, init_plant_state, sync_components_from_plant!
+using ..Plant:
+    PlantState,
+    PlantInput,
+    PlantDeriv,
+    PlantOutputs,
+    init_plant_state,
+    sync_components_from_plant!
 
-export PlantSimulationConfig, PlantSimulationInstance, time_s, time_us, step_to_next_event!, run!
+export PlantSimulationConfig,
+    PlantSimulationInstance, time_s, time_us, step_to_next_event!, run!
 
 ############################
 # Config
@@ -106,7 +117,9 @@ end
     dt_us = UInt64(round(dt * 1e6))
     dt_back = Float64(dt_us) * 1e-6
     abs(dt - dt_back) <= 1e-12 || throw(
-        ArgumentError("$name must be an integer number of microseconds (got dt=$dt => $dt_us μs)"),
+        ArgumentError(
+            "$name must be an integer number of microseconds (got dt=$dt => $dt_us μs)",
+        ),
     )
     dt_us > 0 || throw(ArgumentError("$name is too small (rounded to 0 μs)"))
     return dt_us
@@ -117,7 +130,9 @@ end
     t_us = UInt64(round(t * 1e6))
     t_back = Float64(t_us) * 1e-6
     abs(t - t_back) <= 1e-12 || throw(
-        ArgumentError("$name must be an integer number of microseconds (got $t => $t_us μs)"),
+        ArgumentError(
+            "$name must be an integer number of microseconds (got $t => $t_us μs)",
+        ),
     )
     return t_us
 end
@@ -315,9 +330,20 @@ end
     v1::Float64,
     I_bus::Float64,
     V_bus::Float64,
+    ;
+    connected::Bool = true,
 )::BatteryStatus
     rem = clamp(soc, 0.0, 1.0)
     warn = Powertrain._warning_from_remaining(rem, b.low_thr, b.crit_thr, b.emerg_thr)
+    if !connected
+        return BatteryStatus(
+            connected = false,
+            voltage_v = 0.0,
+            current_a = 0.0,
+            remaining = rem,
+            warning = warn,
+        )
+    end
     return BatteryStatus(
         connected = true,
         voltage_v = V_bus,
@@ -333,9 +359,20 @@ end
     v1::Float64,
     I_bus::Float64,
     V_bus::Float64,
+    ;
+    connected::Bool = true,
 )::BatteryStatus
     rem = clamp(soc, 0.0, 1.0)
     warn = Powertrain._warning_from_remaining(rem, b.low_thr, b.crit_thr, b.emerg_thr)
+    if !connected
+        return BatteryStatus(
+            connected = false,
+            voltage_v = 0.0,
+            current_a = 0.0,
+            remaining = rem,
+            warning = warn,
+        )
+    end
     return BatteryStatus(
         connected = true,
         voltage_v = V_bus,
@@ -541,7 +578,9 @@ function _solve_bus_voltage(
     # Defensive programming: the bus solve is a scalar root find inside the plant RHS.
     # If it ever goes non-finite, adaptive integrators will explode in hard-to-debug ways.
     if !isfinite(ocv) || !isfinite(v1) || !isfinite(R0) || !isfinite(V_min)
-        error("non-finite battery parameters in bus solve: ocv=$(ocv) v1=$(v1) R0=$(R0) V_min=$(V_min)")
+        error(
+            "non-finite battery parameters in bus solve: ocv=$(ocv) v1=$(v1) R0=$(R0) V_min=$(V_min)",
+        )
     end
 
     V0 = ocv - v1
@@ -711,7 +750,14 @@ function _eval_propulsion_and_bus(
     v_air_body = quat_rotate_inv(x.rb.q_bn, v_air_ned)
     Vax = -Float64(v_air_body[3])
 
-    duties = SVector{N,Float64}(ntuple(i -> clamp(x.motors_y[i], 0.0, 1.0), N))
+    # Apply sample-and-hold motor disable faults by forcing duty to 0.
+    fstate = u.faults
+    duties = SVector{N,Float64}(
+        ntuple(
+            i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(x.motors_y[i], 0.0, 1.0)),
+            N,
+        ),
+    )
 
     soc = x.batt_soc
     v1 = x.batt_v1
@@ -721,7 +767,12 @@ function _eval_propulsion_and_bus(
     V_min = _battery_min_voltage(b)
 
     # Solve terminal/bus voltage with deterministic robust coupling.
-    V_bus = _solve_bus_voltage(p, x.rotor_ω, duties, ocv, v1, R0, V_min)
+    # If the battery is disconnected, bus voltage/current are forced to 0.
+    V_bus = if fstate.battery_connected
+        _solve_bus_voltage(p, x.rotor_ω, duties, ocv, v1, R0, V_min)
+    else
+        0.0
+    end
     if !isfinite(V_bus)
         error(
             "non-finite V_bus from bus solver: V_bus=$(V_bus) ocv=$(ocv) v1=$(v1) R0=$(R0) V_min=$(V_min) soc=$(soc) ω=$(x.rotor_ω) duties=$(duties)",
@@ -735,14 +786,8 @@ function _eval_propulsion_and_bus(
     I_bus_total = 0.0
 
     @inbounds for i = 1:N
-        Ti, Qi, ωdot_i, Ii, Ibus_i = _motorprop_unit_eval(
-            p.units[i],
-            x.rotor_ω[i],
-            duties[i],
-            V_bus,
-            ρ,
-            Vax,
-        )
+        Ti, Qi, ωdot_i, Ii, Ibus_i =
+            _motorprop_unit_eval(p.units[i], x.rotor_ω[i], duties[i], V_bus, ρ, Vax)
         thrust[i] = Ti
         # Own yaw reaction sign here (single source of truth).
         torque[i] = p.rotor_dir[i] * Qi
@@ -752,7 +797,9 @@ function _eval_propulsion_and_bus(
     end
 
     if !isfinite(I_bus_total)
-        error("non-finite I_bus_total in propulsion eval: I_bus_total=$(I_bus_total) V_bus=$(V_bus) ω=$(x.rotor_ω) duties=$(duties)")
+        error(
+            "non-finite I_bus_total in propulsion eval: I_bus_total=$(I_bus_total) V_bus=$(V_bus) ω=$(x.rotor_ω) duties=$(duties)",
+        )
     end
 
     rot_out = Propulsion.RotorOutput{N}(
@@ -777,12 +824,26 @@ end
 This is intended for boundary-time logging and PX4 injection (battery_status). It must be
 pure and deterministic.
 """
-function plant_outputs(f::PlantDynamicsWithContact, t::Float64, x::PlantState{N}, u::PlantInput) where {N}
+function plant_outputs(
+    f::PlantDynamicsWithContact,
+    t::Float64,
+    x::PlantState{N},
+    u::PlantInput,
+) where {N}
     p = f.propulsion
-    p isa Propulsion.QuadRotorSet{N} || error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
+    p isa Propulsion.QuadRotorSet{N} ||
+        error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
 
-    rot_out, _ωdot, I_bus, V_bus, _ρ, _v_air_body = _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
-    batt = _battery_status_from_state(f.battery, x.batt_soc, x.batt_v1, I_bus, V_bus)
+    rot_out, _ωdot, I_bus, V_bus, _ρ, _v_air_body =
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
+    batt = _battery_status_from_state(
+        f.battery,
+        x.batt_soc,
+        x.batt_v1,
+        I_bus,
+        V_bus;
+        connected = u.faults.battery_connected,
+    )
     return PlantOutputs{N}(
         rotors = rot_out,
         bus_current_a = I_bus,
@@ -810,34 +871,54 @@ end
     )
 end
 
-@inline function _set_battery_last_current!(b::Powertrain.IdealBattery, I::Float64, V::Float64)
+@inline function _set_battery_last_current!(
+    b::Powertrain.IdealBattery,
+    I::Float64,
+    V::Float64,
+)
     b.last_current_a = I
     # Ideal battery stores voltage explicitly.
     b.voltage_v = V
     return nothing
 end
 
-@inline function _set_battery_last_current!(b::Powertrain.TheveninBattery, I::Float64, V::Float64)
+@inline function _set_battery_last_current!(
+    b::Powertrain.TheveninBattery,
+    I::Float64,
+    V::Float64,
+)
     b.last_current_a = I
     return nothing
 end
 
 # Fallback (unknown battery model): no-op.
-@inline function _set_battery_last_current!(::Powertrain.AbstractBatteryModel, I::Float64, V::Float64)
+@inline function _set_battery_last_current!(
+    ::Powertrain.AbstractBatteryModel,
+    I::Float64,
+    V::Float64,
+)
     return nothing
 end
 
 
-function (f::PlantDynamicsWithContact)(t::Float64, x::PlantState{N}, u::PlantInput) where {N}
+function (f::PlantDynamicsWithContact)(
+    t::Float64,
+    x::PlantState{N},
+    u::PlantInput,
+) where {N}
     # Actuator dynamics (pure; no mutation of actuator model objects).
-    my_dot, mydot_dot = _actuator_derivs(f.motor_actuators, x.motors_y, x.motors_ydot, u.cmd.motors)
-    sy_dot, sydot_dot = _actuator_derivs(f.servo_actuators, x.servos_y, x.servos_ydot, u.cmd.servos)
+    my_dot, mydot_dot =
+        _actuator_derivs(f.motor_actuators, x.motors_y, x.motors_ydot, u.cmd.motors)
+    sy_dot, sydot_dot =
+        _actuator_derivs(f.servo_actuators, x.servos_y, x.servos_ydot, u.cmd.servos)
 
     # Propulsion + bus solve.
     p = f.propulsion
-    p isa Propulsion.QuadRotorSet{N} || error("PlantDynamicsWithContact currently supports QuadRotorSet{$N} propulsion")
+    p isa Propulsion.QuadRotorSet{N} ||
+        error("PlantDynamicsWithContact currently supports QuadRotorSet{$N} propulsion")
 
-    rot_out, ω_dot, I_bus, V_bus, _ρ, _v_air_body = _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
+    rot_out, ω_dot, I_bus, V_bus, _ρ, _v_air_body =
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
 
     # Rigid-body dynamics.
     d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out)
@@ -1099,16 +1180,26 @@ function _process_events_at_current_time!(sim::PlantSimulationInstance)
     # correct physical time, independent of the autopilot tick cadence.
     process_events!(sim.scenario, sim, sim.t_s)
 
+    # Scenario-controlled faults are published as a first-class signal and held
+    # constant between event boundaries.
+    faults_now = scenario_faults(sim.scenario, sim.t_s, sim.plant.rb, sim)
+
     # Refresh held wind sample in case scenario events mutated the wind model.
     wind_now = sample_wind!(sim.env.wind, sim.plant.rb.pos_ned, sim.t_s)
-    sim.input = PlantInput(cmd = sim.input.cmd, wind_ned = wind_now)
+    sim.input = PlantInput(cmd = sim.input.cmd, wind_ned = wind_now, faults = faults_now)
 
     # Wind update.
     if sim.t_us == sim.trig_wind.next_us
         # Wind OU process updates once per wind tick.
-        step_wind!(sim.env.wind, sim.plant.rb.pos_ned, sim.t_s, sim.cfg.dt_wind, sim.rng_wind)
+        step_wind!(
+            sim.env.wind,
+            sim.plant.rb.pos_ned,
+            sim.t_s,
+            sim.cfg.dt_wind,
+            sim.rng_wind,
+        )
         wind = sample_wind!(sim.env.wind, sim.plant.rb.pos_ned, sim.t_s)
-        sim.input = PlantInput(cmd = sim.input.cmd, wind_ned = wind)
+        sim.input = PlantInput(cmd = sim.input.cmd, wind_ned = wind, faults = faults_now)
         _advance!(sim.trig_wind)
     end
 
@@ -1118,6 +1209,16 @@ function _process_events_at_current_time!(sim::PlantSimulationInstance)
 
         # Scenario generates high-level command and approximate landed flag.
         cmd, landed = scenario_step(sim.scenario, sim.t_s, x, sim)
+
+        # Scenario may update fault state as part of `scenario_step`.
+        faults_now = scenario_faults(sim.scenario, sim.t_s, x, sim)
+
+        # Keep held plant input consistent with scenario fault updates at this boundary.
+        sim.input = PlantInput(
+            cmd = sim.input.cmd,
+            wind_ned = sim.input.wind_ned,
+            faults = faults_now,
+        )
 
         # Battery status injected into PX4 (sampled at the boundary time).
         # Use the algebraic bus solve at the current plant state and held inputs.
@@ -1161,18 +1262,42 @@ function _process_events_at_current_time!(sim::PlantSimulationInstance)
         # NOTE: command sanitization logic should match `Simulation.step!`.
         m_raw = getproperty(out, :actuator_motors)
         s_raw = getproperty(out, :actuator_servos)
-        motors = SVector{12,Float64}(ntuple(i -> isfinite(Float64(m_raw[i])) ? clamp(Float64(m_raw[i]), 0.0, 1.0) : 0.0, 12))
-        servos = SVector{8,Float64}(ntuple(i -> isfinite(Float64(s_raw[i])) ? clamp(Float64(s_raw[i]), -1.0, 1.0) : 0.0, 8))
+        motors = SVector{12,Float64}(
+            ntuple(
+                i ->
+                    isfinite(Float64(m_raw[i])) ? clamp(Float64(m_raw[i]), 0.0, 1.0) : 0.0,
+                12,
+            ),
+        )
+        servos = SVector{8,Float64}(
+            ntuple(
+                i ->
+                    isfinite(Float64(s_raw[i])) ? clamp(Float64(s_raw[i]), -1.0, 1.0) : 0.0,
+                8,
+            ),
+        )
 
-        sim.input = PlantInput(cmd = ActuatorCommand(motors = motors, servos = servos), wind_ned = sim.input.wind_ned)
+        sim.input = PlantInput(
+            cmd = ActuatorCommand(motors = motors, servos = servos),
+            wind_ned = sim.input.wind_ned,
+            faults = faults_now,
+        )
 
         # If using `DirectActuators`, snap the algebraic outputs at the event boundary.
         # For dynamic actuators, keep the integrated states and let the ODE evolve them.
         if sim.vehicle.motor_actuators isa Vehicles.DirectActuators
-            sim.plant = _plant_replace_actuators(sim.plant; motors_y = motors, motors_ydot = zero(SVector{12,Float64}))
+            sim.plant = _plant_replace_actuators(
+                sim.plant;
+                motors_y = motors,
+                motors_ydot = zero(SVector{12,Float64}),
+            )
         end
         if sim.vehicle.servo_actuators isa Vehicles.DirectActuators
-            sim.plant = _plant_replace_actuators(sim.plant; servos_y = servos, servos_ydot = zero(SVector{8,Float64}))
+            sim.plant = _plant_replace_actuators(
+                sim.plant;
+                servos_y = servos,
+                servos_ydot = zero(SVector{8,Float64}),
+            )
         end
 
         _advance!(sim.trig_ap)
@@ -1192,7 +1317,8 @@ function _process_events_at_current_time!(sim::PlantSimulationInstance)
 
             # Plant outputs for logging (rotors + bus + battery status).
             outs = plant_outputs(sim.dynfun, sim.t_s, sim.plant, sim.input)
-            batt = outs.battery_status === nothing ? status(sim.battery) : outs.battery_status
+            batt =
+                outs.battery_status === nothing ? status(sim.battery) : outs.battery_status
             _set_battery_last_current!(sim.battery, batt.current_a, batt.voltage_v)
 
             # PX4 setpoints (if present).
@@ -1286,7 +1412,13 @@ function step_to_next_event!(sim::PlantSimulationInstance)
     next_us = if next_scn === nothing
         min(sim.trig_wind.next_us, sim.trig_ap.next_us, sim.trig_log.next_us, sim.t_end_us)
     else
-        min(sim.trig_wind.next_us, sim.trig_ap.next_us, sim.trig_log.next_us, sim.t_end_us, next_scn)
+        min(
+            sim.trig_wind.next_us,
+            sim.trig_ap.next_us,
+            sim.trig_log.next_us,
+            sim.t_end_us,
+            next_scn,
+        )
     end
     next_us > sim.t_us || error("event scheduler produced non-increasing time")
 
@@ -1319,7 +1451,14 @@ function step_to_next_event!(sim::PlantSimulationInstance)
             dt2 = Float64(dt_us - dt1_us) * 1e-6
 
             x_mid = step_integrator(sim.integrator, sim.dynfun, sim.t_s, x0, sim.input, dt1)
-            x1 = step_integrator(sim.integrator, sim.dynfun, sim.t_s + dt1, x_mid, sim.input, dt2)
+            x1 = step_integrator(
+                sim.integrator,
+                sim.dynfun,
+                sim.t_s + dt1,
+                x_mid,
+                sim.input,
+                dt2,
+            )
         end
     end
 
@@ -1397,7 +1536,11 @@ end
 
 This uses event-driven stepping. If you need a fixed-step loop, use `Simulation.run!`.
 """
-function run!(sim::PlantSimulationInstance; max_events::Int = typemax(Int), close_log::Bool = true)
+function run!(
+    sim::PlantSimulationInstance;
+    max_events::Int = typemax(Int),
+    close_log::Bool = true,
+)
     ne = 0
     while sim.t_us < sim.t_end_us && ne < max_events
         step_to_next_event!(sim)

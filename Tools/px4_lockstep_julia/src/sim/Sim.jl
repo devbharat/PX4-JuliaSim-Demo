@@ -28,6 +28,7 @@ This refactor is implemented via:
 module Sim
 
 include("Types.jl")
+include("Faults.jl")
 include("Scheduling.jl")
 include("Noise.jl")
 include("RigidBody.jl")
@@ -38,6 +39,9 @@ include("Vehicles.jl")
 
 # Continuous-time plant state for full variable-step integration.
 include("Plant.jl")
+
+# Shared plant-side protocol functions used by multiple engines.
+include("PlantInterface.jl")
 
 include("Integrators.jl")
 include("Estimators.jl")
@@ -50,6 +54,9 @@ include("Simulation.jl")
 
 # Event-driven variable-step engine for full-plant integration.
 include("PlantSimulation.jl")
+
+# First-class record/replay (event-sourced bus) architecture.
+include("RecordReplay.jl")
 
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")

@@ -142,6 +142,10 @@ The simulation framework is organized as composable modules:
   * deterministic engine: scenario → PX4 → actuators → integrate → log
 * `PX4Lockstep.Sim.PlantSimulation`
   * event-driven variable-step engine: integrates full plant between event boundaries
+* `PX4Lockstep.Sim.RecordReplay`
+  * **WIP** first-class record/replay architecture based on an event-sourced typed signal bus
+  * design docs: `Tools/px4_lockstep_julia/docs/record_replay.md`
+  * TODO tracker: `Tools/px4_lockstep_julia/docs/record_replay_todo.md`
 
 ### Estimator injection (noise + delay)
 

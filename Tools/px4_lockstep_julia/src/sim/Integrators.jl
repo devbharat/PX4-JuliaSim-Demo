@@ -418,13 +418,17 @@ Design intent:
     if isfinite(i.atol_actdot)
         @inbounds for k = 1:12
             Δ = x_hi.motors_ydot[k] - x_lo.motors_ydot[k]
-            s = i.atol_actdot + i.rtol_actdot * max(abs(x_ref.motors_ydot[k]), abs(x_hi.motors_ydot[k]))
+            s =
+                i.atol_actdot +
+                i.rtol_actdot * max(abs(x_ref.motors_ydot[k]), abs(x_hi.motors_ydot[k]))
             s = max(s, 1e-15)
             err = max(err, abs(Δ) / s)
         end
         @inbounds for k = 1:8
             Δ = x_hi.servos_ydot[k] - x_lo.servos_ydot[k]
-            s = i.atol_actdot + i.rtol_actdot * max(abs(x_ref.servos_ydot[k]), abs(x_hi.servos_ydot[k]))
+            s =
+                i.atol_actdot +
+                i.rtol_actdot * max(abs(x_ref.servos_ydot[k]), abs(x_hi.servos_ydot[k]))
             s = max(s, 1e-15)
             err = max(err, abs(Δ) / s)
         end
@@ -434,7 +438,9 @@ Design intent:
     if isfinite(i.atol_rotor)
         @inbounds for k = 1:N
             Δ = x_hi.rotor_ω[k] - x_lo.rotor_ω[k]
-            s = i.atol_rotor + i.rtol_rotor * max(abs(x_ref.rotor_ω[k]), abs(x_hi.rotor_ω[k]))
+            s =
+                i.atol_rotor +
+                i.rtol_rotor * max(abs(x_ref.rotor_ω[k]), abs(x_hi.rotor_ω[k]))
             s = max(s, 1e-15)
             err = max(err, abs(Δ) / s)
         end
@@ -507,22 +513,33 @@ end
     return h
 end
 
-@inline function _adapt_factor(err::Float64, order::Int, safety::Float64, minf::Float64, maxf::Float64)
+@inline function _snap_remaining(i, remaining::Float64)::Float64
+    # When quantizing to microseconds, floating-point subtraction can leave a tiny positive
+    # `remaining` (e.g., 5e-20) after an ostensibly exact final step. If we loop on that,
+    # `_clamp_step` will quantize it to 1 µs and we overshoot the interval.
+    #
+    # Snap remaining to the nearest microsecond grid and clamp to [0, ∞).
+    if i.quantize_us
+        rem_us = Int(round(remaining * 1e6))
+        rem_us = max(rem_us, 0)
+        return rem_us * 1e-6
+    end
+    return remaining
+end
+
+@inline function _adapt_factor(
+    err::Float64,
+    order::Int,
+    safety::Float64,
+    minf::Float64,
+    maxf::Float64,
+)
     # Standard PI-free step adaptation: h_new = h * safety * err^(-1/order).
     if !(err > 0.0)  # err==0 or NaN
         return maxf
     end
     fac = safety * err^(-1.0 / Float64(order))
     return clamp(fac, minf, maxf)
-end
-
-@inline function _snap_remaining(i::Union{RK23Integrator,RK45Integrator}, remaining::Float64)
-    if !i.quantize_us
-        return remaining
-    end
-    rem_us = Int(round(remaining * 1e6))
-    rem_us = max(rem_us, 0)
-    return rem_us * 1e-6
 end
 
 ############################
@@ -577,19 +594,24 @@ function step_integrator(
     b4h = 0.125
 
     while remaining > 0.0
-        (naccept + nreject) < i.max_substeps || error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
+        (naccept + nreject) < i.max_substeps ||
+            error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
         h = _clamp_step(i, h, remaining)
 
-        k1 = f(tcur, x, u); nfev += 1
+        k1 = f(tcur, x, u);
+        nfev += 1
         x2 = _rb_lincomb(x, h, (k1,), (a21,))
-        k2 = f(tcur + c2*h, x2, u); nfev += 1
+        k2 = f(tcur + c2*h, x2, u);
+        nfev += 1
 
         x3 = _rb_lincomb(x, h, (k2,), (a32,))
-        k3 = f(tcur + c3*h, x3, u); nfev += 1
+        k3 = f(tcur + c3*h, x3, u);
+        nfev += 1
 
         # 3rd order solution (high).
         x_hi = _rb_lincomb(x, h, (k1, k2, k3), (b1, b2, b3))
-        k4 = f(tcur + h, x_hi, u); nfev += 1
+        k4 = f(tcur + h, x_hi, u);
+        nfev += 1
 
         # 2nd order embedded solution (low).
         x_lo = _rb_lincomb(x, h, (k1, k2, k3, k4), (b1h, b2h, b3h, b4h))
@@ -599,9 +621,13 @@ function step_integrator(
         if err <= 1.0
             # Accept.
             x = x_hi
+            tcur += h
             remaining -= h
             remaining = _snap_remaining(i, remaining)
-            tcur = t + (dt - remaining)
+            if i.quantize_us
+                # Keep the stage time consistent with the snapped remaining.
+                tcur = t + (dt - remaining)
+            end
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^3).
@@ -611,12 +637,14 @@ function step_integrator(
             nreject += 1
             h *= _adapt_factor(err, 3, i.safety, i.min_factor, i.max_factor)
             h = max(h, i.h_min)
-            h <= i.h_min + 1e-18 && error("RK23Integrator hit h_min=$(i.h_min) without meeting error tolerance")
+            h <= i.h_min + 1e-18 &&
+                error("RK23Integrator hit h_min=$(i.h_min) without meeting error tolerance")
         end
     end
 
     i.last_h = h
-    i.last_stat = IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
+    i.last_stat =
+        IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
     return x
 end
 
@@ -694,28 +722,36 @@ function step_integrator(
     b7h = 1.0 / 40.0
 
     while remaining > 0.0
-        (naccept + nreject) < i.max_substeps || error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
+        (naccept + nreject) < i.max_substeps ||
+            error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
         h = _clamp_step(i, h, remaining)
 
-        k1 = f(tcur, x, u); nfev += 1
+        k1 = f(tcur, x, u);
+        nfev += 1
         x2 = _rb_lincomb(x, h, (k1,), (a21,))
-        k2 = f(tcur + c2*h, x2, u); nfev += 1
+        k2 = f(tcur + c2*h, x2, u);
+        nfev += 1
 
         x3 = _rb_lincomb(x, h, (k1, k2), (a31, a32))
-        k3 = f(tcur + c3*h, x3, u); nfev += 1
+        k3 = f(tcur + c3*h, x3, u);
+        nfev += 1
 
         x4 = _rb_lincomb(x, h, (k1, k2, k3), (a41, a42, a43))
-        k4 = f(tcur + c4*h, x4, u); nfev += 1
+        k4 = f(tcur + c4*h, x4, u);
+        nfev += 1
 
         x5 = _rb_lincomb(x, h, (k1, k2, k3, k4), (a51, a52, a53, a54))
-        k5 = f(tcur + c5*h, x5, u); nfev += 1
+        k5 = f(tcur + c5*h, x5, u);
+        nfev += 1
 
         x6 = _rb_lincomb(x, h, (k1, k2, k3, k4, k5), (a61, a62, a63, a64, a65))
-        k6 = f(tcur + c6*h, x6, u); nfev += 1
+        k6 = f(tcur + c6*h, x6, u);
+        nfev += 1
 
         # 5th order solution.
         x_hi = _rb_lincomb(x, h, (k1, k3, k4, k5, k6), (b1, b3, b4, b5, b6))
-        k7 = f(tcur + h, x_hi, u); nfev += 1
+        k7 = f(tcur + h, x_hi, u);
+        nfev += 1
 
         # 4th order embedded solution.
         x_lo = _rb_lincomb(x, h, (k1, k3, k4, k5, k6, k7), (b1h, b3h, b4h, b5h, b6h, b7h))
@@ -724,9 +760,13 @@ function step_integrator(
 
         if err <= 1.0
             x = x_hi
+            tcur += h
             remaining -= h
             remaining = _snap_remaining(i, remaining)
-            tcur = t + (dt - remaining)
+            if i.quantize_us
+                # Keep the stage time consistent with the snapped remaining.
+                tcur = t + (dt - remaining)
+            end
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^5).
@@ -735,12 +775,14 @@ function step_integrator(
             nreject += 1
             h *= _adapt_factor(err, 5, i.safety, i.min_factor, i.max_factor)
             h = max(h, i.h_min)
-            h <= i.h_min + 1e-18 && error("RK45Integrator hit h_min=$(i.h_min) without meeting error tolerance")
+            h <= i.h_min + 1e-18 &&
+                error("RK45Integrator hit h_min=$(i.h_min) without meeting error tolerance")
         end
     end
 
     i.last_h = h
-    i.last_stat = IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
+    i.last_stat =
+        IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
     return x
 end
 
@@ -808,19 +850,24 @@ function step_integrator(
     b4h = 0.125
 
     while remaining > 0.0
-        (naccept + nreject) < i.max_substeps || error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
+        (naccept + nreject) < i.max_substeps ||
+            error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
         h = _clamp_step(i, h, remaining)
 
-        k1 = f(tcur, x, u); nfev += 1
+        k1 = f(tcur, x, u);
+        nfev += 1
         x2 = plant_lincomb(x, h, (k1,), (a21,))
-        k2 = f(tcur + c2*h, x2, u); nfev += 1
+        k2 = f(tcur + c2*h, x2, u);
+        nfev += 1
 
         x3 = plant_lincomb(x, h, (k2,), (a32,))
-        k3 = f(tcur + c3*h, x3, u); nfev += 1
+        k3 = f(tcur + c3*h, x3, u);
+        nfev += 1
 
         # 3rd order solution (high).
         x_hi = plant_lincomb(x, h, (k1, k2, k3), (b1, b2, b3))
-        k4 = f(tcur + h, x_hi, u); nfev += 1
+        k4 = f(tcur + h, x_hi, u);
+        nfev += 1
 
         # 2nd order embedded solution (low).
         x_lo = plant_lincomb(x, h, (k1, k2, k3, k4), (b1h, b2h, b3h, b4h))
@@ -830,9 +877,13 @@ function step_integrator(
         if err <= 1.0
             # Accept.
             x = x_hi
+            tcur += h
             remaining -= h
             remaining = _snap_remaining(i, remaining)
-            tcur = t + (dt - remaining)
+            if i.quantize_us
+                # Keep the stage time consistent with the snapped remaining.
+                tcur = t + (dt - remaining)
+            end
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^3).
@@ -842,12 +893,14 @@ function step_integrator(
             nreject += 1
             h *= _adapt_factor(err, 3, i.safety, i.min_factor, i.max_factor)
             h = max(h, i.h_min)
-            h <= i.h_min + 1e-18 && error("RK23Integrator hit h_min=$(i.h_min) without meeting error tolerance")
+            h <= i.h_min + 1e-18 &&
+                error("RK23Integrator hit h_min=$(i.h_min) without meeting error tolerance")
         end
     end
 
     i.last_h = h
-    i.last_stat = IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
+    i.last_stat =
+        IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
     return x
 end
 
@@ -922,28 +975,36 @@ function step_integrator(
     b7h = 1.0 / 40.0
 
     while remaining > 0.0
-        (naccept + nreject) < i.max_substeps || error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
+        (naccept + nreject) < i.max_substeps ||
+            error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
         h = _clamp_step(i, h, remaining)
 
-        k1 = f(tcur, x, u); nfev += 1
+        k1 = f(tcur, x, u);
+        nfev += 1
         x2 = plant_lincomb(x, h, (k1,), (a21,))
-        k2 = f(tcur + c2*h, x2, u); nfev += 1
+        k2 = f(tcur + c2*h, x2, u);
+        nfev += 1
 
         x3 = plant_lincomb(x, h, (k1, k2), (a31, a32))
-        k3 = f(tcur + c3*h, x3, u); nfev += 1
+        k3 = f(tcur + c3*h, x3, u);
+        nfev += 1
 
         x4 = plant_lincomb(x, h, (k1, k2, k3), (a41, a42, a43))
-        k4 = f(tcur + c4*h, x4, u); nfev += 1
+        k4 = f(tcur + c4*h, x4, u);
+        nfev += 1
 
         x5 = plant_lincomb(x, h, (k1, k2, k3, k4), (a51, a52, a53, a54))
-        k5 = f(tcur + c5*h, x5, u); nfev += 1
+        k5 = f(tcur + c5*h, x5, u);
+        nfev += 1
 
         x6 = plant_lincomb(x, h, (k1, k2, k3, k4, k5), (a61, a62, a63, a64, a65))
-        k6 = f(tcur + c6*h, x6, u); nfev += 1
+        k6 = f(tcur + c6*h, x6, u);
+        nfev += 1
 
         # 5th order solution.
         x_hi = plant_lincomb(x, h, (k1, k3, k4, k5, k6), (b1, b3, b4, b5, b6))
-        k7 = f(tcur + h, x_hi, u); nfev += 1
+        k7 = f(tcur + h, x_hi, u);
+        nfev += 1
 
         # 4th order embedded solution.
         x_lo = plant_lincomb(x, h, (k1, k3, k4, k5, k6, k7), (b1h, b3h, b4h, b5h, b6h, b7h))
@@ -952,9 +1013,13 @@ function step_integrator(
 
         if err <= 1.0
             x = x_hi
+            tcur += h
             remaining -= h
             remaining = _snap_remaining(i, remaining)
-            tcur = t + (dt - remaining)
+            if i.quantize_us
+                # Keep the stage time consistent with the snapped remaining.
+                tcur = t + (dt - remaining)
+            end
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^5).
@@ -963,12 +1028,14 @@ function step_integrator(
             nreject += 1
             h *= _adapt_factor(err, 5, i.safety, i.min_factor, i.max_factor)
             h = max(h, i.h_min)
-            h <= i.h_min + 1e-18 && error("RK45Integrator hit h_min=$(i.h_min) without meeting error tolerance")
+            h <= i.h_min + 1e-18 &&
+                error("RK45Integrator hit h_min=$(i.h_min) without meeting error tolerance")
         end
     end
 
     i.last_h = h
-    i.last_stat = IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
+    i.last_stat =
+        IntegratorStats(nfev = nfev, naccept = naccept, nreject = nreject, h_last = h_last)
     return x
 end
 end # module Integrators

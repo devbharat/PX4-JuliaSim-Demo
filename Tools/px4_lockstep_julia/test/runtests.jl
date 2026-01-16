@@ -10,6 +10,9 @@ const Sim = PX4Lockstep.Sim
 # main test entrypoint stays readable.
 include("verification_cases.jl")
 
+# Record/replay engine (Option A) checks.
+include("record_replay_engine.jl")
+
 """Return the geodesic rotation error (rad) between two quaternions.
 
 Quaternions are treated as equivalent up to sign (q == -q).
@@ -515,7 +518,7 @@ end
 
     Sim.PlantSimulation.step_to_next_event!(sim)
     @test sim.scenario.scheduler.fired[1] == true
-    @test sim.vehicle.propulsion.units[1].enabled == false
+    @test Sim.Faults.is_motor_disabled(sim.input.faults, 1)
 end
 
 @testset "Simulation holds wind constant across RK4 stages" begin

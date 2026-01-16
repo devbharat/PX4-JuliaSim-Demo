@@ -18,13 +18,20 @@ using ..Autopilots: AutopilotCommand
 import ..Events
 using ..Events: EventScheduler, AbstractEvent, AtTime, When, step_events!, next_at_time_us
 using ..Environment: add_step_gust!
-using ..Propulsion: set_motor_enabled!
 import ..Powertrain
+using ..Faults:
+    FaultState,
+    disable_motor,
+    enable_motor,
+    set_battery_connected,
+    add_sensor_faults,
+    clear_sensor_faults
 
 export AbstractScenario,
     ScriptedScenario,
     EventScenario,
     scenario_step,
+    scenario_faults,
     process_events!,
     next_event_us,
     # Convenience helpers for EventScenario
@@ -35,6 +42,11 @@ export AbstractScenario,
     rtl_pulse_at!,
     wind_step_at!,
     fail_motor_at!,
+    restore_motor_at!,
+    battery_disconnect_at!,
+    battery_reconnect_at!,
+    sensor_fail_at!,
+    sensor_restore_at!,
     when_soc_below!
 
 abstract type AbstractScenario end
@@ -52,6 +64,14 @@ and by default this forwards to the 3-argument method.
 """
 scenario_step(s::AbstractScenario, t::Float64, x::RigidBodyState, sim) =
     scenario_step(s, t, x)
+
+"""Return the current fault state published by the scenario.
+
+Default: no faults.
+
+The record/replay engine (Option A) treats this as a *first-class bus signal*.
+"""
+scenario_faults(::AbstractScenario, t::Float64, x::RigidBodyState, sim) = FaultState()
 
 """Process any discrete events owned by the scenario at time `t`.
 
@@ -134,6 +154,8 @@ Events are one-shot and deterministic.
 """
 Base.@kwdef mutable struct EventScenario <: AbstractScenario
     cmd::AutopilotCommand = AutopilotCommand()
+    # Scenario-controlled fault state (sample-and-hold).
+    faults::FaultState = FaultState()
     scheduler::EventScheduler = EventScheduler()
 
     # Land detection thresholds (best effort).
@@ -146,6 +168,9 @@ Base.@kwdef mutable struct EventScenario <: AbstractScenario
     _mission_start_time_s::Float64 = NaN
     _last_process_us::UInt64 = typemax(UInt64)
 end
+
+"""Return the current fault state for an `EventScenario`."""
+scenario_faults(s::EventScenario, t::Float64, x::RigidBodyState, sim) = s.faults
 
 @inline function _set_cmd!(
     s::EventScenario;
@@ -260,27 +285,64 @@ function wind_step_at!(
     return s
 end
 
-"""Disable a motor at time `t_start`.
+"""Disable motor `motor_index` at time `t_start`.
 
-This assumes the simulation's vehicle instance has a `propulsion` object compatible with
-`Propulsion.QuadRotorSet`.
+This updates `s.faults` (a bus-level fault signal) rather than mutating component
+objects. Plant dynamics interpret this as "effective duty forced to 0".
 """
 function fail_motor_at!(s::EventScenario, t_start::Float64, motor_index::Int)
     push!(
         s.scheduler,
-        AtTime(t_start, (sim, t)->begin
-            if !hasproperty(sim.vehicle, :propulsion)
-                return
-            end
-            p = getfield(sim.vehicle, :propulsion)
-            if p === nothing
-                return
-            end
-            if motor_index < 1 || motor_index > length(p.units)
-                return
-            end
-            set_motor_enabled!(p.units[motor_index], false)
-        end),
+        AtTime(t_start, (sim, t)->(s.faults = disable_motor(s.faults, motor_index))),
+    )
+    return s
+end
+
+"""Re-enable motor `motor_index` at time `t_start`."""
+function restore_motor_at!(s::EventScenario, t_start::Float64, motor_index::Int)
+    push!(
+        s.scheduler,
+        AtTime(t_start, (sim, t)->(s.faults = enable_motor(s.faults, motor_index))),
+    )
+    return s
+end
+
+"""Disconnect the battery (bus voltage forced to 0) at time `t_start`."""
+function battery_disconnect_at!(s::EventScenario, t_start::Float64)
+    push!(
+        s.scheduler,
+        AtTime(t_start, (sim, t)->(s.faults = set_battery_connected(s.faults, false))),
+    )
+    return s
+end
+
+"""Reconnect the battery at time `t_start`."""
+function battery_reconnect_at!(s::EventScenario, t_start::Float64)
+    push!(
+        s.scheduler,
+        AtTime(t_start, (sim, t)->(s.faults = set_battery_connected(s.faults, true))),
+    )
+    return s
+end
+
+"""Add sensor fault bits at time `t_start`.
+
+This publishes into `s.faults.sensor_fault_mask`. Specific interpretation is
+component-dependent (estimator sources may freeze output, drop sensors, etc.).
+"""
+function sensor_fail_at!(s::EventScenario, t_start::Float64, mask::UInt64)
+    push!(
+        s.scheduler,
+        AtTime(t_start, (sim, t)->(s.faults = add_sensor_faults(s.faults, mask))),
+    )
+    return s
+end
+
+"""Clear sensor fault bits at time `t_start`."""
+function sensor_restore_at!(s::EventScenario, t_start::Float64, mask::UInt64)
+    push!(
+        s.scheduler,
+        AtTime(t_start, (sim, t)->(s.faults = clear_sensor_faults(s.faults, mask))),
     )
     return s
 end

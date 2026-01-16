@@ -40,6 +40,7 @@ using ..RigidBody: RigidBodyState, RigidBodyDeriv, rb_add, rb_scale_add
 using ..Vehicles
 using ..Propulsion
 using ..Powertrain
+using ..Faults: FaultState
 
 export PlantState,
     PlantDeriv,
@@ -92,7 +93,16 @@ function PlantState{N}(;
     batt_soc::Float64 = 1.0,
     batt_v1::Float64 = 0.0,
 ) where {N}
-    return PlantState{N}(rb, motors_y, motors_ydot, servos_y, servos_ydot, rotor_ω, batt_soc, batt_v1)
+    return PlantState{N}(
+        rb,
+        motors_y,
+        motors_ydot,
+        servos_y,
+        servos_ydot,
+        rotor_ω,
+        batt_soc,
+        batt_v1,
+    )
 end
 
 """Continuous-time plant derivative."""
@@ -117,7 +127,16 @@ function PlantDeriv{N}(;
     batt_soc_dot::Float64 = 0.0,
     batt_v1_dot::Float64 = 0.0,
 ) where {N}
-    return PlantDeriv{N}(rb, motors_y_dot, motors_ydot_dot, servos_y_dot, servos_ydot_dot, rotor_ω_dot, batt_soc_dot, batt_v1_dot)
+    return PlantDeriv{N}(
+        rb,
+        motors_y_dot,
+        motors_ydot_dot,
+        servos_y_dot,
+        servos_ydot_dot,
+        rotor_ω_dot,
+        batt_soc_dot,
+        batt_v1_dot,
+    )
 end
 
 ############################
@@ -136,6 +155,7 @@ Determinism contract:
 Base.@kwdef struct PlantInput
     cmd::Vehicles.ActuatorCommand = Vehicles.ActuatorCommand()
     wind_ned::Vec3 = zero(Vec3)
+    faults::FaultState = FaultState()
 end
 
 """Algebraic outputs of the plant (coupling + logging).
@@ -179,13 +199,36 @@ end
     w = h / 6.0
     return PlantState{N}(
         rb = rb_scale_add(x.rb, k1.rb, k2.rb, k3.rb, k4.rb, h),
-        motors_y = x.motors_y + (k1.motors_y_dot + 2k2.motors_y_dot + 2k3.motors_y_dot + k4.motors_y_dot) * w,
-        motors_ydot = x.motors_ydot + (k1.motors_ydot_dot + 2k2.motors_ydot_dot + 2k3.motors_ydot_dot + k4.motors_ydot_dot) * w,
-        servos_y = x.servos_y + (k1.servos_y_dot + 2k2.servos_y_dot + 2k3.servos_y_dot + k4.servos_y_dot) * w,
-        servos_ydot = x.servos_ydot + (k1.servos_ydot_dot + 2k2.servos_ydot_dot + 2k3.servos_ydot_dot + k4.servos_ydot_dot) * w,
-        rotor_ω = x.rotor_ω + (k1.rotor_ω_dot + 2k2.rotor_ω_dot + 2k3.rotor_ω_dot + k4.rotor_ω_dot) * w,
-        batt_soc = x.batt_soc + (k1.batt_soc_dot + 2k2.batt_soc_dot + 2k3.batt_soc_dot + k4.batt_soc_dot) * w,
-        batt_v1 = x.batt_v1 + (k1.batt_v1_dot + 2k2.batt_v1_dot + 2k3.batt_v1_dot + k4.batt_v1_dot) * w,
+        motors_y = x.motors_y +
+                   (
+            k1.motors_y_dot + 2k2.motors_y_dot + 2k3.motors_y_dot + k4.motors_y_dot
+        ) * w,
+        motors_ydot = x.motors_ydot +
+                      (
+            k1.motors_ydot_dot +
+            2k2.motors_ydot_dot +
+            2k3.motors_ydot_dot +
+            k4.motors_ydot_dot
+        ) * w,
+        servos_y = x.servos_y +
+                   (
+            k1.servos_y_dot + 2k2.servos_y_dot + 2k3.servos_y_dot + k4.servos_y_dot
+        ) * w,
+        servos_ydot = x.servos_ydot +
+                      (
+            k1.servos_ydot_dot +
+            2k2.servos_ydot_dot +
+            2k3.servos_ydot_dot +
+            k4.servos_ydot_dot
+        ) * w,
+        rotor_ω = x.rotor_ω +
+                  (k1.rotor_ω_dot + 2k2.rotor_ω_dot + 2k3.rotor_ω_dot + k4.rotor_ω_dot) * w,
+        batt_soc = x.batt_soc +
+                   (
+            k1.batt_soc_dot + 2k2.batt_soc_dot + 2k3.batt_soc_dot + k4.batt_soc_dot
+        ) * w,
+        batt_v1 = x.batt_v1 +
+                  (k1.batt_v1_dot + 2k2.batt_v1_dot + 2k3.batt_v1_dot + k4.batt_v1_dot) * w,
     )
 end
 
@@ -229,12 +272,7 @@ end
         batt_v1 = batt_v1 + ks[i].batt_v1_dot * w
     end
 
-    rb = RigidBodyState(
-        pos_ned = pos,
-        vel_ned = vel,
-        q_bn = quat_normalize(q),
-        ω_body = ω,
-    )
+    rb = RigidBodyState(pos_ned = pos, vel_ned = vel, q_bn = quat_normalize(q), ω_body = ω)
 
     return PlantState{N}(
         rb = rb,
@@ -253,8 +291,10 @@ end
 ############################
 
 # Actuator state extraction.
-@inline _act_state(::Vehicles.DirectActuators, ::Val{N}) where {N} = (zero(SVector{N,Float64}), zero(SVector{N,Float64}))
-@inline _act_state(a::Vehicles.FirstOrderActuators{N}, ::Val{N}) where {N} = (a.y, zero(SVector{N,Float64}))
+@inline _act_state(::Vehicles.DirectActuators, ::Val{N}) where {N} =
+    (zero(SVector{N,Float64}), zero(SVector{N,Float64}))
+@inline _act_state(a::Vehicles.FirstOrderActuators{N}, ::Val{N}) where {N} =
+    (a.y, zero(SVector{N,Float64}))
 @inline _act_state(a::Vehicles.SecondOrderActuators{N}, ::Val{N}) where {N} = (a.y, a.ydot)
 
 @inline function _set_act_state!(::Vehicles.DirectActuators, y, ydot)
@@ -282,7 +322,11 @@ end
     b.soc = soc
     return nothing
 end
-@inline function _set_battery_state!(b::Powertrain.TheveninBattery, soc::Float64, v1::Float64)
+@inline function _set_battery_state!(
+    b::Powertrain.TheveninBattery,
+    soc::Float64,
+    v1::Float64,
+)
     b.soc = soc
     b.v1 = v1
     return nothing
@@ -293,7 +337,10 @@ function _propulsion_omega(p::Propulsion.QuadRotorSet{N}) where {N}
     return SVector{N,Float64}(ntuple(i -> Float64(p.units[i].ω_rad_s), N))
 end
 
-function _set_propulsion_omega!(p::Propulsion.QuadRotorSet{N}, ω::SVector{N,Float64}) where {N}
+function _set_propulsion_omega!(
+    p::Propulsion.QuadRotorSet{N},
+    ω::SVector{N,Float64},
+) where {N}
     @inbounds for i = 1:N
         p.units[i].ω_rad_s = ω[i]
     end

@@ -193,3 +193,116 @@ end
     drift_sol = maximum(abs.(cmp.invariants.sol.drift.E))
     @test drift_ref < drift_sol
 end
+
+
+@testset "Verification: RK45 reference compare utility (PlantState)" begin
+    # Full-plant reference compare: embed an SHO into the rigid-body subset and add
+    # rotor ω + battery SOC/V1 continuous states. Use RK45 on a fine grid as numerical
+    # truth and compare RK4 on a coarse grid.
+    sho = V.SHOCase(ω0 = 2 * pi, x0 = 1.0, v0 = 0.0)
+    f_rb = V.sho_rhs(sho)
+
+    omega_target = SVector{4,Float64}(400.0, 420.0, 410.0, 430.0)
+    alpha = 200.0
+    soc_dot = -0.01
+    tau_v1 = 0.2
+
+    function f(t::Float64, x::Sim.Plant.PlantState{4}, _u)
+        rb_dot = f_rb(t, x.rb, nothing)
+        rotor_dot = -alpha .* (x.rotor_ω - omega_target)
+        return Sim.Plant.PlantDeriv{4}(
+            rb = rb_dot,
+            rotor_ω_dot = rotor_dot,
+            batt_soc_dot = soc_dot,
+            batt_v1_dot = -x.batt_v1 / tau_v1,
+        )
+    end
+
+    rb0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(sho.x0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(sho.v0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    x0 = Sim.Plant.PlantState{4}(
+        rb = rb0,
+        rotor_ω = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
+        batt_soc = 1.0,
+        batt_v1 = 1.0
+    )
+
+    dt_sol = 0.02
+    dt_ref = dt_sol / 10
+    t_end = 0.4
+
+    ref_fine = V.rk45_reference(
+        f,
+        x0,
+        dt_ref,
+        t_end;
+        plant_error_control = true,
+        # Include non-RB states in the *reference* adaptivity so rotor/battery accuracy
+        # is not accidentally ignored.
+        atol_rotor = 1e-10,
+        atol_soc = 1e-12,
+        atol_v1 = 1e-12,
+    )
+    ref = V.resample_trajectory(ref_fine, dt_sol)
+    sol = V.simulate_trajectory(Sim.Integrators.RK4Integrator(), f, x0, dt_sol, t_end)
+
+    invfun = (s::Sim.Plant.PlantState{4},) -> (
+        E_sho = V.sho_energy(sho, s.rb.pos_ned[1], s.rb.vel_ned[1]),
+    )
+    cmp = V.compare_to_reference(ref, sol; invfun = invfun)
+
+    @test length(cmp.err.t) == length(ref.x)
+    @test isfinite(cmp.err.max.rotor)
+    @test isfinite(cmp.err.max.soc)
+    @test isfinite(cmp.err.max.v1)
+    @test cmp.err.max.rotor > 0.0
+
+    drift_ref = maximum(abs.(cmp.invariants.ref.drift.E_sho))
+    drift_sol = maximum(abs.(cmp.invariants.sol.drift.E_sho))
+    @test drift_ref < drift_sol
+end
+
+
+@testset "Verification: RK45 quantized timebase (SHO)" begin
+    case = V.SHOCase(ω0 = 2 * pi, x0 = 1.0, v0 = 0.0)
+    f = V.sho_rhs(case)
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(case.x0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(case.v0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    dt = 0.004
+    t_end = 2.0
+
+    rk = Sim.Integrators.RK45Integrator(
+        rtol_pos = 1e-9,
+        atol_pos = 1e-9,
+        rtol_vel = 1e-9,
+        atol_vel = 1e-9,
+        rtol_ω = 1e-9,
+        atol_ω = 1e-9,
+        atol_att_rad = 1e-9,
+        h_max = dt,
+        quantize_us = true,
+    )
+
+    tr = V.simulate_trajectory(rk, f, x0, dt, t_end)
+    max_pos = 0.0
+    max_vel = 0.0
+    for i in eachindex(tr.x)
+        t = (i - 1) * dt
+        x_ref, v_ref = V.sho_analytic(case, t)
+        max_pos = max(max_pos, abs(tr.x[i].pos_ned[1] - x_ref))
+        max_vel = max(max_vel, abs(tr.x[i].vel_ned[1] - v_ref))
+    end
+
+    @test max_pos < 1e-4
+    @test max_vel < 1e-4
+end

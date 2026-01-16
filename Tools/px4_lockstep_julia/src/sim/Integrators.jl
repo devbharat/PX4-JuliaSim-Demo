@@ -516,6 +516,15 @@ end
     return clamp(fac, minf, maxf)
 end
 
+@inline function _snap_remaining(i::Union{RK23Integrator,RK45Integrator}, remaining::Float64)
+    if !i.quantize_us
+        return remaining
+    end
+    rem_us = Int(round(remaining * 1e6))
+    rem_us = max(rem_us, 0)
+    return rem_us * 1e-6
+end
+
 ############################
 # RK23 (Bogacki–Shampine 3(2))
 ############################
@@ -590,8 +599,9 @@ function step_integrator(
         if err <= 1.0
             # Accept.
             x = x_hi
-            tcur += h
             remaining -= h
+            remaining = _snap_remaining(i, remaining)
+            tcur = t + (dt - remaining)
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^3).
@@ -714,8 +724,9 @@ function step_integrator(
 
         if err <= 1.0
             x = x_hi
-            tcur += h
             remaining -= h
+            remaining = _snap_remaining(i, remaining)
+            tcur = t + (dt - remaining)
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^5).
@@ -819,8 +830,9 @@ function step_integrator(
         if err <= 1.0
             # Accept.
             x = x_hi
-            tcur += h
             remaining -= h
+            remaining = _snap_remaining(i, remaining)
+            tcur = t + (dt - remaining)
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^3).
@@ -940,8 +952,9 @@ function step_integrator(
 
         if err <= 1.0
             x = x_hi
-            tcur += h
             remaining -= h
+            remaining = _snap_remaining(i, remaining)
+            tcur = t + (dt - remaining)
             naccept += 1
             h_last = h
             # Error estimate scales like O(h^5).

@@ -29,6 +29,7 @@ using StaticArrays
 
 using ..Types
 using ..RigidBody
+using ..Plant: PlantState
 using ..Integrators
 
 export SHOCase,
@@ -55,6 +56,7 @@ export SHOCase,
     rk45_reference,
     resample_trajectory,
     rb_error,
+    plant_error,
     error_series,
     invariant_series,
     compare_to_reference
@@ -141,6 +143,18 @@ function rk45_reference(
     h_min::Float64 = 1e-9,
     h_max::Float64 = dt_ref,
     quantize_us::Bool = true,
+    # Optional full-plant error control (disabled by default).
+    plant_error_control::Bool = false,
+    rtol_act::Float64 = 0.0,
+    atol_act::Float64 = Inf,
+    rtol_actdot::Float64 = 0.0,
+    atol_actdot::Float64 = Inf,
+    rtol_rotor::Float64 = 0.0,
+    atol_rotor::Float64 = Inf,
+    rtol_soc::Float64 = 0.0,
+    atol_soc::Float64 = Inf,
+    rtol_v1::Float64 = 0.0,
+    atol_v1::Float64 = Inf,
 )
     rk = RK45Integrator(
         rtol_pos = rtol_pos,
@@ -153,6 +167,17 @@ function rk45_reference(
         h_min = h_min,
         h_max = h_max,
         quantize_us = quantize_us,
+        plant_error_control = plant_error_control,
+        rtol_act = rtol_act,
+        atol_act = atol_act,
+        rtol_actdot = rtol_actdot,
+        atol_actdot = atol_actdot,
+        rtol_rotor = rtol_rotor,
+        atol_rotor = atol_rotor,
+        rtol_soc = rtol_soc,
+        atol_soc = atol_soc,
+        rtol_v1 = rtol_v1,
+        atol_v1 = atol_v1,
     )
     reset!(rk)
     return simulate_trajectory(rk, f, x0, dt_ref, t_end; u = u)
@@ -191,6 +216,29 @@ Returns a named tuple with:
     d = clamp(d, -1.0, 1.0)
     att_rad = 2.0 * acos(d)
     return (pos = pos, vel = vel, att_rad = att_rad, ω = ω)
+end
+
+"""Plant-state error components.
+
+This mirrors `rb_error` but extends it with a minimal set of non-rigid-body
+continuous states that matter for the full-plant variable-step integrator:
+
+* `rotor` : ‖Δrotor_ω‖ (rad/s)
+* `soc`   : |ΔSOC|
+* `v1`    : |ΔV1| (V)
+
+Notes
+-----
+* Actuator states are not included by default; multirotor models typically capture
+  the dominant lag in rotor ω dynamics.
+* If actuator error terms are required, add a separate helper or extend this one.
+"""
+@inline function plant_error(x::PlantState{N}, xref::PlantState{N}) where {N}
+    rb = rb_error(x.rb, xref.rb)
+    rotor = norm(x.rotor_ω - xref.rotor_ω)
+    soc = abs(x.batt_soc - xref.batt_soc)
+    v1 = abs(x.batt_v1 - xref.batt_v1)
+    return (pos = rb.pos, vel = rb.vel, att_rad = rb.att_rad, ω = rb.ω, rotor = rotor, soc = soc, v1 = v1)
 end
 
 """Compute error series vs a reference trajectory.
@@ -254,6 +302,84 @@ function error_series(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBody
     )
 end
 
+"""Compute error series vs a reference trajectory for `PlantState`.
+
+Both trajectories must share the same uniform grid (`dt` and length).
+
+Returns a named tuple:
+* `t` : time vector (Float64)
+* `pos_err`, `vel_err`, `att_err_rad`, `ω_err` : rigid-body error components
+* `rotor_err` : ‖Δrotor_ω‖ (rad/s)
+* `soc_err`   : |ΔSOC|
+* `v1_err`    : |ΔV1| (V)
+* `max` and `rms` summaries for all components.
+"""
+function error_series(ref::Trajectory{PlantState{N}}, sol::Trajectory{PlantState{N}}) where {N}
+    @assert isapprox(ref.dt, sol.dt; atol = 0.0, rtol = 0.0) "dt mismatch"
+    @assert length(ref.x) == length(sol.x) "length mismatch"
+
+    n = length(ref.x)
+    pos_err = Vector{Float64}(undef, n)
+    vel_err = Vector{Float64}(undef, n)
+    att_err = Vector{Float64}(undef, n)
+    ω_err = Vector{Float64}(undef, n)
+    rotor_err = Vector{Float64}(undef, n)
+    soc_err = Vector{Float64}(undef, n)
+    v1_err = Vector{Float64}(undef, n)
+
+    for i = 1:n
+        e = plant_error(sol.x[i], ref.x[i])
+        pos_err[i] = e.pos
+        vel_err[i] = e.vel
+        att_err[i] = e.att_rad
+        ω_err[i] = e.ω
+        rotor_err[i] = e.rotor
+        soc_err[i] = e.soc
+        v1_err[i] = e.v1
+    end
+
+    function _rms(v)
+        s = 0.0
+        @inbounds for x in v
+            s += x * x
+        end
+        return sqrt(s / length(v))
+    end
+
+    max_nt = (
+        pos = maximum(pos_err),
+        vel = maximum(vel_err),
+        att_rad = maximum(att_err),
+        ω = maximum(ω_err),
+        rotor = maximum(rotor_err),
+        soc = maximum(soc_err),
+        v1 = maximum(v1_err),
+    )
+    rms_nt = (
+        pos = _rms(pos_err),
+        vel = _rms(vel_err),
+        att_rad = _rms(att_err),
+        ω = _rms(ω_err),
+        rotor = _rms(rotor_err),
+        soc = _rms(soc_err),
+        v1 = _rms(v1_err),
+    )
+
+    t = collect(0.0:ref.dt:(ref.dt * (n - 1)))
+    return (
+        t = t,
+        pos_err = pos_err,
+        vel_err = vel_err,
+        att_err_rad = att_err,
+        ω_err = ω_err,
+        rotor_err = rotor_err,
+        soc_err = soc_err,
+        v1_err = v1_err,
+        max = max_nt,
+        rms = rms_nt,
+    )
+end
+
 """Compute invariant time series and drift series for a trajectory.
 
 `invfun(x) -> NamedTuple` should return scalar invariants (e.g., energy, |L|).
@@ -303,6 +429,25 @@ This helper is intended for verification scripts:
 If `invfun` is provided, it must accept `RigidBodyState` and return a `NamedTuple`.
 """
 function compare_to_reference(ref::Trajectory{RigidBodyState}, sol::Trajectory{RigidBodyState}; invfun = nothing)
+    err = error_series(ref, sol)
+    if invfun === nothing
+        return (err = err, invariants = nothing)
+    end
+    inv_ref = invariant_series(invfun, ref)
+    inv_sol = invariant_series(invfun, sol)
+    return (err = err, invariants = (ref = inv_ref, sol = inv_sol))
+end
+
+"""Compare a `PlantState` trajectory against a reference trajectory.
+
+This mirrors `compare_to_reference(::Trajectory{RigidBodyState}, ...)` but uses
+the `PlantState` error series (RB + rotor ω + SOC/V1).
+
+If `invfun` is provided, it must accept `PlantState{N}` and return a `NamedTuple`
+of scalar invariants. This enables "invariant drift" comparisons even for full-plant
+systems (e.g., Kepler energy/angular momentum in the rigid-body subset).
+"""
+function compare_to_reference(ref::Trajectory{PlantState{N}}, sol::Trajectory{PlantState{N}}; invfun = nothing) where {N}
     err = error_series(ref, sol)
     if invfun === nothing
         return (err = err, invariants = nothing)

@@ -14,8 +14,9 @@ between timeline boundaries while discrete sources publish bus fields.
   `AtTime` events into a single boundary axis used for integration.
 - **Record tiers:** Tier‑0 recordings capture only what is needed for deterministic
   plant replay (commands, wind, plant, battery), keeping files small.
-- **Deterministic ordering:** sources update in a fixed order and record `faults_evt`
-  on the event axis to avoid missing dynamic transitions.
+- **Deterministic ordering:** sources update in a fixed order and record
+  `ap_cmd_evt`, `landed_evt`, and `faults_evt` on the event axis to avoid missing
+  dynamic transitions.
 
 ## Integration Contracts
 

@@ -147,16 +147,18 @@ Examples:
 - `cmd` stream on `T_ap_us`
 - `wind_ned` stream on `T_wind_us`
 - `plant_state` stream on `T_log_us`
-- `scenario_events` stream on `T_scn_us`
+- `ap_cmd`, `landed`, `faults` streams on `T_scn_us`
+- `ap_cmd_evt`, `landed_evt`, `faults_evt` streams on `T_evt_us` for dynamic scenarios
 
 Scenario outputs that couple into the rest of the sim (e.g. `ap_cmd`, `landed`, `faults`) are
 recorded as **bus streams**, not as opaque event payloads.
 
 Important note for dynamic scenarios:
 
-* If scenarios can change faults based on state (e.g. `When(...)`), record the fault signal on
-  **`T_evt_us`** so replay cannot miss a transition.
-  - In code, this is recorded as the `:faults_evt` stream aligned to `timeline.evt`.
+* If scenarios can change outputs based on state (e.g. `When(...)`), record those bus
+  outputs on **`T_evt_us`** so replay cannot miss a transition.
+  - In code, these are recorded as `:ap_cmd_evt`, `:landed_evt`, and `:faults_evt` streams
+    aligned to `timeline.evt`.
 * See `docs/faults.md` for the exact recording semantics.
 
 Interpolation rules are stream-specific and explicit:

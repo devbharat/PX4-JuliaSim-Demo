@@ -207,14 +207,14 @@ Expected streams
 
 Returns
 -------
-NamedTuple `(est,)` containing a `SampledTrace`.
+NamedTuple `(est,)` containing a `ZOHTrace`.
 
 Notes
 -----
 This is optional and is typically recorded only in Tier-1+.
 """
 function estimator_traces(rec::InMemoryRecorder, timeline::Timeline)
-    est = sampled_trace(rec, :est, timeline.ap)
+    est = zoh_trace(rec, :est, timeline.ap)
     return (; est)
 end
 

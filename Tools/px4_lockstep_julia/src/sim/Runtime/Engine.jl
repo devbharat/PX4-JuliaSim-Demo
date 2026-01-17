@@ -98,12 +98,16 @@ function _normalize_log_sinks(log_sinks)::Vector{Logging.AbstractLogSink}
     elseif log_sinks isa Tuple || log_sinks isa AbstractVector
         v = Logging.AbstractLogSink[]
         for s in log_sinks
-            s isa Logging.AbstractLogSink || error("log_sinks element must be AbstractLogSink, got " * string(typeof(s)))
+            s isa Logging.AbstractLogSink ||
+                error("log_sinks element must be AbstractLogSink, got " * string(typeof(s)))
             push!(v, s)
         end
         return v
     else
-        error("log_sinks must be nothing, an AbstractLogSink, or a tuple/vector of AbstractLogSink; got " * string(typeof(log_sinks)))
+        error(
+            "log_sinks must be nothing, an AbstractLogSink, or a tuple/vector of AbstractLogSink; got " *
+            string(typeof(log_sinks)),
+        )
     end
 end
 
@@ -256,7 +260,8 @@ This is the intended public construction surface for building an engine.
 Keeping this as a keyword constructor avoids fragile positional ordering and makes
 call sites (examples/tests) self-documenting.
 """
-function Engine(cfg::EngineConfig; 
+function Engine(
+    cfg::EngineConfig;
     timeline::Timeline,
     plant0,
     dynfun,
@@ -360,7 +365,11 @@ function process_events_at!(sim::Engine)
         elseif stage === :derived_outputs
             # Derived outputs (battery telemetry) *after* faults/wind and before autopilot.
             if sim.cfg.enable_derived_outputs
-                u = PlantInput(cmd = sim.bus.cmd, wind_ned = sim.bus.wind_ned, faults = sim.bus.faults)
+                u = PlantInput(
+                    cmd = sim.bus.cmd,
+                    wind_ned = sim.bus.wind_ned,
+                    faults = sim.bus.faults,
+                )
 
                 if applicable(plant_outputs, sim.dynfun, sim.t_s, sim.plant, u)
                     y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
@@ -377,13 +386,15 @@ function process_events_at!(sim::Engine)
                     if hasproperty(y, :rho_kgm3)
                         rho = getproperty(y, :rho_kgm3)
                         if isfinite(rho)
-                            sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
+                            sim.bus.env =
+                                EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
                         end
                     end
                     if hasproperty(y, :temp_k)
                         temp = getproperty(y, :temp_k)
                         if isfinite(temp)
-                            sim.bus.env = EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
+                            sim.bus.env =
+                                EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                         end
                     end
                 else
@@ -471,7 +482,10 @@ end
     if hasproperty(x, :rb)
         return getproperty(x, :rb)
     end
-    error("Plant state does not expose an `rb` field; cannot emit rigid-body logs. Got: " * string(typeof(x)))
+    error(
+        "Plant state does not expose an `rb` field; cannot emit rigid-body logs. Got: " *
+        string(typeof(x)),
+    )
 end
 
 @inline function _rotor_omega_tuple(plant)::NTuple{4,Float64}
@@ -530,7 +544,8 @@ end
                 vel_sp = _to_ntuple3_float(getproperty(out, :trajectory_setpoint_velocity))
             end
             if hasproperty(out, :trajectory_setpoint_acceleration)
-                acc_sp = _to_ntuple3_float(getproperty(out, :trajectory_setpoint_acceleration))
+                acc_sp =
+                    _to_ntuple3_float(getproperty(out, :trajectory_setpoint_acceleration))
             end
             if hasproperty(out, :trajectory_setpoint_yaw)
                 yaw_sp = Float64(getproperty(out, :trajectory_setpoint_yaw))
@@ -586,8 +601,16 @@ function _emit_logs_to_sinks!(sim::Engine)
     rotor_omega = _rotor_omega_tuple(sim.plant)
     rotor_thrust = _rotor_thrust_tuple(sim.outputs.plant_y)
 
-    pos_sp, vel_sp, acc_sp, yaw_sp, yawspeed_sp, nav_state, arming_state, mission_seq, mission_count, mission_finished =
-        _autopilot_log_fields(sim.autopilot)
+    pos_sp,
+    vel_sp,
+    acc_sp,
+    yaw_sp,
+    yawspeed_sp,
+    nav_state,
+    arming_state,
+    mission_seq,
+    mission_count,
+    mission_finished = _autopilot_log_fields(sim.autopilot)
 
     for sink in sim.log_sinks
         Logging.log!(
@@ -628,7 +651,8 @@ function step_to_next_event!(sim::Engine)
     has_next(sim.sched) || return false
 
     t_us = current_us(sim.sched)
-    t_us == sim.t_us || error("Engine/scheduler time mismatch: sched=$t_us engine=$(sim.t_us)")
+    t_us == sim.t_us ||
+        error("Engine/scheduler time mismatch: sched=$t_us engine=$(sim.t_us)")
 
     next_t_us = next_us(sim.sched)
     dt_us = next_t_us - t_us

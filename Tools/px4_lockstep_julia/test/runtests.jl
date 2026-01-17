@@ -10,6 +10,10 @@ const Sim = PX4Lockstep.Sim
 # main test entrypoint stays readable.
 include("verification_cases.jl")
 
+# Verification: system-level contracts + missing subsystem unit coverage.
+# These start as `@test_skip` shells and will be filled in incrementally.
+include("verification_contracts.jl")
+
 # Record/replay engine (Option A) checks.
 
 # Compare-integrators workflow (record/replay + metrics)

@@ -159,7 +159,4 @@ function event_times_us(src::ReplayScenarioSource, t0_us::UInt64, t_end_us::UInt
 end
 
 export AbstractScenarioSource,
-    NullScenarioSource,
-    ReplayScenarioSource,
-    LiveScenarioSource,
-    ScenarioSimView
+    NullScenarioSource, ReplayScenarioSource, LiveScenarioSource, ScenarioSimView

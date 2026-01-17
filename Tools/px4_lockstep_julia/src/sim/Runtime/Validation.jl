@@ -47,15 +47,18 @@ function validate_boundary!(v::EngineValidator, sim, ev::BoundaryEvent)
 
     # 1) Time alignment invariants
     if v.check_time_alignment
-        sim.t_us == ev.time_us || error("boundary time mismatch: sim.t_us=$(sim.t_us) ev.time_us=$(ev.time_us)")
-        sim.timeline.t0_us <= ev.time_us <= sim.timeline.t_end_us || error("boundary time out of timeline bounds")
+        sim.t_us == ev.time_us ||
+            error("boundary time mismatch: sim.t_us=$(sim.t_us) ev.time_us=$(ev.time_us)")
+        sim.timeline.t0_us <= ev.time_us <= sim.timeline.t_end_us ||
+            error("boundary time out of timeline bounds")
     end
 
     # 2) Time monotonicity
     if v.check_time_monotonic
         if getproperty(sim.stats, :n_boundaries) > 0
             last = getproperty(sim.stats, :last_boundary_us)
-            ev.time_us > last || error("non-monotonic boundary: t=$(ev.time_us) <= last=$(last)")
+            ev.time_us > last ||
+                error("non-monotonic boundary: t=$(ev.time_us) <= last=$(last)")
         end
     end
 
@@ -75,7 +78,8 @@ function validate_boundary!(v::EngineValidator, sim, ev::BoundaryEvent)
         # Helper: if idx is in-bounds, assert next axis time is >= t.
         function _chk(axis::TimeAxis, idx::Int, name::Symbol)
             if idx <= length(axis.t_us)
-                axis.t_us[idx] >= t || error("axis $(name) skipped an event: next=$(axis.t_us[idx]) < t=$t")
+                axis.t_us[idx] >= t ||
+                    error("axis $(name) skipped an event: next=$(axis.t_us[idx]) < t=$t")
             end
         end
 

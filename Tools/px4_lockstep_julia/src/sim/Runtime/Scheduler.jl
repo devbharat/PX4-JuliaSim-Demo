@@ -71,7 +71,7 @@ end
     if !has_next(s)
         return s.timeline.evt.t_us[end]
     end
-    return s.timeline.evt.t_us[s.evt_idx + 1]
+    return s.timeline.evt.t_us[s.evt_idx+1]
 end
 
 """Compute which sub-axes are due at the current boundary time.
@@ -117,4 +117,5 @@ function advance_evt!(s::Scheduler)
     return true
 end
 
-export Scheduler, current_us, has_next, next_us, boundary_event, consume_boundary!, advance_evt!
+export Scheduler,
+    current_us, has_next, next_us, boundary_event, consume_boundary!, advance_evt!

@@ -69,8 +69,10 @@ include("Workflows/CompareIntegrators.jl")
 
 # Namespace wrapper for workflow helpers.
 module Workflows
-using ..Sim: simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
-export simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
+using ..Sim:
+    simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
+export simulate_iris_mission,
+    compare_integrators_recording, compare_integrators_iris_mission
 end
 
 # User-facing workflow entrypoints (thin wrappers around Runtime.Engine).

@@ -50,7 +50,7 @@ Returns
 -------
 The mutated `Runtime.Engine` after `run!`.
 """
-function simulate(; 
+function simulate(;
     mode::Symbol = :live,
     timeline,
     plant0,
@@ -91,11 +91,7 @@ function simulate(;
         error("simulate(mode=:record) requires a recorder")
     end
 
-    _validate_lockstep_rates(
-        autopilot,
-        timeline;
-        strict = strict_lockstep_rates,
-    )
+    _validate_lockstep_rates(autopilot, timeline; strict = strict_lockstep_rates)
 
     bus = Runtime.SimBus(time_us = timeline.t0_us)
 
@@ -123,8 +119,8 @@ function _axis_dt_us(axis::Runtime.TimeAxis)
     t = axis.t_us
     length(t) < 2 && return nothing
     dt_us = t[2] - t[1]
-    for i in 3:length(t)
-        (t[i] - t[i - 1]) == dt_us ||
+    for i = 3:length(t)
+        (t[i] - t[i-1]) == dt_us ||
             error("axis $(axis.name) is non-uniform; cannot compute dt")
     end
     return dt_us

@@ -149,7 +149,14 @@ function build_timeline(
 
     evt = merge_axes(
         :event,
-        [ap.t_us, wind.t_us, log.t_us, scn_axis.t_us, phys_axis.t_us, UInt64[t0_us, t_end_us]],
+        [
+            ap.t_us,
+            wind.t_us,
+            log.t_us,
+            scn_axis.t_us,
+            phys_axis.t_us,
+            UInt64[t0_us, t_end_us],
+        ],
     )
 
     (evt.t_us[1] == t0_us) || error("timeline event axis must start at t0_us")

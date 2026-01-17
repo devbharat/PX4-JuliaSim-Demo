@@ -53,7 +53,10 @@ function _rms(v::AbstractVector{Float64})
     return sqrt(s / length(v))
 end
 
-function _battery_error(ref::Vector{Powertrain.BatteryStatus}, sol::Vector{Powertrain.BatteryStatus})
+function _battery_error(
+    ref::Vector{Powertrain.BatteryStatus},
+    sol::Vector{Powertrain.BatteryStatus},
+)
     @assert length(ref) == length(sol)
     n = length(ref)
     verr = Vector{Float64}(undef, n)
@@ -79,15 +82,19 @@ Accepted forms:
 - `"name" => integrator`
 - `:name => integrator`
 """
-function _coerce_solver(s;
-    make_integrator::Function = (name::Symbol)->error("No make_integrator provided for solver name=$name"),
+function _coerce_solver(
+    s;
+    make_integrator::Function = (
+        name::Symbol
+    )->error("No make_integrator provided for solver name=$name"),
 )
     if s isa Integrators.AbstractIntegrator
         return (string(typeof(s)), s)
     elseif s isa Pair
         label = string(first(s))
         integ = last(s)
-        integ isa Integrators.AbstractIntegrator || error("solver pair must map to an AbstractIntegrator")
+        integ isa Integrators.AbstractIntegrator ||
+            error("solver pair must map to an AbstractIntegrator")
         return (label, integ)
     elseif s isa Symbol
         return (String(s), make_integrator(s))
@@ -104,8 +111,9 @@ function _dt_from_axis(axis::Vector{UInt64})
     n < 2 && return 0.0
     dt_us = axis[2] - axis[1]
     # Guard uniform axis.
-    for i in 3:n
-        (axis[i] - axis[i-1]) == dt_us || error("Non-uniform log axis; cannot compare on a uniform grid")
+    for i = 3:n
+        (axis[i] - axis[i-1]) == dt_us ||
+            error("Non-uniform log axis; cannot compare on a uniform grid")
     end
     return Float64(dt_us) * 1e-6
 end
@@ -181,7 +189,7 @@ Notes
 - If `log_dir` is provided, per-solver CSV logs are written as
   `<log_prefix>_ref_log.csv` and `<log_prefix>_<solver>_log.csv`.
 """
-function compare_integrators_recording(; 
+function compare_integrators_recording(;
     recording::Recording.Tier0Recording,
     dynfun,
     solvers,
@@ -245,10 +253,7 @@ function compare_integrators_recording(;
     ref_batt = ref_rec.values[:battery]
 
     # Coerce solvers.
-    solver_list = [
-        _coerce_solver(s; make_integrator = make_integrator)
-        for s in solvers
-    ]
+    solver_list = [_coerce_solver(s; make_integrator = make_integrator) for s in solvers]
 
     rows = Vector{NamedTuple}()
 
@@ -332,7 +337,7 @@ Outputs:
 - optionally writes per-solver CSV logs if `log_dir` is provided (see
   `IRIS_LOG_DIR` / `IRIS_LOG_PREFIX`)
 """
-function compare_integrators_iris_mission(; 
+function compare_integrators_iris_mission(;
     # Recording control
     recording_in::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_RECORD_IN"),
     recording_out::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_RECORD_OUT"),
@@ -345,7 +350,8 @@ function compare_integrators_iris_mission(;
     # Solver sweep
     solvers = begin
         s = _env_or_nothing("IRIS_SWEEP_SOLVERS")
-        s === nothing ? [:RK4, :RK23, :RK45] : [Symbol(strip(x)) for x in split(s, ',') if !isempty(strip(x))]
+        s === nothing ? [:RK4, :RK23, :RK45] :
+        [Symbol(strip(x)) for x in split(s, ',') if !isempty(strip(x))]
     end,
     # Timeline + mission
     t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
@@ -388,7 +394,9 @@ function compare_integrators_iris_mission(;
     end
 
     println("Iris integrator compare (record + replay)")
-    println("  t_end=$(t_end_s)s, dt_ap=$(dt_autopilot_s)s, dt_wind=$(dt_wind_s)s, dt_log=$(dt_log_s)s")
+    println(
+        "  t_end=$(t_end_s)s, dt_ap=$(dt_autopilot_s)s, dt_wind=$(dt_wind_s)s, dt_log=$(dt_log_s)s",
+    )
     println("  solvers: ", join(string.(solvers), ", "))
     log_dir === nothing || println("  log_dir: $(log_dir)")
 
@@ -401,10 +409,13 @@ function compare_integrators_iris_mission(;
     #
     # To make the default UX sane, we default `record_integrator` to a fresh copy of
     # `reference_integrator` (unless the caller explicitly overrides it).
-    record_integrator_eff = record_integrator === nothing ? deepcopy(reference_integrator) : deepcopy(record_integrator)
+    record_integrator_eff =
+        record_integrator === nothing ? deepcopy(reference_integrator) :
+        deepcopy(record_integrator)
     Integrators.reset!(record_integrator_eff)
     if recording_in === nothing
-        record_integrator === nothing && println("  record_integrator: (default) deepcopy(reference_integrator)")
+        record_integrator === nothing &&
+            println("  record_integrator: (default) deepcopy(reference_integrator)")
     end
 
     # Acquire recording.

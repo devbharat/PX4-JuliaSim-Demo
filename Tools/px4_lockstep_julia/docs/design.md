@@ -47,6 +47,19 @@ either become thin wrappers or are removed.
 
 See `docs/engine_unification.md` and `docs/engine_unification_todo.md`.
 
+### Verification Strategy
+
+Verification is treated as a first-class design concern:
+
+* **Tier 1**: analytic/invariant unit tests (fast, always-on)
+* **Tier 2**: full-plant contract tests (frames/sign/coupling checks; still fast)
+* **Tier 3**: optional system regression (record/replay + solver envelope)
+
+See:
+
+* `docs/verification_plan.md` (canonical plan)
+* `docs/verification_todo.md` (implementation progress)
+
 ### Full-Plant State for Adaptive Integration
 
 Adaptive solvers require a single continuous state that captures actuator outputs, rotor

@@ -142,7 +142,8 @@ const CSV_LOG_SCHEMA = LogSchema(
 csv_schema() = CSV_LOG_SCHEMA
 
 """Return the CSV header line (comma-separated column names)."""
-csv_header_line(schema::LogSchema = CSV_LOG_SCHEMA) = join((c.name for c in schema.columns), ",")
+csv_header_line(schema::LogSchema = CSV_LOG_SCHEMA) =
+    join((c.name for c in schema.columns), ",")
 
 """Write CSV header comments + column header line.
 

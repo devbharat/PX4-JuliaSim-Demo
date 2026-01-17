@@ -733,11 +733,7 @@ end
 # RHS functor
 ############################
 
-function (f::CoupledMultirotorModel)(
-    t::Float64,
-    x::PlantState{N},
-    u::PlantInput,
-) where {N}
+function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput) where {N}
     # Actuator dynamics (pure; no mutation of actuator model objects).
     my_dot, mydot_dot =
         _actuator_derivs(f.motor_actuators, x.motors_y, x.motors_ydot, u.cmd.motors)
@@ -863,7 +859,11 @@ published command at the tick boundary.
 
 For non-direct actuators, this is a no-op.
 """
-function plant_on_autopilot_tick(f::CoupledMultirotorModel, x::PlantState{N}, cmd::ActuatorCommand) where {N}
+function plant_on_autopilot_tick(
+    f::CoupledMultirotorModel,
+    x::PlantState{N},
+    cmd::ActuatorCommand,
+) where {N}
     x2 = x
 
     if f.motor_actuators isa Vehicles.DirectActuators

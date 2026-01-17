@@ -24,6 +24,17 @@ function (f::CmdAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plan
     )
 end
 
+"""A trivial open-loop autopilot source used to record commands."""
+mutable struct ConstantMotorAutopilotSource
+    cmd::Sim.Vehicles.ActuatorCommand
+end
+
+function RT.update!(src::ConstantMotorAutopilotSource, bus::RT.SimBus, plant, t_us::UInt64)
+    bus.cmd = src.cmd
+    return nothing
+end
+
+
 
 @testset "Runtime.Engine: replay integration matches analytic" begin
     # 0.1s run, autopilot is the densest axis so evt == ap (piecewise-constant inputs).
@@ -236,6 +247,134 @@ end
 end
 
 
+
+@testset "Record/replay equivalence at log ticks (Tier0)" begin
+    # Record a short open-loop full-plant run, save/load the Tier0 recording, then replay the
+    # recorded inputs and assert that the logged plant states match at every log tick.
+
+    veh = Sim.iris_default_vehicle()
+    env = Sim.iris_default_env_replay()
+    battery = Sim.iris_default_battery()
+    contact = Sim.Contacts.NoContact()
+
+    model = Sim.PlantModels.CoupledMultirotorModel(
+        veh.model,
+        env,
+        contact,
+        veh.motor_actuators,
+        veh.servo_actuators,
+        veh.propulsion,
+        battery,
+    )
+
+    rb0 = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(0.0, 0.0, -10.0))
+    plant0 = Sim.Plant.init_plant_state(
+        rb0,
+        veh.motor_actuators,
+        veh.servo_actuators,
+        veh.propulsion,
+        battery,
+    )
+
+    t_end_us = UInt64(50_000)
+    tl = RT.build_timeline(
+        UInt64(0),
+        t_end_us;
+        dt_ap_us = UInt64(2_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    # Constant motor duty command on the first 4 channels (rest unused).
+    motors = SVector{12, Float64}(0.55, 0.55, 0.55, 0.55, 0, 0, 0, 0, 0, 0, 0, 0)
+    servos = SVector{8, Float64}(0, 0, 0, 0, 0, 0, 0, 0)
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
+
+    ap_live = ConstantMotorAutopilotSource(cmd)
+
+    # A simple constant wind trace for record mode (all zeros).
+    wind_vals = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in tl.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(tl.wind, wind_vals)
+    wind_live = Sim.Sources.ReplayWindSource(wind_tr)
+
+    scenario = Sim.Sources.NullScenarioSource()
+    estimator = Sim.Sources.NullEstimatorSource()
+
+    integ = Sim.Integrators.RK4Integrator()
+
+    # --- Record ---
+    rec1 = REC.InMemoryRecorder()
+    sim1 = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false);
+        timeline = tl,
+        bus = RT.SimBus(time_us = UInt64(0)),
+        plant0 = plant0,
+        dynfun = model,
+        integrator = integ,
+        autopilot = ap_live,
+        wind = wind_live,
+        scenario = scenario,
+        estimator = estimator,
+        recorder = rec1,
+    )
+
+    RT.run!(sim1)
+    REC.finalize!(rec1)
+
+    tier0 = REC.Tier0Recording(recorder = rec1, timeline = tl, plant0 = plant0)
+    REC.validate_recording(tier0)
+
+    # Persist and reload (exercises schema + I/O path).
+    mktemp() do path, io
+        close(io)
+        REC.save_recording(path, tier0)
+        tier0_loaded = REC.load_recording(path)
+        REC.validate_recording(tier0_loaded)
+
+        # Build replay sources from the loaded recording.
+        tr = REC.tier0_traces(tier0_loaded.recorder, tier0_loaded.timeline)
+        scn = REC.scenario_traces(tier0_loaded.recorder, tier0_loaded.timeline)
+
+        ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
+        wind_replay = Sim.Sources.ReplayWindSource(tr.wind_ned)
+        scenario_replay = Sim.Sources.ReplayScenarioSource(scn.ap_cmd, scn.landed, scn.faults)
+
+        # --- Replay (record again so we can compare traces) ---
+        rec2 = REC.InMemoryRecorder()
+        sim2 = RT.Engine(
+            RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false);
+            timeline = tl,
+            bus = RT.SimBus(time_us = UInt64(0)),
+            plant0 = plant0,
+            dynfun = model,
+            integrator = integ,
+            autopilot = ap_replay,
+            wind = wind_replay,
+            scenario = scenario_replay,
+            estimator = estimator,
+            recorder = rec2,
+        )
+
+        RT.run!(sim2)
+        REC.finalize!(rec2)
+
+        tr2 = REC.tier0_traces(rec2, tl)
+
+        # Compare the logged plant state at every log tick.
+        V = Sim.Verification
+        @test length(tr.plant.data) == length(tr2.plant.data)
+        for i in eachindex(tr.plant.data)
+            e = V.plant_error(tr.plant.data[i], tr2.plant.data[i])
+            @test e.pos <= 1e-12
+            @test e.vel <= 1e-12
+            @test e.att_rad <= 1e-12
+            @test e.ω <= 1e-12
+            @test e.rotor <= 1e-12
+            @test e.soc <= 1e-15
+            @test e.v1 <= 1e-12
+        end
+    end
+end
 @testset "Recording.load_recording enforces schema version" begin
     timeline = RT.build_timeline(UInt64(0), UInt64(1_000);
         dt_ap_us = UInt64(1_000),

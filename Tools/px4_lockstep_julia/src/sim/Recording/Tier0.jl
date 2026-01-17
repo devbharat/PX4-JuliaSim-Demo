@@ -192,7 +192,7 @@ end
     isempty(t) && error("Timeline axis $(axis.name) is empty")
     # Strictly increasing, since axes represent event boundaries.
     for i = 2:length(t)
-        t[i] > t[i - 1] || error(
+        t[i] > t[i-1] || error(
             "Timeline axis $(axis.name) is not strictly increasing at i=$i: $(t[i-1]) -> $(t[i])",
         )
     end

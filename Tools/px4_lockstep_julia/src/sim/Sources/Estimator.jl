@@ -68,7 +68,11 @@ struct LiveEstimatorSource{E,R} <: AbstractEstimatorSource
     rng::R
     dt_est_s::Float64
 
-    function LiveEstimatorSource(est::E, rng::R, dt_est_s::Real) where {E<:AbstractEstimator,R}
+    function LiveEstimatorSource(
+        est::E,
+        rng::R,
+        dt_est_s::Real,
+    ) where {E<:AbstractEstimator,R}
         return new{E,R}(est, rng, Float64(dt_est_s))
     end
 end
@@ -84,6 +88,4 @@ function update!(src::LiveEstimatorSource, bus::SimBus, plant_state, t_us::UInt6
 end
 
 export AbstractEstimatorSource,
-    NullEstimatorSource,
-    ReplayEstimatorSource,
-    LiveEstimatorSource
+    NullEstimatorSource, ReplayEstimatorSource, LiveEstimatorSource

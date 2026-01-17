@@ -22,11 +22,8 @@ using StaticArrays
 
 import ..LockstepConfig
 
-const IRIS_DEFAULT_HOME = Autopilots.HomeLocation(
-    lat_deg = 47.397742,
-    lon_deg = 8.545594,
-    alt_msl_m = 488.0,
-)
+const IRIS_DEFAULT_HOME =
+    Autopilots.HomeLocation(lat_deg = 47.397742, lon_deg = 8.545594, alt_msl_m = 488.0)
 
 """Return a default home location (used for local NED origin)."""
 iris_default_home() = IRIS_DEFAULT_HOME
@@ -155,7 +152,12 @@ function iris_default_estimator(dt_ap_s::Float64)
 end
 
 """Build the coupled multirotor plant model used by the canonical engine."""
-function iris_dynfun(env, vehicle::Vehicles.VehicleInstance, battery; contact = Contacts.NoContact())
+function iris_dynfun(
+    env,
+    vehicle::Vehicles.VehicleInstance,
+    battery;
+    contact = Contacts.NoContact(),
+)
     return PlantModels.CoupledMultirotorModel(
         vehicle.model,
         env,
@@ -205,7 +207,7 @@ function iris_integrator(name::Symbol)
 end
 
 """Create a canonical timeline for Iris workflows."""
-function iris_timeline(; 
+function iris_timeline(;
     t_end_s::Float64,
     dt_autopilot_s::Float64,
     dt_wind_s::Float64,
@@ -241,7 +243,7 @@ Modes
 
 This is intended as the go-to user workflow.
 """
-function simulate_iris_mission(; 
+function simulate_iris_mission(;
     mode::Symbol = :live,
     mission_path::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_MISSION", nothing),
     libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
@@ -263,7 +265,8 @@ function simulate_iris_mission(;
     integ = integrator isa Symbol ? iris_integrator(integrator) : integrator
 
     if mode === :replay
-        recording_in === nothing && error("simulate_iris_mission(mode=:replay) requires recording_in")
+        recording_in === nothing &&
+            error("simulate_iris_mission(mode=:replay) requires recording_in")
         rec = Recording.load_recording(recording_in)
 
         # Replay sources
@@ -307,7 +310,8 @@ function simulate_iris_mission(;
     end
 
     # Live or record uses PX4.
-    mission_path === nothing && error("No mission file provided (set mission_path or PX4_LOCKSTEP_MISSION)")
+    mission_path === nothing &&
+        error("No mission file provided (set mission_path or PX4_LOCKSTEP_MISSION)")
 
     # Build environment, vehicle, components.
     env = iris_default_env_live(home = home)
@@ -317,12 +321,23 @@ function simulate_iris_mission(;
     estimator_obj = iris_default_estimator(dt_autopilot_s)
     dynfun = iris_dynfun(env, vehicle, battery; contact = contact)
 
-    scenario_src = Sources.LiveScenarioSource(scenario_obj; env = env, vehicle = vehicle, battery = battery)
+    scenario_src = Sources.LiveScenarioSource(
+        scenario_obj;
+        env = env,
+        vehicle = vehicle,
+        battery = battery,
+    )
     wind_src = Sources.LiveWindSource(env.wind, Random.Xoshiro(seed), dt_wind_s)
-    est_src = Sources.LiveEstimatorSource(estimator_obj, Random.Xoshiro(seed + 1), dt_autopilot_s)
+    est_src =
+        Sources.LiveEstimatorSource(estimator_obj, Random.Xoshiro(seed + 1), dt_autopilot_s)
 
     # Autopilot (PX4) initialization.
-    ap = Autopilots.init!(; config = lockstep_config, libpath = libpath, home = home, edge_trigger = false)
+    ap = Autopilots.init!(;
+        config = lockstep_config,
+        libpath = libpath,
+        home = home,
+        edge_trigger = false,
+    )
     try
         Autopilots.load_mission!(ap, mission_path)
         autopilot_src = Sources.LiveAutopilotSource(ap)
@@ -367,10 +382,7 @@ function simulate_iris_mission(;
                 timeline = timeline,
                 plant0 = plant0,
                 recorder = rec_sink,
-                meta = Dict{Symbol,Any}(
-                    :home => home,
-                    :mission => mission_path,
-                ),
+                meta = Dict{Symbol,Any}(:home => home, :mission => mission_path),
             )
 
             if recording_out !== nothing

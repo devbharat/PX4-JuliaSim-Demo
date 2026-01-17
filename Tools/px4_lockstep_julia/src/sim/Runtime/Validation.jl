@@ -12,7 +12,7 @@ Design goals
 - Must be cheap enough to run by default in tests
 - Must be disableable in production runs
 
-NOTE
+Note
 ----
 This module intentionally does *not* attempt to detect RNG use inside the plant
 RHS; Julia does not provide a clean, low-overhead global hook for that.

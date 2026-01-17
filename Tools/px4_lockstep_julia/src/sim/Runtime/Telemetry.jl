@@ -7,10 +7,9 @@ Why this exists
 It is common to want additional "derived" quantities or side-channel reporting
 without perturbing simulation semantics (and therefore determinism).
 
-Instead of letting ad-hoc code sprinkle callbacks into the engine, we model
-telemetry as an **explicit boundary stage** (`:telemetry`) in the canonical stage
-order. The stage is always present, but is a no-op unless a telemetry sink is
-provided.
+Telemetry is modeled as an **explicit boundary stage** (`:telemetry`) in the
+canonical stage order to keep the engine deterministic and auditable. The stage
+is always present, but is a no-op unless a telemetry sink is provided.
 
 Determinism contract
 --------------------
@@ -25,9 +24,8 @@ They are intended for:
 - debug printing
 - mirroring state into external buffers
 
-If you need a hook that *does* affect the simulation, it should be expressed as a
-bus-level signal published by a Source (scenario/wind/estimator/autopilot), not as
-telemetry.
+Hooks that affect simulation state should be expressed as bus-level signals
+published by a Source (scenario/wind/estimator/autopilot), not as telemetry.
 """
 
 abstract type AbstractTelemetrySink end

@@ -113,7 +113,7 @@ end
 
     # Rate limiting semantics:
     # * The legacy discrete model clamps `ydot` after each update.
-    # * In continuous time this is a differential inclusion; we approximate it by:
+    # * In continuous time this is a differential inclusion; it is approximated by:
     #   - computing dynamics using a clamped effective `ydot` (prevents runaway), and
     #   - projecting `ydot` back into bounds after each accepted integration interval
     #     (via `plant_project`).
@@ -362,8 +362,8 @@ end
     # and the Thevenin+R0 bus equation has the analytic solution:
     #   (1 + R0*A) V = V0 - R0*B
     #
-    # We validate the region assumption at the resulting V; if it fails, caller falls back to the
-    # robust region-classified iteration + bisection.
+    # The region assumption is validated at the resulting V; if it fails, the caller falls back
+    # to the robust region-classified iteration + bisection.
     A = 0.0
     B = 0.0
     any_active = false
@@ -413,7 +413,7 @@ end
         Imax = motor.max_current_a
 
         I_lin = (d * V - Ke * ω[i]) / R
-        # Strict inequalities: if we hit the clamp boundaries, the affine model is invalid.
+        # Strict inequalities: if the clamp boundaries are hit, the affine model is invalid.
         if !(I_lin > 0.0 && I_lin < Imax)
             return nothing
         end
@@ -425,7 +425,7 @@ end
 
 """Solve the bus voltage V_bus for the instantaneous (ω, duty, SOC, V1) state.
 
-We solve the scalar fixed point implied by the Thevenin+R0 model:
+The solver computes the scalar fixed point implied by the Thevenin+R0 model:
 
     V = max(V_min, (OCV - V1) - R0 * I_bus(V))
 
@@ -473,7 +473,8 @@ function _solve_bus_voltage(
         return V_min
     end
 
-    # Fast path: if all active motors remain in the unsaturated linear region, we can solve for V_bus analytically.
+    # Fast path: if all active motors remain in the unsaturated linear region, V_bus can be
+    # solved analytically.
     V_lin = _try_solve_bus_voltage_linear(p, ω, duty, V0, R0, V_min)
     if V_lin !== nothing
         return V_lin

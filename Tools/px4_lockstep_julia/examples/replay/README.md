@@ -5,11 +5,11 @@ These examples exercise the unified simulation runtime:
 - `PX4Lockstep.Sim.Runtime` (one canonical engine)
 - `PX4Lockstep.Sim.Recording` (Tier-0 recorder + traces)
 - `PX4Lockstep.Sim.Sources` (live + replay sources)
-- `PX4Lockstep.Sim.Workflows` ("just run it" wrappers)
+- `PX4Lockstep.Sim.Workflows` (convenience wrappers)
 
 ## Quick start: Iris integrator comparison (recommended)
 
-This is the "clean UX" wrapper:
+This is the streamlined workflow wrapper:
 
 - run a short PX4 lockstep mission **live**
 - **record** Tier-0 streams

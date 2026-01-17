@@ -299,7 +299,7 @@ end
 
 """Construct an engine for a record run.
 
-This constructor is intentionally minimal: you must provide the sources (live or replay)
+This constructor is intentionally minimal: sources (live or replay) must be provided
 explicitly so `Runtime` does not depend on `Sources` or `Recording` modules.
 """
 function plant_record_engine(; kwargs...)

@@ -17,7 +17,7 @@ The primary purpose is to provide:
 
 Notes
 -----
-* All problems are expressed in terms of `RigidBodyState` so we can reuse the
+* All problems are expressed in terms of `RigidBodyState` to reuse the
   production integrators without introducing a separate generic ODE solver.
 * These cases deliberately ignore PX4 and the full vehicle model; they're meant
   to isolate integrator and math correctness.
@@ -116,7 +116,7 @@ end
 
 This is intended as a numerical "truth" for cases without analytic solutions.
 
-You typically pick `dt_ref` small enough that you can resample to the solver's
+Select `dt_ref` small enough to resample to the solver's
 output grid exactly (e.g. `dt_ref = dt_test/10`).
 """
 function rk45_reference(
@@ -509,7 +509,7 @@ end
 
 """Simple harmonic oscillator embedded into `RigidBodyState`.
 
-We store the scalar position in `pos_ned[1]` and velocity in `vel_ned[1]`.
+The scalar position is stored in `pos_ned[1]` and velocity in `vel_ned[1]`.
 All other components are held at zero.
 """
 Base.@kwdef struct SHOCase
@@ -553,7 +553,7 @@ end
 
 """Simple planar pendulum embedded into `RigidBodyState`.
 
-We store the scalar angle `θ` in `pos_ned[1]` and angular rate `θ̇` in `vel_ned[1]`.
+The scalar angle `θ` is stored in `pos_ned[1]` and angular rate `θ̇` in `vel_ned[1]`.
 
 Dynamics:
 
@@ -564,7 +564,7 @@ small angles the approximation reduces to SHO:
 
     θ(t) ≈ θ0 cos(ω t) + (θ̇0/ω) sin(ω t),  ω = √(g/L)
 
-We use this as an analytic check in tests for small-angle initial conditions.
+This is used as an analytic check in tests for small-angle initial conditions.
 """
 Base.@kwdef struct PendulumCase
     g::Float64 = 9.80665

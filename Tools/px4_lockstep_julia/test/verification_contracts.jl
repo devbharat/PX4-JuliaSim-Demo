@@ -97,7 +97,7 @@ end
 
     @testset "OUWind discrete update contract" begin
         # Verify the OU recurrence matches the exact discrete-time update.
-        # We compute the same randn draws with an identical RNG seed to remain stable
+        # The same randn draws are computed with an identical RNG seed to remain stable
         # even if Julia's normal RNG implementation changes.
         rng_seed = 0x12345678
         rng_ref = MersenneTwister(rng_seed)

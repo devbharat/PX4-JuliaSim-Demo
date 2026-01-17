@@ -6,7 +6,7 @@ engines/harnesses. In the target architecture, the single canonical run loop is
 
 Why this exists
 ---------------
-We want multiple engines to be able to query *algebraic* plant outputs at discrete
+Multiple engines may need to query *algebraic* plant outputs at discrete
 event boundaries (battery telemetry, rotor outputs, bus voltage/current, etc.)
 without tightly coupling to a specific engine implementation.
 

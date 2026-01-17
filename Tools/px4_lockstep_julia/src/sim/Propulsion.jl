@@ -40,7 +40,7 @@ export ESCParams,
 
 """ESC model parameters.
 
-We treat the ESC as an ideal PWM stage (DC-DC) with optional efficiency.
+The ESC is modeled as an ideal PWM stage (DC-DC) with optional efficiency.
 
 * `η`      : efficiency (0,1]
 * `deadzone`: duty below which the ESC outputs 0V (helps avoid tiny idle torques)
@@ -77,7 +77,7 @@ end
 
 """Quadratic propeller model parameters.
 
-We model:
+Model:
     T = kT * ρ * ω^2
     Q = kQ * ρ * ω^2
 
@@ -96,7 +96,7 @@ Base.@kwdef struct QuadraticPropParams
     radius_m::Float64 = 0.127
 
     # Inflow sensitivity (dimensionless). 0 disables inflow effects.
-    # We apply a simple correction factor: f = 1/(1 + k*mu^2)
+    # A simple correction factor is applied: f = 1/(1 + k*mu^2)
     # where mu = Vax / (|ω|*R).
     inflow_kT::Float64 = 8.0
     inflow_kQ::Float64 = 8.0
@@ -242,11 +242,11 @@ end
 
 """Solve for a QuadraticPropParams that hits a target thrust at duty=1.
 
-We assume:
+Assumptions:
 * kQ = km_m * kT
 * steady-state ω is from DC motor + quadratic load (closed-form root)
 
-The target is usually set to something like "2× hover thrust" so full throttle has
+The target is typically set to roughly "2× hover thrust" so full throttle has
 headroom.
 """
 function _calibrate_quadratic_prop(

@@ -55,7 +55,7 @@ At each `timeline.log` boundary, the engine:
 1. records Tier-0 signals to the recorder (if one is present)
 2. emits a log entry to each configured log sink
 
-This makes logging usable in *live* runs even when you are not recording a Tier-0 trace.
+This keeps logging usable in *live* runs even when a Tier-0 trace is not recorded.
 
 ### Example: attach a CSV log sink
 

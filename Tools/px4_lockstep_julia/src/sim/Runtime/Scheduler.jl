@@ -23,7 +23,7 @@ Contract
   time on that axis.
 """
 
-# NOTE: `BoundaryEvent` is defined in BoundaryProtocol.jl.
+# Note: `BoundaryEvent` is defined in BoundaryProtocol.jl.
 
 """Stateful scheduler for a `Timeline`."""
 mutable struct Scheduler

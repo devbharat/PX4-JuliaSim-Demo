@@ -85,8 +85,8 @@ event boundaries.
 
 Notes
 -----
-* We intentionally require `t_fire_us > now_us` (strictly in the future). Any events
-  that are due *at* the current time should be handled by calling `step_events!` first.
+* The scheduler requires `t_fire_us > now_us` (strictly in the future). Events that
+  are due *at* the current time should be handled by calling `step_events!` first.
 """
 function next_at_time_us(sched::EventScheduler, now_us::UInt64)::Union{UInt64,Nothing}
     tmin = typemax(UInt64)

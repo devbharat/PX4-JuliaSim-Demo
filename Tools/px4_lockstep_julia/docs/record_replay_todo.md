@@ -1,7 +1,7 @@
 # Record/Replay TODO (living list)
 
-This file is the **authoritative checklist** for the Option A (event-sourced bus) record/replay
-work. Keep it updated as we implement.
+This file is the **authoritative checklist** for the Option A (event-sourced bus)
+record/replay work. Keep it updated as implementation progresses.
 
 Conventions:
 - `[ ]` not started
@@ -21,7 +21,8 @@ Conventions:
 - [x] Add placeholder example scripts under `examples/replay/`
 
 Acceptance criteria:
-- Repo loads with the new module (no runtime errors unless you call TODO functions).
+- The repository loads with the new module (no runtime errors unless TODO functions
+  are called).
 
 ---
 
@@ -144,4 +145,3 @@ Acceptance criteria:
 
 Acceptance criteria:
 - Each component can be replayed independently and matches recorded outputs on the chosen grid.
-

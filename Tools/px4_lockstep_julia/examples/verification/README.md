@@ -19,8 +19,8 @@ julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verif
 
 ## Reference-trajectory comparison (no analytic solution required)
 
-For problems without a convenient analytic time history, you can generate a
-high-accuracy RK45 **reference** trajectory and compare other solvers against it:
+For problems without a convenient analytic time history, generate a high-accuracy
+RK45 **reference** trajectory and compare other solvers against it:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_pendulum_large_angle.jl
@@ -38,8 +38,8 @@ The script also writes a small CSV file for quick plotting.
 
 ## PlantState reference-trajectory comparison (full-plant continuous states)
 
-If you want to exercise adaptive stepping on **non-rigid-body** continuous states
-(e.g., rotor omega and battery SOC/V1) without pulling PX4 into the loop, run:
+To exercise adaptive stepping on **non-rigid-body** continuous states (e.g., rotor
+omega and battery SOC/V1) without involving PX4, run:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_plant_sho_rotor_battery.jl

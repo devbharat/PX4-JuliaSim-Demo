@@ -7,7 +7,7 @@ Why this module exists
 The simulator historically expressed failures by mutating model objects in-place
 (e.g. `set_motor_enabled!(...)` or modifying estimator structs). That approach:
 
-* makes **record/replay** brittle (you have to replay mutation side-effects),
+* makes **record/replay** brittle by requiring replay of mutation side effects,
 * increases hidden coupling between subsystems,
 * makes it hard to reason about determinism.
 
@@ -66,9 +66,9 @@ Fields
 
 Notes
 -----
-We intentionally keep this small. If you need richer per-motor failure models
-(thrust loss fraction, stuck throttle, etc.), add those as *separate bus signals*
-so schema evolution is explicit.
+This definition is intentionally compact. For richer per-motor failure models
+(thrust loss fraction, stuck throttle, etc.), add separate bus signals so
+schema evolution is explicit.
 """
 Base.@kwdef struct FaultState
     motor_disable_mask::UInt32 = 0x00000000
@@ -113,7 +113,7 @@ end
 end
 
 # Generic sensor/estimator fault bits.
-# These are deliberately coarse; you can refine per-component later.
+# These are deliberately coarse and can be refined per component later.
 const SENSOR_FAULT_GYRO = UInt64(1) << 0
 const SENSOR_FAULT_ACCEL = UInt64(1) << 1
 const SENSOR_FAULT_MAG = UInt64(1) << 2

@@ -62,8 +62,8 @@ See `Tools/px4_lockstep_julia/scripts/README.md` for setup and usage.
 ## Verification problems (integrator correctness)
 
 This repo includes a small set of deterministic verification problems with analytic
-solutions and/or conserved quantities. These are meant to catch numerical regressions
-and to help you compare solver configurations without needing PX4 in the loop.
+solutions and/or conserved quantities. These are intended to catch numerical regressions
+and enable solver configuration comparisons without requiring PX4 in the loop.
 
 Run them from the repo root:
 
@@ -91,8 +91,8 @@ Format Julia source:
 julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
 ```
 
-Run Aqua checks (project hygiene + method ambiguities). We disable `stale_deps` because
-tooling packages are kept as direct deps for convenience:
+Run Aqua checks (project hygiene + method ambiguities). The `stale_deps` check is
+disabled because tooling packages are kept as direct dependencies for convenience:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep; stale_deps=false)'
@@ -163,7 +163,7 @@ The simulator is event-driven. You configure cadences via a `Sim.Runtime.Timelin
 - `ap` axis: PX4 lockstep ticks
 - `wind` axis: wind sample-and-hold updates
 - `log` axis: logging samples
-- optional `phys` axis: fixed physics step boundaries (if you want strict fixed-step integration)
+- optional `phys` axis: fixed physics step boundaries (for strict fixed-step integration)
 
 Example:
 

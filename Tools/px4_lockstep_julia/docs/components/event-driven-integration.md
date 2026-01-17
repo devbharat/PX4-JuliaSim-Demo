@@ -16,7 +16,7 @@ wind, scenario, logging) while preserving determinism.
   scheduled as boundaries for deterministic snapshots.
 - **Optional fixed-step physics boundaries:** the timeline supports an optional
   `timeline.phys` axis. When present, its ticks are included in the global event union
-  so you can force a fixed integration step size (e.g. to emulate a fixed-step
+  to enforce a fixed integration step size (e.g. to emulate a fixed-step
   simulator) while still stepping PX4 at its own cadence.
 - **Microsecond clock:** all schedules use integer microseconds (`UInt64`) to align
   with lockstep time and avoid floating-point drift.

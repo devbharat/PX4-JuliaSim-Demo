@@ -21,8 +21,8 @@ Add `--show` to open an interactive window.
 
 ## Integrator comparison plots
 
-If you run the integrator comparison with replay logs enabled (`IRIS_LOG_DIR`), you
-can generate summary + trajectory/error plots:
+If the integrator comparison is run with replay logs enabled (`IRIS_LOG_DIR`),
+summary and trajectory/error plots can be generated:
 
 ```bash
 python Tools/px4_lockstep_julia/scripts/plot_integrator_compare.py \

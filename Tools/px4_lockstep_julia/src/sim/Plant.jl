@@ -8,9 +8,9 @@ The existing sim loop updates several subsystems *discretely* once per physics t
 (actuators, propulsion rotor speed, battery polarization), while integrating only the
 rigid body with an ODE solver.
 
-To support a **full-fledged variable-step integrator**, we need a single “plant state”
-containing *all* continuous states so that adaptive solvers can control error across the
-whole plant, not just the rigid body.
+To support a **full-fledged variable-step integrator**, a single “plant state”
+containing *all* continuous states is required so adaptive solvers can control error
+across the whole plant, not only the rigid body.
 
 This module provides:
   * A `PlantState` and `PlantDeriv` data model suitable for allocation-free integration.
@@ -25,8 +25,8 @@ Design constraints
 * Determinism: ODE RHS evaluation must be a **pure** function of (t, x, u) with no RNG.
 * Inputs are piecewise constant between discrete event boundaries (autopilot, wind,
   failures). Adaptive substeps must never touch RNG or mutate shared state.
-* Keep compatibility while migrating: the sim can still own "legacy" mutable objects,
-  but those should be treated as *parameters* + a mirrored copy of the integrated state.
+* Maintain compatibility while migrating: legacy mutable objects may remain, but they
+  should be treated as parameters plus a mirrored copy of the integrated state.
 
 This file focuses on shared plant data structures and helper math; coupled dynamics are
 implemented in `PlantModels` (e.g., `PlantModels.CoupledMultirotorModel`).
@@ -145,7 +145,7 @@ end
 
 """Plant input held constant between discrete event boundaries.
 
-This type is intentionally minimal; expand as you implement coupled dynamics.
+This type is intentionally minimal and should be expanded as coupled dynamics are implemented.
 
 Determinism contract:
 * Construct/update `PlantInput` only at *discrete* event times (autopilot tick, wind tick,
@@ -247,7 +247,7 @@ end
     as::NTuple{K,Float64},
 ) where {N,K}
     # Generic linear combination used by adaptive RK methods.
-    # NOTE: keep quaternion normalization to a single normalize at the end (matches `_rb_lincomb`).
+    # Note: keep quaternion normalization to a single normalize at the end (matches `_rb_lincomb`).
 
     # Rigid-body state fields.
     pos = x.rb.pos_ned

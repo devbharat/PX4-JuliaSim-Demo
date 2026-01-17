@@ -36,7 +36,7 @@ It is **not** intended for long missions.
 
 Design
 ------
-We store:
+The recorder stores:
 - `times[name]::Vector{UInt64}`
 - `values[name]::Vector{T}`
 
@@ -170,12 +170,12 @@ function estimator_traces(rec::InMemoryRecorder, timeline::Timeline)
     return (; est)
 end
 
-"""Planned: write recorder contents to a persistent file.
+"""Write recorder contents to a persistent file (planned).
 
-TODO: implement HDF5 backend.
+TODO: implement the HDF5 backend.
 """
 function write_recording(::AbstractRecorder, ::AbstractString)
-    error("TODO: write_recording is not implemented yet (planned HDF5 backend)")
+    error("write_recording is not implemented yet (planned HDF5 backend)")
 end
 
 export AbstractRecorder, NullRecorder, InMemoryRecorder

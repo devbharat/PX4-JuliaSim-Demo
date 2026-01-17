@@ -67,7 +67,7 @@ This is a *contract test*, not a long simulation.
   velocities.
 * Choose a rotor ω state (or duty) that gives **exactly** `T_total = m*g`.
 
-  * You can compute this either with a quick root solve on ω using your own prop model
+  * This can be computed with a quick root solve on ω using the prop model
     (`prop_thrust ~ kT ρ ω²`), or by using the calibrated “2× hover thrust at duty=1”
     relationship to find a duty in-range.
 
@@ -105,7 +105,7 @@ This is a *contract test*, not a long simulation.
   * yaw torque equals the sum of rotor reaction torques with `rotor_dir` signs (nonzero
     unless model cancels).
 
-If you don’t want to depend on exact magnitudes, check **sign**:
+If exact magnitudes are not required, check **sign**:
 
 * Flip `rotor_dir` signs → yaw torque should flip sign.
 
@@ -276,8 +276,8 @@ This error stays interpretable and should scale with solver order/tolerances.
 
 **Why this matters**
 
-* This is how you validate solver envelope without the “unstable open-loop drift”
-  confusing the result.
+* This validates solver envelopes without “unstable open-loop drift” confounding
+  the result.
 
 ---
 
@@ -347,12 +347,12 @@ This error stays interpretable and should scale with solver order/tolerances.
 
 ## D. PX4 bridge correctness needs its own verification path
 
-The biggest hidden-risk area that’s not addressed by analytic problems is the **PX4
-interface mapping** (frames, signs, sensor semantics). For that you need either:
+The largest unaddressed risk area is the **PX4 interface mapping** (frames, signs,
+sensor semantics). This requires either:
 
-* A “mock PX4” contract test that asserts what you send is what PX4 expects, OR
+* A “mock PX4” contract test that asserts inputs match PX4 expectations, OR
 * A golden record from PX4 with known conditions (sit on ground, arm, takeoff) and
   verify sensor fields match expectations.
 
-This can live outside unit tests (since it depends on the PX4 C lib), but it should be
-repeatable and automated.
+This can reside outside unit tests (since it depends on the PX4 C library), but it
+should be repeatable and automated.

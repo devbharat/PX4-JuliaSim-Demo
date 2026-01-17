@@ -87,7 +87,7 @@ function main()
 
     println("Replay final pos_x = ", sim.plant.pos_ned[1], "  vel_x = ", sim.plant.vel_ned[1])
 
-    # Record run (using the same replay sources, just to show trace capture + rebuild).
+    # Record run (using the same replay sources to demonstrate trace capture + rebuild).
     rec = Rec.InMemoryRecorder()
     sim2 = RT.plant_record_engine(
         timeline = timeline,

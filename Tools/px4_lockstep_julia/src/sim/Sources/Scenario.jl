@@ -10,7 +10,7 @@ This is the primary place where hybrid-system events enter the sim:
 
 Scheduling
 ----------
-For **live** scenarios with a static scheduler, we can discover `AtTime` events up front.
+For **live** scenarios with a static scheduler, `AtTime` events can be discovered up front.
 These event times should be treated as true engine boundaries (hybrid correctness),
 independent of autopilot rate.
 
@@ -148,7 +148,7 @@ end
 
 """Event times for replay scenario sources.
 
-We treat the replay trace axes as the scenario axes.
+Replay trace axes are used as the scenario axes.
 """
 function event_times_us(src::ReplayScenarioSource, t0_us::UInt64, t_end_us::UInt64)
     ts = vcat(src.ap_cmd.axis.t_us, src.landed.axis.t_us, src.faults.axis.t_us)

@@ -112,8 +112,8 @@ end
 """Create and initialize the PX4 lockstep autopilot.
 
 Only one lockstep handle is supported per process by default. Use
-`allow_multiple_handles=true` at your own risk if you know the PX4
-lockstep runtime is re-entrant.
+`allow_multiple_handles=true` only when the PX4 lockstep runtime is known
+to be re-entrant.
 """
 function init!(;
     config = nothing,

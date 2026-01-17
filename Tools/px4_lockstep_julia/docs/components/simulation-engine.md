@@ -30,7 +30,7 @@ The engine runs in one of three modes:
 
 - **Bus-driven orchestration**: sources publish into `SimBus`; the plant consumes a held `PlantInput` derived from the bus. This is the core mechanism enabling record/replay and independent submodel replay.
 
-- **Fixed-step is a configuration, not a separate engine**: if you want a traditional "physics dt", populate `timeline.phys` with a uniform axis. Those ticks are included in the global boundary union so you get exactly one interval per physics tick while still running PX4/wind/log on their own cadences.
+- **Fixed-step is a configuration, not a separate engine**: if a traditional "physics dt" is required, populate `timeline.phys` with a uniform axis. Those ticks are included in the global boundary union so exactly one interval is integrated per physics tick while PX4/wind/log continue on their own cadences.
 
 ## Integration contracts
 
@@ -41,7 +41,7 @@ The engine runs in one of three modes:
 
 ## Extension points
 
-- **Stage hooks** via `Runtime.Telemetry`: you can run extra deterministic logic in a dedicated stage without changing the canonical ordering.
+- **Stage hooks** via `Runtime.Telemetry`: additional deterministic logic can run in a dedicated stage without changing the canonical ordering.
 - **Recorder backends**: `Recording.InMemoryRecorder` is the default; larger runs can add an HDF5 backend later.
 - **Log sinks**: attach `Sim.Logging.AbstractLogSink` instances via the `log_sinks` kw on `Sim.simulate` / `Runtime.Engine` (e.g. `Sim.Logging.CSVLogSink`).
 

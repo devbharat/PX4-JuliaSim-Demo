@@ -7,7 +7,7 @@ const REC = Sim.Recording
 
 """A minimal deterministic dynamics: x-acceleration from cmd.motors[1].
 
-We use `RigidBodyState` only (attitude/body rates are held constant), so this exercises:
+`RigidBodyState` is used exclusively (attitude/body rates are held constant), so this exercises:
 - event-boundary traversal on `Timeline.evt`
 - ZOH command sampling between autopilot ticks
 - deterministic timeline traversal
@@ -339,7 +339,7 @@ end
         wind_replay = Sim.Sources.ReplayWindSource(tr.wind_ned)
         scenario_replay = Sim.Sources.ReplayScenarioSource(scn.ap_cmd, scn.landed, scn.faults)
 
-        # --- Replay (record again so we can compare traces) ---
+        # --- Replay (record again to compare traces) ---
         rec2 = REC.InMemoryRecorder()
         sim2 = RT.Engine(
             RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false);

@@ -24,7 +24,7 @@ export AbstractLogSink, SimLog, CSVLogSink, close!, log!, write_csv
 export reserve!
 export LogColumn, LogSchema, csv_schema, csv_header_line, write_csv_header
 
-# Bump this when you add/remove/rename columns in the CSV output.
+# Update this when CSV columns are added, removed, or renamed.
 const CSV_SCHEMA_VERSION = 2
 
 ############################
@@ -420,7 +420,7 @@ function log!(
 
     m = cmd.motors
 
-    # Write a single row. We use printf-style formatting for floats to keep file size manageable.
+    # Write a single row. printf-style formatting is used for floats to keep file size manageable.
     @printf(io, "%.6f,", t)
     # truth pos/vel
     @printf(io, "%.6f,%.6f,%.6f,", x.pos_ned[1], x.pos_ned[2], x.pos_ned[3])

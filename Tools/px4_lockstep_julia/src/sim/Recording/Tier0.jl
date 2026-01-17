@@ -153,7 +153,7 @@ function validate_recording(rec::Tier0Recording)
 
     # 3) Required Tier-0 streams
     # These are required for plant replay.
-    # (If you want a "boundary-only" recording, add a separate format.)
+    # If a boundary-only recording is required, add a separate format.
     try
         tier0_traces(rec)
     catch e

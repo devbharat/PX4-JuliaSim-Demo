@@ -7,7 +7,7 @@ lists **who consumes what**. The goal is to make failures:
 * record/replayable,
 * and debuggable (no hidden mutation side-effects).
 
-If you change semantics, update this doc and bump any relevant schema versions.
+When semantics change, update this doc and bump any relevant schema versions.
 
 ---
 
@@ -24,8 +24,8 @@ The bus value is treated as **piecewise constant** between event boundaries:
 
 ### Why this matters
 
-This avoids failure semantics that depend on mutation order or “who happened to update first”.
-It also makes record/replay stable: we replay **fault signals**, not “event side effects”.
+This avoids failure semantics that depend on mutation order or update ordering.
+It also makes record/replay stable by replaying **fault signals**, not “event side effects”.
 
 ---
 
@@ -56,7 +56,7 @@ constraints.
 
 #### Not implemented (explicitly)
 
-If you need these, add them as separate bus-level signals so replay is explicit:
+For these additional fault modes, add separate bus-level signals so replay is explicit:
 
 * rotor jam (ω forced to 0 or locked to body)
 * thrust loss fraction
@@ -151,7 +151,7 @@ Notes:
 ### 3.5 Logging/recording
 
 * `bus.faults` should be recorded as a stream so replays cannot miss transitions.
-* In the current implementation we record `faults_evt` on `timeline.evt` (see below).
+* The current implementation records `faults_evt` on `timeline.evt` (see below).
 
 ---
 
@@ -159,7 +159,7 @@ Notes:
 
 Scenarios can contain dynamic “When(...)” conditions that change faults based on state.
 
-To avoid missing transitions, we record a **fault sample at every event boundary**:
+To avoid missing transitions, a **fault sample is recorded at every event boundary**:
 
 * stream name: `:faults_evt`
 * axis: `timeline.evt`

@@ -320,7 +320,7 @@ end
 
 """Compare integrators for an Iris PX4 waypoint mission with clean UX.
 
-This is the main "just run it" entrypoint for integrator envelope validation.
+This is the primary entrypoint for integrator envelope validation.
 
 Defaults:
 - If `recording_in` is not provided, it records a Tier-0 run using `record_integrator`.
@@ -367,13 +367,13 @@ function compare_integrators_iris_mission(;
     contact = iris_default_contact(),
     # Integrators
     #
-    # NOTE: If you don't explicitly provide `record_integrator`, we default it to a *fresh copy*
-    # of `reference_integrator`.
+    # Note: if `record_integrator` is not provided, a fresh copy of
+    # `reference_integrator` is used.
     #
     # Why: the Tier0 recording is what generates the replayed `:cmd` trace. If that trace is
-    # generated with a different (e.g. lower accuracy) integrator than the reference replay,
-    # you're effectively applying a controller command sequence tuned to a *different plant*
-    # and can see open-loop drift that looks like solver error growth.
+    # generated with a different (for example, lower accuracy) integrator than the reference
+    # replay, the controller command sequence is tuned to a different plant and can produce
+    # open-loop drift that appears as solver error growth.
     record_integrator::Union{Nothing,Integrators.AbstractIntegrator} = nothing,
     reference_integrator::Integrators.AbstractIntegrator = iris_reference_integrator(),
     # Behavior
@@ -400,15 +400,15 @@ function compare_integrators_iris_mission(;
     println("  solvers: ", join(string.(solvers), ", "))
     log_dir === nothing || println("  log_dir: $(log_dir)")
 
-    # If we are recording (PX4 live), ensure the recorded command trace corresponds to the
+    # If recording with PX4 live, ensure the command trace corresponds to the
     # *same reference plant dynamics* used for the replay baseline.
     #
-    # If you record with a different integrator than the reference replay, the resulting
-    # command trace can be slightly "tuned" to the record integrator's trajectory; replaying
-    # open-loop with another integrator can then accumulate drift over long horizons.
+    # If recording uses a different integrator than the reference replay, the command
+    # trace can be tuned to the record integrator trajectory. Replay with a different
+    # integrator can then accumulate drift over long horizons.
     #
-    # To make the default UX sane, we default `record_integrator` to a fresh copy of
-    # `reference_integrator` (unless the caller explicitly overrides it).
+    # To keep the default behavior consistent, `record_integrator` defaults to a fresh
+    # copy of `reference_integrator` unless explicitly overridden.
     record_integrator_eff =
         record_integrator === nothing ? deepcopy(reference_integrator) :
         deepcopy(record_integrator)

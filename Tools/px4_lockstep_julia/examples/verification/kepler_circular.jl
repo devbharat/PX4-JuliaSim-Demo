@@ -7,7 +7,7 @@ const V = Sim.Verification
 
 """Run the circular Kepler orbit reference problem.
 
-We validate invariants (energy, angular momentum) and final-state error against the
+Invariants (energy, angular momentum) and final-state error are checked against the
 closed-form circular orbit solution.
 """
 function main()

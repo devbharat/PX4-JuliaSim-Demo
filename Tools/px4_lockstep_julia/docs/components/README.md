@@ -2,7 +2,7 @@
 
 This directory collects component-level design notes for `PX4Lockstep.jl`.
 
-## TODO
+## Status
 
 - [x] `PX4Lockstep` C ABI wrapper (`src/PX4Lockstep.jl`)
 - [x] Fixed-step semantics via `Sim.Runtime.Engine` + `timeline.phys`

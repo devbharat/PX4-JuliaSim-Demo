@@ -1,6 +1,6 @@
 # Engine Unification TODO
 
-This file tracks remaining integration work to reach a clean “mergeable” state.
+This file tracks remaining integration work required to reach a clean mergeable state.
 
 ## Completed
 

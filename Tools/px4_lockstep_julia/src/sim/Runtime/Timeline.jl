@@ -11,9 +11,9 @@ Scenario `AtTime` events are first-class boundaries: if your scenario intends a 
 occur at exactly `t = 3.275 s`, that time must appear in the event axis even if it does
 not align with `dt_autopilot`.
 
-TODO (future)
--------------
-- Dynamic insertion of boundaries (hybrid systems with `When(...)` that schedules new
+Future work
+-----------
+- Dynamic insertion of boundaries (hybrid systems with `When(...)` that schedule new
   `AtTime` events at runtime).
 """
 
@@ -47,7 +47,7 @@ Fields
 ------
 - `t0_us`, `t_end_us`: inclusive start, inclusive end.
 - `ap`, `wind`, `log`, `scn`: time axes for autopilot, wind, logging, scenario.
-- `phys`: optional fixed-step physics integration axis (may be just endpoints).
+- `phys`: optional fixed-step physics integration axis (may include only endpoints).
 - `evt`: union axis used for integration boundaries.
 
 Notes
@@ -113,7 +113,7 @@ Arguments
 
 Design note
 -----------
-We treat scenario times as first-class boundaries. This is essential for proper
+Scenario times are treated as first-class boundaries. This is essential for proper
 hybrid-system semantics and integrator fairness.
 """
 function build_timeline(

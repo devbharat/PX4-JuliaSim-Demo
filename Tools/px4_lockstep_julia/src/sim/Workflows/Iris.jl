@@ -2,7 +2,7 @@
 
 Goal
 ----
-Provide a **"just run Iris"** experience on top of the canonical engine.
+Provide a turnkey Iris workflow on top of the canonical engine.
 
 These are convenience wrappers around the building blocks in:
 - `Sim.Runtime` (engine + timeline)
@@ -10,11 +10,10 @@ These are convenience wrappers around the building blocks in:
 - `Sim.Recording` (Tier0 recording)
 - `Sim.PlantModels` (full-plant RHS)
 
-They are intentionally opinionated defaults for the common PX4 SITL use-case:
-Iris quadrotor flying a waypoint mission.
+They provide opinionated defaults for the common PX4 SITL use case: an Iris
+quadrotor flying a waypoint mission.
 
-If you need a different vehicle or a bespoke scenario, use `Sim.simulate(...)`
-directly.
+For other vehicles or scenarios, use `Sim.simulate(...)` directly.
 """
 
 using Random
@@ -91,8 +90,8 @@ end
 
 """Build a default Thevenin battery model for Iris."""
 function iris_default_battery()
-    # 3S LiPo-ish defaults. These are not meant to be a perfect pack model, just a
-    # reasonable closed-loop SITL battery.
+    # 3S LiPo-style defaults. These are intended as a reasonable closed-loop SITL
+    # battery model, not a calibrated pack representation.
     return Powertrain.TheveninBattery(
         capacity_ah = 5.0,
         soc0 = 1.0,
@@ -111,7 +110,7 @@ end
 """Build a default contact model for Iris workflows.
 
 Default is flat-ground penalty contact so missions that start on the ground do not
-free-fall before takeoff. Pass `Contacts.NoContact()` if you want pure flight.
+free-fall before takeoff. Use `Contacts.NoContact()` for pure flight.
 """
 function iris_default_contact()
     return Contacts.FlatGroundContact()
@@ -237,7 +236,7 @@ end
 
 Modes
 -----
-- `mode=:live`   : step PX4 live (no recording unless you pass a recorder)
+- `mode=:live`   : step PX4 live (no recording unless a recorder is provided)
 - `mode=:record` : live PX4 + in-memory recorder, returns a `Tier0Recording`
 - `mode=:replay` : replay from a Tier0Recording (or path) with deterministic sources
 

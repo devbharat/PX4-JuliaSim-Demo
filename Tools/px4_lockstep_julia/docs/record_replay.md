@@ -114,7 +114,7 @@ Examples:
 - rigid-body dynamics
 
 **Note:** for the “full-plant variable-step” system, the canonical continuous state is
-`PlantState` (already exists).
+`PlantState`.
 
 ### 2.3 Scheduler / Timeline
 
@@ -170,11 +170,11 @@ Interpolation rules are stream-specific and explicit:
 
 ### 3.2 Record tiers
 
-We explicitly support tiers to prevent trace bloat.
+Tiered recordings are supported to prevent trace bloat.
 
 #### Tier 0: Integrator comparison (default goal)
 
-Record just enough to replay the plant deterministically:
+Record the minimum required to replay the plant deterministically:
 
 - timeline axes `T_ap_us`, `T_wind_us`, `T_log_us`, `T_scn_us`, `T_phys_us`, `T_evt_us`
 - `cmd` on `T_ap_us`
@@ -245,12 +245,13 @@ This isolates plant integration error from controller divergence.
 
 The record/replay API should support a simple in-memory recorder for tests.
 
-For lightweight persistence and sharing, we also provide a minimal `Tier0Recording`
-container that can be saved/loaded via Julia's built-in `Serialization` (no extra
-deps). Tier‑0 files serialize a deterministic, ordered representation of streams so
-recordings are byte‑stable across runs when inputs are identical.
+For lightweight persistence and sharing, the repository provides a minimal
+`Tier0Recording` container that can be saved/loaded via Julia's built-in
+`Serialization` (no extra dependencies). Tier‑0 files serialize a deterministic,
+ordered representation of streams so recordings are byte‑stable across runs when
+inputs are identical.
 
-For real runs, we expect HDF5.
+For production runs, an HDF5 backend is expected.
 
 ### 5.2 HDF5 layout (proposed)
 
@@ -325,7 +326,7 @@ Chunking: chunk along time dimension; compression on.
 
 ## 7. Design choices (explicit)
 
-- We prefer **clarity** over minimal changes. Backward compatibility is not a hard constraint.
-- We avoid recording at adaptive substep resolution by default.
-- We choose explicit stream interpolation rules (no implicit “nearest sample”).
-- We keep component boundaries explicit so submodels can be replayed independently.
+- Design choices prioritize **clarity** over minimal changes. Backward compatibility is not a hard constraint.
+- Recording at adaptive substep resolution is avoided by default.
+- Stream interpolation rules are explicit (no implicit “nearest sample”).
+- Component boundaries remain explicit so submodels can be replayed independently.

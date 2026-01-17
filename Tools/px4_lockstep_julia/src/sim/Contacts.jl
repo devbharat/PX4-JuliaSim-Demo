@@ -9,8 +9,8 @@ The long-term roadmap includes terrain and touchdown modeling. This module provi
 * stable with fixed-step RK integration
 * optional (NoContact by default)
 
-We keep the interface intentionally small: contact returns an external force in the
-world/NED frame that the simulation adds to the rigid-body translational dynamics.
+The interface is intentionally minimal: contact returns an external force in the
+world/NED frame that is added to the rigid-body translational dynamics.
 
 Future extensions:
 * contact points (landing gear), producing both force and moment

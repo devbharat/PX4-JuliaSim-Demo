@@ -27,7 +27,7 @@ This API is the intended replacement.
 
 import Base.CoreLogging: @warn
 
-# NOTE: This file is included into `module Sim`, so these are `PX4Lockstep.Sim.*` symbols.
+# Note: This file is included into `module Sim`, so these are `PX4Lockstep.Sim.*` symbols.
 
 """Build and run the canonical engine.
 
@@ -157,11 +157,11 @@ record_live_px4(; kwargs...) = simulate(; mode = :record, kwargs...)
 """Convenience wrapper: replay run."""
 replay_recording(; kwargs...) = simulate(; mode = :replay, kwargs...)
 
-# TODO (Phase 4 UX): provide a true `replay_recording(path_or_recording; ...)` that:
+# TODO (Phase 4 UX): provide `replay_recording(path_or_recording; ...)` that:
 # - loads a Tier0Recording
 # - constructs replay sources automatically
 # - runs the engine
-# - returns an Engine + comparison summary
+# - returns an Engine and comparison summary
 
 
 """Generic integrator comparison on a Tier-0 recording.
@@ -178,7 +178,7 @@ Typical use:
         make_integrator = Sim.iris_integrator,
     )
 
-For an end-to-end "just run Iris" workflow (record + replay sweep), see
+For an end-to-end Iris workflow (record + replay sweep), see
 `compare_integrators_iris_mission`.
 """
 compare_integrators(; kwargs...) = compare_integrators_recording(; kwargs...)

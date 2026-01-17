@@ -220,7 +220,7 @@ function estimate!(
     e.ring[e.idx] = cur
     e.filled = min(length(e.ring), e.filled + 1)
 
-    # Delayed index relative to the just-written slot.
+    # Delayed index relative to the most recently written slot.
     di = e.idx - e.delay_steps
     if di <= 0
         di += length(e.ring)

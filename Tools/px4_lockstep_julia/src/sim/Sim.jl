@@ -63,7 +63,7 @@ include("Sources/Sources.jl")
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")
 
-# Convenience workflows (Iris mission "just run" wrappers).
+# Convenience workflows (Iris mission wrapper helpers).
 include("Workflows/Iris.jl")
 include("Workflows/CompareIntegrators.jl")
 

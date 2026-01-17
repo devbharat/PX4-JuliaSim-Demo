@@ -71,7 +71,7 @@ anywhere else.
 
 ## Fixed-step semantics
 
-If you want a traditional fixed physics dt (for example to match an older simulator),
+If a traditional fixed physics dt is required (for example to match an older simulator),
 set `timeline.phys` to a uniform axis. Those ticks are included in the global boundary
 union, so the engine performs exactly one integration interval per physics tick.
 

@@ -100,8 +100,8 @@ logic inside plant models.
 
 ## Fixed-step configuration
 
-There is no separate "fixed-step engine" anymore. If you want a traditional fixed
-physics step (for example to match an older simulator or to run simple regressions),
+There is no separate "fixed-step engine". If a traditional fixed physics step is
+required (for example to match an older simulator or to run simple regressions),
 configure the canonical engine with a physics axis:
 
 - populate `timeline.phys` with a uniform `0:dt_phys:t_end` microsecond-quantized axis

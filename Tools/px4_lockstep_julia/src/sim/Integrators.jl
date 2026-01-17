@@ -368,9 +368,8 @@ To preserve legacy behavior, all of these are **ignored by default** because:
 * the corresponding absolute tolerances default to `Inf`.
 
 Design intent:
-* If you care about full-plant accuracy, set finite `atol_*` (and optional `rtol_*`).
-* If you only care about rigid-body accuracy (typical for many flight-control sims),
-  leave the defaults.
+* For full-plant accuracy, set finite `atol_*` (and optional `rtol_*`).
+* For rigid-body accuracy (typical for many flight-control simulations), leave the defaults.
 """
 @inline function _err_norm(
     i::Union{RK23Integrator,RK45Integrator},
@@ -493,7 +492,7 @@ end
     # Clamp to remaining time and explicit bounds.
     h = min(h, remaining)
     h = min(h, i.h_max)
-    # Allow the *final* substep to be smaller than h_min so we don't overshoot
+    # Allow the *final* substep to be smaller than h_min to avoid overshooting
     # the requested interval when `remaining < h_min`.
     if remaining >= i.h_min
         h = max(h, i.h_min)
@@ -515,8 +514,8 @@ end
 
 @inline function _snap_remaining(i, remaining::Float64)::Float64
     # When quantizing to microseconds, floating-point subtraction can leave a tiny positive
-    # `remaining` (e.g., 5e-20) after an ostensibly exact final step. If we loop on that,
-    # `_clamp_step` will quantize it to 1 µs and we overshoot the interval.
+    # `remaining` (e.g., 5e-20) after an ostensibly exact final step. If the loop continues,
+    # `_clamp_step` will quantize it to 1 µs and the interval would be overshot.
     #
     # Snap remaining to the nearest microsecond grid and clamp to [0, ∞).
     if i.quantize_us
@@ -799,7 +798,7 @@ plant state.
 Implementation note:
 * The default `_err_norm(::PlantState, ...)` delegates to the rigid-body error norm.
   This avoids the common failure mode where rotor ω dominates the scale and forces tiny
-  steps. Once the coupled dynamics are implemented, you can extend `_err_norm` with
+  steps. Once the coupled dynamics are implemented, `_err_norm` can be extended with
   rotor/battery/actuator tolerances.
 """
 function step_integrator(

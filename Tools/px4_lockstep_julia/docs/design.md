@@ -32,18 +32,20 @@ layer so they can evolve without ABI risk.
 
 ## Core Architectural Decisions
 
-### Execution Engines
+### Execution Engine
 
-- **Fixed-step engine (`Simulation.jl`):** deterministic lockstep loop that integrates
-  rigid-body dynamics while stepping actuators/propulsion/battery discretely.
-- **Event-driven plant engine (`PlantSimulation.jl`):** integrates a coupled full-plant
-  state between discrete event boundaries to enable adaptive solvers.
-- **Record/replay bus engine (`RecordReplay.BusEngine`):** drives a plant from a typed
-  signal bus and event timeline, enabling deterministic recording and replay.
+Historically, the codebase accumulated multiple "engines" with overlapping
+responsibilities.
 
-The fixed-step engine remains the baseline for PX4 regressions. The event-driven plant
-engine and bus engine are used to validate adaptive solvers and perform integrator
-comparisons using recorded inputs.
+This is being refactored to converge on **one canonical engine**:
+
+- **Canonical engine (`Sim.Runtime.Engine`)**: bus-driven hybrid engine that supports
+  live PX4-in-the-loop, recording, and replay.
+
+The goal is that only `Sim.Runtime.Engine` contains a real run loop. Legacy harnesses
+either become thin wrappers or are removed.
+
+See `docs/engine_unification.md` and `docs/engine_unification_todo.md`.
 
 ### Full-Plant State for Adaptive Integration
 
@@ -83,38 +85,45 @@ algebraic outputs (battery telemetry, rotor outputs) at boundary times. Engines 
 this hook to keep battery injection and logs deterministic without embedding engine
 logic inside plant models.
 
-## Execution Model (Fixed-Step Engine)
+## Fixed-step configuration
 
-1. Snapshot the pre-step state for logging.
-2. Step wind/turbulence and evaluate the scenario.
-3. Sample wind once per tick and, on the autopilot cadence, run estimator → PX4.
-4. Apply actuator dynamics and propulsion, then integrate the rigid body.
-5. Update the battery and log the pre-step snapshot on the log cadence.
+There is no separate "fixed-step engine" anymore. If you want a traditional fixed
+physics step (for example to match an older simulator or to run simple regressions),
+configure the canonical engine with a physics axis:
 
-The fixed-step engine is the default for lockstep regression testing.
+- populate `timeline.phys` with a uniform `0:dt_phys:t_end` microsecond-quantized axis
+- choose a fixed-step integrator (Euler or RK4)
 
-## Execution Model (Event-Driven Plant Engine)
+The runtime engine will then integrate exactly one interval per physics tick, while
+still allowing autopilot (`timeline.ap`), wind (`timeline.wind`), and logging
+(`timeline.log`) to run on their own cadences.
 
-1. At the current time, process scenario events, wind updates, autopilot ticks, and
-   logging snapshots in a deterministic order.
-2. Select the next boundary (wind/autopilot/log/scenario/`t_end`).
-3. Integrate the full `PlantState` over the interval with held inputs, splitting on
-   ground crossings when contact is enabled.
-4. Clamp physical bounds and sync legacy component mirrors for logging and tooling.
+## Execution Model (Runtime Engine)
 
-This engine enables adaptive integration without sacrificing determinism.
+The canonical event-driven run loop is `Sim.Runtime.Engine`.
 
-## Execution Model (Record/Replay Bus Engine)
+At each boundary time `t_k` (in microseconds):
 
-1. At each event boundary, update scenario, wind, estimator, and autopilot sources in
-   deterministic order.
-2. Update battery telemetry via `plant_outputs` and record bus streams when in record
-   mode.
-3. Integrate the plant from `t_k` to `t_{k+1}` using held bus inputs.
-4. Record plant/battery snapshots on the log axis.
+1. Scenario publishes (`faults`, `ap_cmd`, `landed`).
+2. Wind publishes (`wind_ned`).
+3. Plant-derived telemetry updates the bus (`battery`, etc) via `plant_outputs`.
+4. Estimator publishes (`est`).
+5. Telemetry hooks run (optional, read-only).
+6. Autopilot publishes (`cmd`).
+7. Boundary-time plant discontinuities run (e.g. direct actuator snaps).
+8. Logging/recording samples bus + plant (mode-dependent).
+9. Plant integrates over `[t_k, t_{k+1})` with held `PlantInput`.
 
-The bus engine decouples component output generation from plant integration and provides
-deterministic replay using recorded streams.
+After each accepted interval, the engine may call `plant_project(f, x)` (if implemented)
+to apply deterministic hard bounds (e.g., rotor ω ≥ 0, SOC ∈ [0,1]).
+
+Modes
+-----
+The same engine supports:
+
+* **Live**: live sources publishing into the bus.
+* **Record**: live sources + recording sinks attached.
+* **Replay**: replay sources driven by recorded traces (integrator comparisons).
 
 ## Key Invariants
 
@@ -139,8 +148,6 @@ deterministic replay using recorded streams.
 
 - Microsecond quantization is mandatory: `dt`, event times, and delays must be exact
   integer microseconds or errors are raised.
-- The fixed-step engine advances actuators/propulsion/battery discretely; it does not
-  represent their continuous dynamics.
 - The event-driven plant engine currently targets multirotor plants (`QuadRotorSet`) and
   approximates contact handling with a penalty model and simple crossing split.
 - Scenario `When` events are evaluated only at discrete event boundaries, not

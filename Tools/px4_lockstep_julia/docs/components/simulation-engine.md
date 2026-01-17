@@ -1,44 +1,52 @@
-# Fixed-Step Simulation Engine
+# Simulation Engine (Runtime.Engine)
+
+> **Canonical engine:** `PX4Lockstep.Sim.Runtime.Engine`
 
 ## Role
 
-`src/sim/Simulation.jl` implements the fixed-step lockstep engine used for most PX4
-regression runs. It is the canonical “PX4-in-the-loop at constant dt” path.
+`src/sim/Runtime/Engine.jl` implements the single authoritative hybrid simulation loop.
 
-## Key Decisions and Rationale
+It is responsible for:
 
-- **Integer-step scheduling:** multi-rate tasks are scheduled by integer step counters,
-  not floating-point time, eliminating cadence jitter from FP drift.
-- **Microsecond dt enforcement:** `dt` must be representable as integer microseconds,
-  which guarantees exact lockstep time injection at the cost of forbidding arbitrary
-  `dt` values.
-- **Wind sample-and-hold:** wind is sampled once per tick (via `SampledWind`) and held
-  constant for RK4 stages to preserve determinism.
-- **Discrete subsystem updates:** actuator dynamics, propulsion, and battery are stepped
-  once per physics tick while only the rigid body is integrated continuously.
-- **Pre-step logging:** log snapshots represent the state at the start of the interval,
-  keeping logs aligned with PX4 time and controller outputs.
+- traversing the event timeline (autopilot/wind/scenario/log/optional phys)
+- enforcing a canonical boundary ordering
+- stepping discrete sources (live or replay)
+- integrating the continuous plant state over each interval
+- recording/logging deterministic snapshots
 
-## Integration Contracts
+The engine runs in one of three modes:
 
-- Controller outputs are treated as piecewise constant across `dt`.
-- The autopilot is stepped on a deterministic cadence derived from `dt_autopilot`.
-- Logging cadence must be an integer multiple of `dt`.
-- `strict_lockstep_rates` enforces that `dt_autopilot` does not undersample PX4 tasks.
-- Scenario faults are applied to motor duties and battery connection status.
+- **Live**: PX4-in-the-loop
+- **Record**: live + record Tier-0 streams
+- **Replay**: open-loop plant replay for integrator comparisons
 
-## Extension Notes
+## Key decisions and rationale
 
-The fixed-step engine is deliberately conservative; more advanced integration strategies
-belong in the event-driven plant engine.
+- **Microsecond clock (`UInt64`)**: all scheduling and all step subdivision is derived from integer microseconds. This prevents long-run drift and makes lockstep timestamps exact.
+
+- **Boundary semantics define input changes**: the plant input is held constant on `[t_k, t_{k+1})` and can only change at event boundaries.
+
+- **Enforced canonical ordering** (see `Runtime/BoundaryProtocol.jl`): scenario → wind → derived outputs → estimator → telemetry → autopilot → plant discontinuities → log/record → integrate.
+
+- **Bus-driven orchestration**: sources publish into `SimBus`; the plant consumes a held `PlantInput` derived from the bus. This is the core mechanism enabling record/replay and independent submodel replay.
+
+- **Fixed-step is a configuration, not a separate engine**: if you want a traditional "physics dt", populate `timeline.phys` with a uniform axis. Those ticks are included in the global boundary union so you get exactly one interval per physics tick while still running PX4/wind/log on their own cadences.
+
+## Integration contracts
+
+- `dt_*` values must be representable as integer microseconds.
+- Randomness is only sampled at boundaries (never inside the ODE RHS).
+- Autopilot commands are treated as sample-and-hold within an interval.
+- The plant RHS is pure (no mutation, no IO). Any hard-bounds correction is done via `plant_project(...)` after an accepted interval.
+
+## Extension points
+
+- **Stage hooks** via `Runtime.Telemetry`: you can run extra deterministic logic in a dedicated stage without changing the canonical ordering.
+- **Recorder backends**: `Recording.InMemoryRecorder` is the default; larger runs can add an HDF5 backend later.
+- **Log sinks**: attach `Sim.Logging.AbstractLogSink` instances via the `log_sinks` kw on `Sim.simulate` / `Runtime.Engine` (e.g. `Sim.Logging.CSVLogSink`).
 
 ## Caveats
 
-- Actuator/propulsion/battery dynamics are discretized at `dt`; use the plant engine if
-  their continuous dynamics must be captured.
-- `dt`, `dt_autopilot`, and `dt_log` must be microsecond-quantized and integer-related;
-  violations raise errors.
-- `strict_lockstep_rates` can be disabled, but doing so risks running PX4 tasks slower
-  than intended.
-- `strict_lockstep_rates` is only enforced when the autopilot implements
-  `max_internal_rate_hz` (e.g., PX4 lockstep).
+- Contact modeling is penalty-force; there is no continuous-time root finding.
+- Scenario `When` conditions are evaluated only at event boundaries.
+- Tier-0 recordings do not embed model parameters; replay assumes the model configuration matches the recording context.

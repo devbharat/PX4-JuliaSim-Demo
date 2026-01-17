@@ -25,6 +25,7 @@ This script writes a CSV file next to the script for quick plotting.
 """
 
 using PX4Lockstep
+using Printf
 using StaticArrays
 
 const Sim = PX4Lockstep.Sim
@@ -87,48 +88,51 @@ ref_fine = V.rk45_reference(
 )
 ref = V.resample_trajectory(ref_fine, dt_sol)
 
-rk4 = Sim.Integrators.RK4Integrator()
-sol = V.simulate_trajectory(rk4, f, x0, dt_sol, t_end)
-
 invfun = (s::Sim.Plant.PlantState{4},) -> (
     E_sho = V.sho_energy(sho, s.rb.pos_ned[1], s.rb.vel_ned[1]),
 )
-
-cmp = V.compare_to_reference(ref, sol; invfun = invfun)
+solvers = [
+    ("RK4", Sim.Integrators.RK4Integrator()),
+    ("RK23", Sim.Integrators.RK23Integrator()),
+    ("RK45", Sim.Integrators.RK45Integrator()),
+]
 
 println("PlantState reference compare (SHO + rotor omega + battery)")
 println("  dt_ref = $(dt_ref) s (RK45 reference, plant-aware)")
-println("  dt_sol = $(dt_sol) s (RK4 test)")
+println("  dt_sol = $(dt_sol) s (solver output grid)")
 println("  t_end  = $(t_end) s")
 println()
 
-println("Max error vs reference:")
-println("  pos max      = $(cmp.err.max.pos) m")
-println("  vel max      = $(cmp.err.max.vel) m/s")
-println("  rotor omega max  = $(cmp.err.max.rotor) rad/s")
-println("  SOC max      = $(cmp.err.max.soc)")
-println("  V1 max       = $(cmp.err.max.v1) V")
+@printf("%-6s  %-12s  %-12s  %-14s  %-12s  %-12s\n", "Solver", "pos max", "vel max", "rotor ω max", "SOC max", "V1 max")
 
-if cmp.invariants !== nothing
-    drift_ref = cmp.invariants.ref.drift.E_sho
-    drift_sol = cmp.invariants.sol.drift.E_sho
-    println()
-    println("SHO energy drift:")
-    println("  reference: max |ΔE| = $(maximum(abs.(drift_ref)))")
-    println("  RK4:       max |ΔE| = $(maximum(abs.(drift_sol)))")
-end
+for (label, integ) in solvers
+    sol = V.simulate_trajectory(integ, f, x0, dt_sol, t_end)
+    cmp = V.compare_to_reference(ref, sol; invfun = invfun)
 
-# Write CSV for plotting.
-csv_path = joinpath(@__DIR__, "plant_sho_rotor_battery_reference_compare.csv")
-open(csv_path, "w") do io
-    println(io, "t,pos_err,vel_err,att_err_rad,omega_err,rotor_err,soc_err,v1_err,sho_energy_drift_ref,sho_energy_drift_sol")
-    t = cmp.err.t
-    drift_ref = cmp.invariants === nothing ? fill(NaN, length(t)) : cmp.invariants.ref.drift.E_sho
-    drift_sol = cmp.invariants === nothing ? fill(NaN, length(t)) : cmp.invariants.sol.drift.E_sho
-    for i in eachindex(t)
-        println(io, "$(t[i]),$(cmp.err.pos_err[i]),$(cmp.err.vel_err[i]),$(cmp.err.att_err_rad[i]),$(cmp.err.ω_err[i]),$(cmp.err.rotor_err[i]),$(cmp.err.soc_err[i]),$(cmp.err.v1_err[i]),$(drift_ref[i]),$(drift_sol[i])")
+    @printf(
+        "%-6s  %-12.3e  %-12.3e  %-14.3e  %-12.3e  %-12.3e\n",
+        label,
+        cmp.err.max.pos,
+        cmp.err.max.vel,
+        cmp.err.max.rotor,
+        cmp.err.max.soc,
+        cmp.err.max.v1,
+    )
+
+    drift_ref = cmp.invariants === nothing ? fill(NaN, length(cmp.err.t)) : cmp.invariants.ref.drift.E_sho
+    drift_sol = cmp.invariants === nothing ? fill(NaN, length(cmp.err.t)) : cmp.invariants.sol.drift.E_sho
+    max_drift = maximum(abs.(drift_sol))
+    println("  max |ΔE| = $(max_drift)")
+
+    csv_path = joinpath(@__DIR__, "plant_sho_rotor_battery_reference_compare_" * lowercase(label) * ".csv")
+    open(csv_path, "w") do io
+        println(io, "t,pos_err,vel_err,att_err_rad,omega_err,rotor_err,soc_err,v1_err,sho_energy_drift_ref,sho_energy_drift_sol")
+        t = cmp.err.t
+        drift_ref = cmp.invariants === nothing ? fill(NaN, length(t)) : cmp.invariants.ref.drift.E_sho
+        drift_sol = cmp.invariants === nothing ? fill(NaN, length(t)) : cmp.invariants.sol.drift.E_sho
+        for i in eachindex(t)
+            println(io, "$(t[i]),$(cmp.err.pos_err[i]),$(cmp.err.vel_err[i]),$(cmp.err.att_err_rad[i]),$(cmp.err.ω_err[i]),$(cmp.err.rotor_err[i]),$(cmp.err.soc_err[i]),$(cmp.err.v1_err[i]),$(drift_ref[i]),$(drift_sol[i])")
+        end
     end
+    println("  Wrote CSV: $(csv_path)")
 end
-
-println()
-println("Wrote CSV: $(csv_path)")

@@ -16,7 +16,7 @@ injection. The interface is intentionally small to keep the plant RHS determinis
 
 ## Integration Contracts
 
-- `step!` advances SOC using bus current supplied by propulsion (fixed-step engine).
+- `step!` advances SOC using bus current supplied by propulsion (discrete stepping helper).
 - In the event-driven plant engine, SOC and polarization voltage are integrated as part
   of `PlantState` while the battery model supplies OCV/parameterization.
 - `status` provides the exact fields expected by the lockstep ABI.
@@ -24,8 +24,7 @@ injection. The interface is intentionally small to keep the plant RHS determinis
 ## Caveats
 
 - Regenerative or negative bus currents are clamped to zero in `step!`.
-- `status` reflects the model's stored voltage/current; if `step!` (fixed-step) or
-  `_set_battery_last_current!` (plant engine) is not called, it can become stale.
+- `status` reflects the battery object's stored voltage/current fields. In the canonical engine, battery telemetry is derived via `plant_outputs(...)` and published on the bus; the engine also updates any compatibility fields (e.g. `battery.last_current_a`) deterministically at boundaries.
 - The Thevenin model omits thermal effects and aging; it should not be used for
   high-fidelity energy studies.
 - Invalid battery parameters can break the bus solve in the plant engine; expect

@@ -145,6 +145,7 @@ A “stream” is a time-indexed sequence of values sampled on a specific axis.
 Examples:
 
 - `cmd` stream on `T_ap_us`
+- `est` stream on `T_ap_us` (optional; `record_estimator=true`)
 - `wind_ned` stream on `T_wind_us`
 - `plant_state` stream on `T_log_us`
 - `ap_cmd`, `landed`, `faults` streams on `T_scn_us`
@@ -175,10 +176,15 @@ We explicitly support tiers to prevent trace bloat.
 
 Record just enough to replay the plant deterministically:
 
-- timeline axes `T_ap_us`, `T_wind_us`, `T_log_us`, `T_scn_us`, `T_evt_us`
+- timeline axes `T_ap_us`, `T_wind_us`, `T_log_us`, `T_scn_us`, `T_phys_us`, `T_evt_us`
 - `cmd` on `T_ap_us`
 - `wind_ned` on `T_wind_us`
 - `PlantState` (or selected outputs) on `T_log_us`
+- `battery` on `T_log_us` (telemetry snapshot)
+
+Optional (for estimator replay):
+
+- `est` on `T_ap_us` when `record_estimator=true`
 
 This enables:
 
@@ -190,6 +196,7 @@ Record component inputs/outputs required to replay each component in isolation:
 
 - propulsion: duty, rho, wind/air-relative quantities, bus voltage/current, ω
 - battery: bus current/voltage, SOC/V1
+- estimator output: `est` on `T_ap_us` when `record_estimator=true`
 - estimator/noise: injected sensor streams
 
 #### Tier 2: RHS trace (debug)
@@ -299,8 +306,8 @@ Chunking: chunk along time dimension; compression on.
 
 ### Stage 3: Engine
 
-- `BusEngine` executes: process events at `t_k`, integrate plant to `t_{k+1}`.
-- Integrates using existing full-plant RHS (from `PlantSimulation`) but routed through bus.
+- `Engine` executes: process events at `t_k`, integrate plant to `t_{k+1}`.
+- Integrates using the full-plant RHS from `PlantModels` (e.g. `CoupledMultirotorModel`) but routed through the bus.
 
 ### Stage 4: Record/replay
 
@@ -310,8 +317,8 @@ Chunking: chunk along time dimension; compression on.
 
 ### Stage 5: Examples + tests
 
-- `examples/replay/iris_record_run.jl`
-- `examples/replay/iris_replay_integrator_sweep.jl`
+- `examples/replay/iris_integrator_compare.jl`
+- `examples/replay/minimal_record_replay_demo.jl`
 - Tests that replay matches baseline within tolerance.
 
 ---

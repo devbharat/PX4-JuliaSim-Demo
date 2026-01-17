@@ -5,8 +5,8 @@ This directory collects component-level design notes for `PX4Lockstep.jl`.
 ## TODO
 
 - [x] `PX4Lockstep` C ABI wrapper (`src/PX4Lockstep.jl`)
-- [x] Fixed-step simulation engine (`src/sim/Simulation.jl`)
-- [x] Event-driven plant simulation (`src/sim/PlantSimulation.jl`)
+- [x] Fixed-step semantics via `Sim.Runtime.Engine` + `timeline.phys`
+- [x] Event-driven integration (`src/sim/Runtime/Engine.jl`)
 - [x] Integrators (`src/sim/Integrators.jl`)
 - [x] Plant state model (`src/sim/Plant.jl`)
 - [x] Rigid-body core (`src/sim/RigidBody.jl`)
@@ -24,4 +24,4 @@ This directory collects component-level design notes for `PX4Lockstep.jl`.
 - [x] Autopilot bridge (`src/sim/Autopilots.jl`)
 - [x] Fault signals (`src/sim/Faults.jl`)
 - [x] Plant output protocol (`src/sim/PlantInterface.jl`)
-- [x] Record/replay bus engine (`src/sim/RecordReplay.jl`)
+- [x] Record/replay primitives (`src/sim/Recording/`, `src/sim/Sources/`, `src/sim/Runtime/`)

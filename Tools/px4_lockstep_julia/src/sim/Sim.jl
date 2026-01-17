@@ -21,9 +21,8 @@ addition to the rigid body.
 
 This refactor is implemented via:
 * `Plant.jl`: defines `PlantState`/`PlantDeriv` and math helpers used by integrators.
-* `PlantSimulation.jl`: event-driven engine that integrates the full plant between
-  discrete event boundaries (autopilot/wind/log) with a coupled RHS for battery, bus,
-  motor, propulsion, and actuator dynamics.
+* `PlantModels.jl`: concrete coupled plant RHS implementations suitable for adaptive solvers.
+* `Runtime.jl`: the single canonical hybrid engine (event-driven timeline + plant integration).
 """
 module Sim
 
@@ -50,15 +49,39 @@ include("Events.jl")
 include("Autopilots.jl")
 include("Scenario.jl")
 include("Logging.jl")
-include("Simulation.jl")
 
-# Event-driven variable-step engine for full-plant integration.
-include("PlantSimulation.jl")
 
-# First-class record/replay (event-sourced bus) architecture.
-include("RecordReplay.jl")
+# Concrete plant model implementations.
+include("PlantModels/PlantModels.jl")
+
+# Canonical engine (single run loop) + record/replay infrastructure.
+include("Runtime/Runtime.jl")
+include("Recording/Recording.jl")
+include("Sources/Sources.jl")
+
 
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")
 
+# Convenience workflows (Iris mission "just run" wrappers).
+include("Workflows/Iris.jl")
+include("Workflows/CompareIntegrators.jl")
+
+# Namespace wrapper for workflow helpers.
+module Workflows
+using ..Sim: simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
+export simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
+end
+
+# User-facing workflow entrypoints (thin wrappers around Runtime.Engine).
+include("API.jl")
+
+export simulate,
+    run_live_px4,
+    record_live_px4,
+    replay_recording,
+    simulate_iris_mission,
+    compare_integrators,
+    compare_integrators_recording,
+    compare_integrators_iris_mission
 end # module Sim

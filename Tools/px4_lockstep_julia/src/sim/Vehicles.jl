@@ -29,6 +29,7 @@ export AbstractVehicleModel,
     FirstOrderActuators,
     SecondOrderActuators,
     ActuatorCommand,
+    VehicleInstance,
     QuadrotorParams,
     IrisQuadrotor,
     step_actuators!,
@@ -47,6 +48,47 @@ support multiple airframes without changing the sim engine.
 Base.@kwdef struct ActuatorCommand
     motors::SVector{12,Float64} = zero(SVector{12,Float64})
     servos::SVector{8,Float64} = zero(SVector{8,Float64})
+end
+
+############################
+# Vehicle model interface
+############################
+
+abstract type AbstractVehicleModel end
+
+"""Vehicle mass (kg).
+
+Expose this so the simulation engine can apply external forces (e.g. contact) without
+hard-coding vehicle types.
+"""
+function mass end
+
+"""Vehicle inertia diagonal (kg*m^2) in body frame."""
+function inertia_diag end
+
+"""Compute the rigid-body dynamics.
+
+`dynamics(t, state, u)` must return `RigidBodyDeriv`.
+
+`u` is vehicle-specific (e.g. rotor thrust/torque for multirotors).
+"""
+function dynamics end
+
+"""Vehicle instance = model + propulsion/actuator instances + rigid-body state.
+
+This type is engine-agnostic and exists to avoid coupling "vehicle assembly" to
+any particular run loop implementation.
+
+Historically this lived in the legacy fixed-step `Sim.Simulation` module.
+As part of engine unification, it is promoted here so examples and workflows
+can construct a vehicle without depending on a deprecated engine.
+"""
+mutable struct VehicleInstance{M<:AbstractVehicleModel,AM,AS,P}
+    model::M
+    motor_actuators::AM
+    servo_actuators::AS
+    propulsion::P
+    state::RigidBodyState
 end
 
 ############################
@@ -163,30 +205,6 @@ end
     a.y = a.y .+ a.ydot .* dt
     return a.y
 end
-
-############################
-# Vehicle model interface
-############################
-
-abstract type AbstractVehicleModel end
-
-"""Vehicle mass (kg).
-
-Expose this so the simulation engine can apply external forces (e.g. contact) without
-hard-coding vehicle types.
-"""
-function mass end
-
-"""Vehicle inertia diagonal (kg*m^2) in body frame."""
-function inertia_diag end
-
-"""Compute the rigid-body dynamics.
-
-`dynamics(t, state, u)` must return `RigidBodyDeriv`.
-
-`u` is vehicle-specific (e.g. rotor thrust/torque for multirotors).
-"""
-function dynamics end
 
 ############################
 # Quadrotor baseline model

@@ -50,27 +50,26 @@ This uses the same RK45 reference machinery but compares `PlantState` trajectori
 
 
 
-## Iris mission closed-loop integrator comparison (PX4 lockstep + PlantSimulation)
+## Iris integrator comparison (PX4 lockstep + record→replay)
 
-If you have the PX4 lockstep library available, you can do a **system-level**
-integrator sensitivity comparison on the Iris mission use case:
+Closed-loop "run it three times" comparisons are often misleading once trajectories
+diverge and PX4 issues different commands.
+
+The recommended workflow is to **record** one baseline PX4 run (commands, wind samples,
+scenario outputs including faults) and then **replay** that recording open-loop while
+sweeping plant integrators.
 
 ```bash
 PX4_LOCKSTEP_LIB=... PX4_LOCKSTEP_MISSION=... \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_iris_mission_plantsim.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
 ```
 
-`PX4_LOCKSTEP_LIB` is optional; if it is unset, the script falls back to the default
-build tree search used by `PX4Lockstep.find_library()`.
+See the script header for environment variables such as:
 
-You can choose the test solver via:
+* `IRIS_T_END_S`
+* `IRIS_SWEEP_SOLVERS` (default: "RK4,RK23,RK45")
 
-* `IRIS_TEST_SOLVER=RK4`
-* `IRIS_TEST_SOLVER=RK23`
-* `IRIS_TEST_SOLVER=RK45`
-
-This is closed-loop, so trajectories may diverge over long horizons; treat it as a
-"mission sensitivity to solver choice" metric, not a pure plant truncation error study.
+The summary CSV is written under `examples/replay/out/`.
 
 
 Notes:

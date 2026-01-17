@@ -1,10 +1,15 @@
-# Record/Replay Bus Engine
+# Record/Replay (Option A)
+
+The record/replay stack is now *first-class* and lives in three places:
+
+* `Sim.Runtime` — canonical hybrid engine (timeline traversal + plant integration)
+* `Sim.Sources` — live and replay sources that publish bus signals
+* `Sim.Recording` — trace + recorder types, persistence helpers
 
 ## Role
 
-`src/sim/RecordReplay.jl` and `src/sim/RecordReplay/*` implement the event-sourced bus
-architecture for deterministic record/replay. The `BusEngine` integrates the plant
-between timeline boundaries while discrete sources publish bus fields.
+The runtime integrates the plant between timeline boundaries while discrete sources
+publish bus fields.
 
 ## Key Decisions and Rationale
 
@@ -14,6 +19,8 @@ between timeline boundaries while discrete sources publish bus fields.
   `AtTime` events into a single boundary axis used for integration.
 - **Record tiers:** Tier‑0 recordings capture only what is needed for deterministic
   plant replay (commands, wind, plant, battery), keeping files small.
+- **Optional estimator stream:** enable `record_estimator=true` to capture `est` on
+  the autopilot axis for estimator replay.
 - **Deterministic ordering:** sources update in a fixed order and record
   `ap_cmd_evt`, `landed_evt`, and `faults_evt` on the event axis to avoid missing
   dynamic transitions.
@@ -21,10 +28,10 @@ between timeline boundaries while discrete sources publish bus fields.
 ## Integration Contracts
 
 - Sources publish into the bus only at their scheduled boundary times.
-- `BusEngine` must hold `bus.cmd`, `bus.wind_ned`, and `bus.faults` constant across the
+- `Engine` must hold `bus.cmd`, `bus.wind_ned`, and `bus.faults` constant across the
   integration interval.
 - `plant_outputs` is queried at boundaries to update battery telemetry deterministically.
-- Recordings enforce `BUS_SCHEMA_VERSION` on load.
+- `load_recording` validates schema version, axes, and required streams.
 
 ## Caveats
 

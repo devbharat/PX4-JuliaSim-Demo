@@ -22,9 +22,144 @@ using Printf
 
 export AbstractLogSink, SimLog, CSVLogSink, close!, log!, write_csv
 export reserve!
+export LogColumn, LogSchema, csv_schema, csv_header_line, write_csv_header
 
 # Bump this when you add/remove/rename columns in the CSV output.
 const CSV_SCHEMA_VERSION = 2
+
+############################
+# Explicit log schema
+############################
+
+"""One column in a structured log schema."""
+struct LogColumn
+    name::String
+    unit::String
+    desc::String
+end
+
+"""A versioned log schema.
+
+This is intentionally lightweight so it can be used by:
+- the in-memory `SimLog`
+- the streaming `CSVLogSink`
+- a future HDF5 sink
+"""
+struct LogSchema
+    name::String
+    version::Int
+    columns::Vector{LogColumn}
+end
+
+"""Canonical CSV schema used by `CSVLogSink` and `write_csv`.
+
+Notes
+-----
+- This schema is defined *once* and reused to generate headers.
+- The CSV header line is the ordered list of `columns[i].name`.
+"""
+const CSV_LOG_SCHEMA = LogSchema(
+    "px4lockstep_sim_csv",
+    CSV_SCHEMA_VERSION,
+    LogColumn[
+        # time
+        LogColumn("time_s", "s", "simulation time"),
+        # truth (NED)
+        LogColumn("pos_x", "m", "truth position NED x"),
+        LogColumn("pos_y", "m", "truth position NED y"),
+        LogColumn("pos_z", "m", "truth position NED z"),
+        LogColumn("vel_x", "m/s", "truth velocity NED x"),
+        LogColumn("vel_y", "m/s", "truth velocity NED y"),
+        LogColumn("vel_z", "m/s", "truth velocity NED z"),
+        # attitude (q_bn)
+        LogColumn("q_w", "-", "truth attitude quaternion (w)"),
+        LogColumn("q_x", "-", "truth attitude quaternion (x)"),
+        LogColumn("q_y", "-", "truth attitude quaternion (y)"),
+        LogColumn("q_z", "-", "truth attitude quaternion (z)"),
+        # body rates
+        LogColumn("p", "rad/s", "truth body rate p"),
+        LogColumn("q", "rad/s", "truth body rate q"),
+        LogColumn("r", "rad/s", "truth body rate r"),
+        # setpoints (from PX4)
+        LogColumn("pos_sp_x", "m", "position setpoint NED x"),
+        LogColumn("pos_sp_y", "m", "position setpoint NED y"),
+        LogColumn("pos_sp_z", "m", "position setpoint NED z"),
+        LogColumn("vel_sp_x", "m/s", "velocity setpoint NED x"),
+        LogColumn("vel_sp_y", "m/s", "velocity setpoint NED y"),
+        LogColumn("vel_sp_z", "m/s", "velocity setpoint NED z"),
+        LogColumn("acc_sp_x", "m/s^2", "acceleration setpoint NED x"),
+        LogColumn("acc_sp_y", "m/s^2", "acceleration setpoint NED y"),
+        LogColumn("acc_sp_z", "m/s^2", "acceleration setpoint NED z"),
+        LogColumn("yaw_sp", "rad", "yaw setpoint"),
+        LogColumn("yawspeed_sp", "rad/s", "yawspeed setpoint"),
+        # motor command (PX4 actuator_motors 1..12)
+        LogColumn("m1", "norm", "motor command 1"),
+        LogColumn("m2", "norm", "motor command 2"),
+        LogColumn("m3", "norm", "motor command 3"),
+        LogColumn("m4", "norm", "motor command 4"),
+        LogColumn("m5", "norm", "motor command 5"),
+        LogColumn("m6", "norm", "motor command 6"),
+        LogColumn("m7", "norm", "motor command 7"),
+        LogColumn("m8", "norm", "motor command 8"),
+        LogColumn("m9", "norm", "motor command 9"),
+        LogColumn("m10", "norm", "motor command 10"),
+        LogColumn("m11", "norm", "motor command 11"),
+        LogColumn("m12", "norm", "motor command 12"),
+        # rotor outputs (optional convenience)
+        LogColumn("rotor_w1", "rad/s", "rotor omega 1"),
+        LogColumn("rotor_w2", "rad/s", "rotor omega 2"),
+        LogColumn("rotor_w3", "rad/s", "rotor omega 3"),
+        LogColumn("rotor_w4", "rad/s", "rotor omega 4"),
+        LogColumn("rotor_T1", "N", "rotor thrust 1"),
+        LogColumn("rotor_T2", "N", "rotor thrust 2"),
+        LogColumn("rotor_T3", "N", "rotor thrust 3"),
+        LogColumn("rotor_T4", "N", "rotor thrust 4"),
+        # environment
+        LogColumn("wind_x", "m/s", "wind NED x"),
+        LogColumn("wind_y", "m/s", "wind NED y"),
+        LogColumn("wind_z", "m/s", "wind NED z"),
+        LogColumn("rho", "kg/m^3", "air density"),
+        LogColumn("air_bx", "m/s", "air-relative velocity body x"),
+        LogColumn("air_by", "m/s", "air-relative velocity body y"),
+        LogColumn("air_bz", "m/s", "air-relative velocity body z"),
+        # battery
+        LogColumn("batt_v", "V", "battery voltage"),
+        LogColumn("batt_a", "A", "battery current"),
+        LogColumn("batt_rem", "frac", "battery remaining fraction"),
+        LogColumn("batt_warn", "enum", "battery warning"),
+        # px4 status
+        LogColumn("nav_state", "enum", "PX4 nav_state"),
+        LogColumn("arming_state", "enum", "PX4 arming_state"),
+        LogColumn("mission_seq", "idx", "mission sequence index"),
+        LogColumn("mission_count", "count", "mission item count"),
+        LogColumn("mission_finished", "bool", "mission finished flag"),
+        # lockstep clock
+        LogColumn("time_us", "us", "authoritative lockstep clock"),
+    ],
+)
+
+"""Return the canonical CSV log schema."""
+csv_schema() = CSV_LOG_SCHEMA
+
+"""Return the CSV header line (comma-separated column names)."""
+csv_header_line(schema::LogSchema = CSV_LOG_SCHEMA) = join((c.name for c in schema.columns), ",")
+
+"""Write CSV header comments + column header line.
+
+This keeps the on-disk format self-describing while remaining dependency-light.
+
+Header format
+-------------
+- `# schema_version=<int>`
+- `# schema_name=<string>`
+- `<csv header line>`
+"""
+function write_csv_header(io::IO; schema::LogSchema = CSV_LOG_SCHEMA)
+    println(io, "# schema_version=$(schema.version)")
+    println(io, "# schema_name=$(schema.name)")
+    println(io, csv_header_line(schema))
+    return nothing
+end
 
 ############################
 # Log sinks
@@ -180,82 +315,6 @@ close!(::SimLog) = nothing
 # Logging API
 ############################
 
-const _CSV_HEADER = join(
-    [
-        "time_s",
-        # truth
-        "pos_x",
-        "pos_y",
-        "pos_z",
-        "vel_x",
-        "vel_y",
-        "vel_z",
-        "q_w",
-        "q_x",
-        "q_y",
-        "q_z",
-        "p",
-        "q",
-        "r",
-        # setpoints
-        "pos_sp_x",
-        "pos_sp_y",
-        "pos_sp_z",
-        "vel_sp_x",
-        "vel_sp_y",
-        "vel_sp_z",
-        "acc_sp_x",
-        "acc_sp_y",
-        "acc_sp_z",
-        "yaw_sp",
-        "yawspeed_sp",
-        # motor cmd
-        "m1",
-        "m2",
-        "m3",
-        "m4",
-        "m5",
-        "m6",
-        "m7",
-        "m8",
-        "m9",
-        "m10",
-        "m11",
-        "m12",
-        # rotor outputs (optional)
-        "rotor_w1",
-        "rotor_w2",
-        "rotor_w3",
-        "rotor_w4",
-        "rotor_T1",
-        "rotor_T2",
-        "rotor_T3",
-        "rotor_T4",
-        # environment
-        "wind_x",
-        "wind_y",
-        "wind_z",
-        "rho",
-        "air_bx",
-        "air_by",
-        "air_bz",
-        # battery
-        "batt_v",
-        "batt_a",
-        "batt_rem",
-        "batt_warn",
-        # px4
-        "nav_state",
-        "arming_state",
-        "mission_seq",
-        "mission_count",
-        "mission_finished",
-        # lockstep clock
-        "time_us",
-    ],
-    ",",
-)
-
 @inline function _motor12_from_cmd(cmd::ActuatorCommand)
     m = cmd.motors
     return (m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12])
@@ -354,8 +413,7 @@ function log!(
 )
     io = sink.io
     if !sink.wrote_header
-        println(io, "# schema_version=$(CSV_SCHEMA_VERSION)")
-        println(io, _CSV_HEADER)
+        write_csv_header(io)
         sink.wrote_header = true
     end
 
@@ -445,8 +503,7 @@ This is mostly for convenience; for long runs, consider using `CSVLogSink`.
 """
 function write_csv(log::SimLog, path::AbstractString)
     open(path, "w") do io
-        println(io, "# schema_version=$(CSV_SCHEMA_VERSION)")
-        println(io, _CSV_HEADER)
+        write_csv_header(io)
         n = length(log.t)
         for i = 1:n
             p = log.pos_ned[i]

@@ -25,7 +25,7 @@ function main()
     T = 2π / ω
     dt = 0.01
     n = Int(round(T / dt))
-    t_end = n * dt
+    t_final = n * dt
 
     println("\nPendulum (small-angle analytic check)")
     println("====================================")
@@ -35,7 +35,7 @@ function main()
         ("Euler", Sim.Integrators.EulerIntegrator()),
         ("RK4", Sim.Integrators.RK4Integrator()),
     ]
-        x_end, t_end = V.integrate_fixed(integ, f, x0, dt, t_end)
+        x_end, t_end = V.integrate_fixed(integ, f, x0, dt, t_final)
         θ_ref, θdot_ref, _ = V.pendulum_small_angle_analytic(case, t_end)
         θ_err = abs(x_end.pos_ned[1] - θ_ref)
 
@@ -44,6 +44,55 @@ function main()
         dE = abs(E1 - E0) / E0
 
         @printf("%-6s  %-8.4g  %-12.3e  %-12.3e\n", name, dt, θ_err, dE)
+    end
+
+    adaptive = [
+        (
+            "RK23",
+            Sim.Integrators.RK23Integrator(
+                rtol_pos = 1e-10,
+                atol_pos = 1e-10,
+                rtol_vel = 1e-10,
+                atol_vel = 1e-10,
+                rtol_ω = 1e-12,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.05,
+            ),
+        ),
+        (
+            "RK45",
+            Sim.Integrators.RK45Integrator(
+                rtol_pos = 1e-10,
+                atol_pos = 1e-10,
+                rtol_vel = 1e-10,
+                atol_vel = 1e-10,
+                rtol_ω = 1e-12,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.05,
+            ),
+        ),
+    ]
+
+    stats = Tuple{String,Sim.Integrators.IntegratorStats}[]
+    for (name, integ) in adaptive
+        x_end = Sim.Integrators.step_integrator(integ, f, 0.0, x0, nothing, t_final)
+        θ_ref, θdot_ref, _ = V.pendulum_small_angle_analytic(case, t_final)
+        θ_err = abs(x_end.pos_ned[1] - θ_ref)
+
+        E0 = V.pendulum_energy(case, case.θ0, case.θdot0)
+        E1 = V.pendulum_energy(case, x_end.pos_ned[1], x_end.vel_ned[1])
+        dE = abs(E1 - E0) / E0
+
+        @printf("%-6s  %-8s  %-12.3e  %-12.3e\n", name, "adapt", θ_err, dE)
+        push!(stats, (name, Sim.Integrators.last_stats(integ)))
+    end
+
+    for (name, st) in stats
+        println("\n$(name) stats: nfev=$(st.nfev), accept=$(st.naccept), reject=$(st.nreject), h_last=$(st.h_last)")
     end
 end
 

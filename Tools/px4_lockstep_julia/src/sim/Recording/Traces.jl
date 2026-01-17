@@ -1,17 +1,19 @@
-"""Trace (stream) abstractions for record/replay.
+"""Recording.Traces
 
-A **trace** is a time-indexed stream of values aligned to a `TimeAxis`.
+Trace (stream) abstractions for record/replay.
+
+A **trace** is a time-indexed stream of values aligned to a `Runtime.TimeAxis`.
 
 Trace types
 -----------
 - `SampledTrace`: values are defined only at axis points; sampling requires exact match.
 - `ZOHTrace`: zero-order hold; value at time `t` is last sample `<= t`.
-- `SampleHoldTrace`: same as ZOH but used to communicate semantics (wind samples).
+- `SampleHoldTrace`: semantic alias of ZOH (used for disturbances like wind).
 
-All sampling semantics are **deterministic** and defined in integer microseconds.
+All sampling semantics are deterministic and defined in integer microseconds.
 """
 
-# NOTE: We are in `PX4Lockstep.Sim.RecordReplay`.
+using ..Runtime: TimeAxis
 
 abstract type AbstractTrace{T} end
 
@@ -42,7 +44,7 @@ end
 
 """Sample-and-hold trace.
 
-Same evaluation semantics as ZOH, but used for wind/disturbance realizations.
+Same evaluation semantics as ZOH, but used to communicate semantics.
 """
 struct SampleHoldTrace{T} <: AbstractTrace{T}
     axis::TimeAxis
@@ -147,3 +149,5 @@ function sample(tr::SampleHoldTrace{T}, t_us::UInt64)::T where {T}
     )
     return tr.data[i]
 end
+
+export AbstractTrace, SampledTrace, ZOHTrace, SampleHoldTrace, sample

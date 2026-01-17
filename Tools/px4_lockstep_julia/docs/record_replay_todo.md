@@ -14,7 +14,10 @@ Conventions:
 
 - [x] Write design doc: `docs/record_replay.md`
 - [x] Add this TODO tracker
-- [x] Create `Sim.RecordReplay` module skeleton and include it from `Sim.jl`
+- [x] Establish canonical module homes:
+  - `Sim.Runtime` (engine, timeline, bus, protocols)
+  - `Sim.Recording` (traces, recorders, persistence)
+  - `Sim.Sources` (live + replay sources)
 - [x] Add placeholder example scripts under `examples/replay/`
 
 Acceptance criteria:
@@ -24,19 +27,19 @@ Acceptance criteria:
 
 ## Phase 1 — Core data model (bus + timeline + streams)
 
-- [x] Define `Sim.RecordReplay.SimBus` schema (versioned)
+- [x] Define `Sim.Runtime.SimBus` schema (versioned)
   - [x] Decide which signals are required for Tier-0 integrator replay (cmd, wind, battery)
   - [x] Add first-class **fault state** signal on the bus (motor disable, battery disconnect, sensor fail masks)
   - [x] Decide and document fault semantics + consumption map (`docs/faults.md`)
   - [x] Document interpolation rules per signal (ZOH vs sample/hold)
   - [x] Reuse `Sim.Powertrain.BatteryStatus` for `bus.battery` (avoid duplicate schema drift)
 
-- [x] Define `Timeline` API
+- [x] Define `Sim.Runtime.Timeline` API
   - [x] Build periodic axes (`T_ap_us`, `T_wind_us`, `T_log_us`)
   - [x] Integrate scenario `AtTime` events into `T_scn_us`
   - [x] Provide `T_evt_us = union(...)` builder with deterministic ordering
 
-- [x] Define `Trace` abstractions
+- [x] Define trace abstractions (`Sim.Recording`)
   - [x] `ZOHTrace` (commands)
   - [x] `SampleHoldTrace` (wind)
   - [x] `SampledTrace` (logs)
@@ -79,7 +82,7 @@ Acceptance criteria:
 
 ## Phase 3 — Engine: bus-driven hybrid simulation
 
-- [x] Implement `BusEngine` that can run in two modes:
+- [x] Implement `Engine` that can run in two modes:
   - [x] `:replay` (replay sources)
   - [x] `:record` (live sources + recorder)
 
@@ -88,7 +91,7 @@ Acceptance criteria:
 
 - [x] Plant integration between event boundaries
   - [x] Hold bus inputs constant over interval (`PlantInput(cmd, wind)`)
-  - [x] Reset integrator state at each interval (matches current PlantSimulation semantics)
+  - [x] Reset integrator state at each interval (matches current Engine interval semantics)
   - [x] Optional derived outputs update via `plant_outputs(...)` when applicable
 
 Acceptance criteria:
@@ -116,17 +119,17 @@ Acceptance criteria:
 
 ## Phase 5 — Iris integrator sweep tool (the payoff)
 
-- [x] `examples/replay/iris_record_run.jl`
-  - [x] run PX4 live, record Tier-0 traces
+- ✅ Clean UX script: `examples/replay/iris_integrator_compare.jl`
+  - runs PX4 live for a short window and records Tier-0 traces
+  - replays under a reference integrator and a sweep of candidate integrators
+  - writes per-solver error CSVs + a `summary.csv` under `out/`
 
-- [x] `examples/replay/iris_replay_integrator_sweep.jl`
-  - [x] replay plant under different integrators
-  - [x] compare to reference replay using `Sim.Verification` utilities
+- ✅ Canonical wrappers live in `Sim.Workflows`:
+  - `Sim.Workflows.simulate_iris_mission` (live / record / replay)
+  - `Sim.Workflows.compare_integrators_iris_mission` (record + replay sweep)
 
-- [x] Clean UX wrapper: `examples/replay/iris_integrator_compare.jl`
-  - [x] record baseline run (PX4 live) **and** replay sweep in one command
-  - [x] write a summary CSV under `examples/replay/out/`
-  - [x] keep Iris defaults centralized via `examples/replay/iris_common.jl`
+Notes:
+- The earlier “helper” scripts (`iris_record_run.jl`, `iris_replay_integrator_sweep.jl`) and `iris_common.jl` were removed to avoid duplicated defaults / drift.
 
 Acceptance criteria:
 - Integrator comparison is stable and not dominated by PX4 closed-loop divergence.

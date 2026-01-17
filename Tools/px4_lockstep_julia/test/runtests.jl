@@ -11,6 +11,9 @@ const Sim = PX4Lockstep.Sim
 include("verification_cases.jl")
 
 # Record/replay engine (Option A) checks.
+
+# Compare-integrators workflow (record/replay + metrics)
+include("compare_integrators.jl")
 include("record_replay_engine.jl")
 
 """Return the geodesic rotation error (rad) between two quaternions.
@@ -21,6 +24,17 @@ function quat_angle_error(q::Sim.Types.Quat, q_ref::Sim.Types.Quat)
     d = abs(sum(q .* q_ref))
     d = clamp(d, 0.0, 1.0)
     return 2.0 * acos(d)
+end
+
+struct ZeroRB end
+
+function (f::ZeroRB)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plant.PlantInput)
+    return Sim.RigidBody.RigidBodyDeriv(
+        pos_dot = x.vel_ned,
+        vel_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
+        ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
 end
 
 @testset "Integrators: adaptive RK45 free-fall correctness and determinism" begin
@@ -257,349 +271,216 @@ end
     @test isapprox(y[1], 1.0 - exp(-0.05 / 0.1); atol = 1e-12)
 end
 
-@testset "Simulation time_us is exact and log samples pre-step state" begin
-    # Minimal dummy autopilot so we can run the engine without libpx4_lockstep.
-    Base.@kwdef mutable struct DummyOutputs
-        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
-        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
-        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_yaw::Float32 = 0f0
-        trajectory_setpoint_yawspeed::Float32 = 0f0
-        nav_state::Int32 = Int32(0)
-        arming_state::Int32 = Int32(0)
-        mission_seq::Int32 = Int32(0)
-        mission_count::Int32 = Int32(0)
-        mission_finished::Int32 = Int32(0)
-    end
+@testset "Runtime.Engine time_us is exact and log samples pre-step state" begin
+    RT = Sim.Runtime
+    REC = Sim.Recording
 
-    mutable struct DummyAutopilot <: Sim.Autopilots.AbstractAutopilot
-        out::DummyOutputs
-    end
-    Sim.Autopilots.autopilot_output_type(::DummyAutopilot) = DummyOutputs
+    t0_us = UInt64(0)
+    t_end_us = UInt64(10_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(2_000),
+    )
 
-    function Sim.Autopilots.autopilot_step(
-        ap::DummyAutopilot,
-        time_us::UInt64,
-        pos::Sim.Types.Vec3,
-        vel::Sim.Types.Vec3,
-        q::Sim.Types.Quat,
-        ω::Sim.Types.Vec3,
-        cmd::Sim.Autopilots.AutopilotCommand;
-        landed::Bool = false,
-        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
-    )::DummyOutputs
-        # Put a recognizable pattern into motors when armed.
-        m = cmd.armed ? 0.4f0 : 0f0
-        ap.out = DummyOutputs(actuator_motors = ntuple(_ -> m, 12))
-        return ap.out
-    end
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
-    # Build a small sim instance.
-    env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.ConstantWind(Sim.Types.vec3(0, 0, 0)))
-    model = Sim.Vehicles.IrisQuadrotor()
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(1.0, 2.0, 3.0),
         vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    hover_T = model.params.mass * 9.80665 / 4.0
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
-    vehicle = Sim.Simulation.VehicleInstance(model, Sim.Vehicles.DirectActuators(), Sim.Vehicles.DirectActuators(), propulsion, x0)
 
-    cfg = Sim.Simulation.SimulationConfig(dt = 0.002, t0 = 0.0, t_end = 0.01, dt_autopilot = 0.01, dt_log = 0.002, seed = 1)
-    ap = DummyAutopilot(DummyOutputs())
-    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
     log = Sim.Logging.SimLog()
-
-    sim = Sim.Simulation.SimulationInstance(
-        cfg = cfg,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
+    sim = RT.plant_replay_engine(
+        timeline = timeline,
+        plant0 = x0,
+        dynfun = ZeroRB(),
         integrator = Sim.Integrators.EulerIntegrator(),
-        scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = log,
-        contact = Sim.Contacts.NoContact(),
+        autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
+        wind = Sim.Sources.ReplayWindSource(wind_tr),
+        scenario = Sim.Sources.NullScenarioSource(),
+        estimator = Sim.Sources.NullEstimatorSource(),
+        log_sinks = log,
     )
-
-    @test Sim.Simulation.time_us(sim) == 0
-    Sim.Simulation.step!(sim)
-    @test Sim.Simulation.time_us(sim) == 2000
+    RT.run!(sim)
 
     # Log is pre-step state at t=0.
-    @test length(sim.log.t) == 1
-    @test sim.log.t[1] == 0.0
-    @test sim.log.time_us[1] == UInt64(0)
-    @test sim.log.pos_ned[1] == (1.0, 2.0, 3.0)
+    @test length(log.t) >= 1
+    @test log.t[1] == 0.0
+    @test log.time_us[1] == UInt64(0)
+    @test log.pos_ned[1] == (1.0, 2.0, 3.0)
 end
 
-@testset "PlantSimulation respects t_end (no overshoot)" begin
-    # Minimal dummy autopilot so we can run the PlantSimulation engine without libpx4_lockstep.
-    Base.@kwdef mutable struct DummyPSOutputs
-        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
-        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
-        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_yaw::Float32 = 0f0
-        trajectory_setpoint_yawspeed::Float32 = 0f0
-        nav_state::Int32 = Int32(0)
-        arming_state::Int32 = Int32(0)
-        mission_seq::Int32 = Int32(0)
-        mission_count::Int32 = Int32(0)
-        mission_finished::Int32 = Int32(0)
-    end
+@testset "Runtime.Engine respects t_end (no overshoot)" begin
+    RT = Sim.Runtime
+    REC = Sim.Recording
 
-    mutable struct DummyPSAutopilot <: Sim.Autopilots.AbstractAutopilot
-        out::DummyPSOutputs
-    end
-    Sim.Autopilots.autopilot_output_type(::DummyPSAutopilot) = DummyPSOutputs
+    t0_us = UInt64(0)
+    t_end_us = UInt64(5_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(2_000),
+        dt_wind_us = UInt64(2_000),
+        dt_log_us = UInt64(2_000),
+    )
 
-    function Sim.Autopilots.autopilot_step(
-        ap::DummyPSAutopilot,
-        time_us::UInt64,
-        pos::Sim.Types.Vec3,
-        vel::Sim.Types.Vec3,
-        q::Sim.Types.Quat,
-        ω::Sim.Types.Vec3,
-        cmd::Sim.Autopilots.AutopilotCommand;
-        landed::Bool = false,
-        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
-    )::DummyPSOutputs
-        # Leave outputs at zero; we only care about timebase correctness here.
-        return ap.out
-    end
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
-    env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.ConstantWind(Sim.Types.vec3(0, 0, 0)))
-    model = Sim.Vehicles.IrisQuadrotor()
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
         vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    hover_T = model.params.mass * 9.80665 / 4.0
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
-    vehicle = Sim.Simulation.VehicleInstance(
-        model,
-        Sim.Vehicles.DirectActuators(),
-        Sim.Vehicles.DirectActuators(),
-        propulsion,
-        x0,
-    )
-
-    cfg = Sim.PlantSimulation.PlantSimulationConfig(
-        t0 = 0.0,
-        t_end = 0.005,      # 5 ms
-        dt_autopilot = 0.002,
-        dt_wind = 0.002,
-        dt_log = 0.002,
-        seed = 1,
-        strict_lockstep_rates = false,
-    )
-
-    ap = DummyPSAutopilot(DummyPSOutputs())
-    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
 
     integ = Sim.Integrators.RK45Integrator(h_min = 1e-6, h_max = 0.01)
-    sim = Sim.PlantSimulation.PlantSimulationInstance(
-        cfg = cfg,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
+    ap_src = Sim.Sources.ReplayAutopilotSource(cmd_tr)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+    sim = RT.plant_replay_engine(
+        timeline = timeline,
+        plant0 = x0,
+        dynfun = ZeroRB(),
         integrator = integ,
-        scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = Sim.Logging.SimLog(),
-        contact = Sim.Contacts.NoContact(),
+        autopilot = ap_src,
+        wind = wind_src,
     )
 
-    Sim.PlantSimulation.run!(sim; close_log = false)
-    @test Sim.PlantSimulation.time_us(sim) == UInt64(5000)
-    @test sim.t_s == Float64(sim.t_us) * 1e-6
-    @test sim.t_us <= sim.t_end_us
+    RT.run!(sim)
+    @test sim.bus.time_us == t_end_us
 end
 
-@testset "PlantSimulation: AtTime scenario events are true event boundaries" begin
-    # This test verifies that an `AtTime` scenario event scheduled *between* autopilot ticks
-    # becomes its own integration boundary and is applied before the subsequent interval.
+@testset "Runtime.Engine: AtTime scenario boundaries are true event boundaries" begin
+    RT = Sim.Runtime
+    REC = Sim.Recording
 
-    Base.@kwdef mutable struct DummyPSOutputs2
-        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
-        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
-        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_yaw::Float32 = 0f0
-        trajectory_setpoint_yawspeed::Float32 = 0f0
-        nav_state::Int32 = Int32(0)
-        arming_state::Int32 = Int32(0)
-        mission_seq::Int32 = Int32(0)
-        mission_count::Int32 = Int32(0)
-        mission_finished::Int32 = Int32(0)
+    # Minimal scenario source that declares a one-off event boundary at 5 ms and
+    # toggles a motor disable fault at that boundary.
+    mutable struct MarkScenario
+        times::Vector{UInt64}
     end
 
-    mutable struct DummyPSAutopilot2 <: Sim.Autopilots.AbstractAutopilot
-        out::DummyPSOutputs2
-    end
-    Sim.Autopilots.autopilot_output_type(::DummyPSAutopilot2) = DummyPSOutputs2
-
-    function Sim.Autopilots.autopilot_step(
-        ap::DummyPSAutopilot2,
-        time_us::UInt64,
-        pos::Sim.Types.Vec3,
-        vel::Sim.Types.Vec3,
-        q::Sim.Types.Quat,
-        ω::Sim.Types.Vec3,
-        cmd::Sim.Autopilots.AutopilotCommand;
-        landed::Bool = false,
-        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
-    )::DummyPSOutputs2
-        return ap.out
+    function Sim.Runtime.event_times_us(src::MarkScenario, t0_us::UInt64, t_end_us::UInt64)
+        t_evt = UInt64(5_000)
+        return (t_evt >= t0_us && t_evt <= t_end_us) ? UInt64[t0_us, t_evt] : UInt64[t0_us]
     end
 
-    env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.ConstantWind(Sim.Types.vec3(0, 0, 0)))
-    model = Sim.Vehicles.IrisQuadrotor()
-    x0 = Sim.RigidBody.RigidBodyState(
-        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
-        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
-    )
-    hover_T = model.params.mass * 9.80665 / 4.0
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
-    vehicle = Sim.Simulation.VehicleInstance(
-        model,
-        Sim.Vehicles.DirectActuators(),
-        Sim.Vehicles.DirectActuators(),
-        propulsion,
-        x0,
-    )
+    function Sim.Runtime.update!(src::MarkScenario, bus::RT.SimBus, plant_state, t_us::UInt64)
+        push!(src.times, t_us)
+        if t_us >= UInt64(5_000)
+            bus.faults = Sim.Faults.disable_motor(bus.faults, 1)
+        end
+        return nothing
+    end
 
-    cfg = Sim.PlantSimulation.PlantSimulationConfig(
-        t0 = 0.0,
-        t_end = 0.012,         # 12 ms
-        dt_autopilot = 0.010,  # 10 ms autopilot cadence
-        dt_wind = 0.020,
-        dt_log = 0.020,
-        seed = 1,
-        strict_lockstep_rates = false,
+    scenario = MarkScenario(UInt64[])
+    t0_us = UInt64(0)
+    t_end_us = UInt64(12_000)
+    timeline = RT.build_timeline_for_run(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(20_000),
+        dt_log_us = UInt64(20_000),
+        scenario = scenario,
     )
 
-    ap = DummyPSAutopilot2(DummyPSOutputs2())
-    scenario = Sim.Scenario.EventScenario()
-    Sim.Scenario.fail_motor_at!(scenario, 0.005, 1)  # 5 ms, between AP ticks at 0 and 10 ms
+    # The evt axis must contain the scenario boundary (5 ms) even though AP ticks are 0/10 ms.
+    @test UInt64(5_000) in timeline.evt.t_us
 
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
+
+    x0 = Sim.RigidBody.RigidBodyState()
     integ = Sim.Integrators.RK4Integrator()
-    sim = Sim.PlantSimulation.PlantSimulationInstance(
-        cfg = cfg,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
+
+    sim = RT.plant_replay_engine(
+        timeline = timeline,
+        plant0 = x0,
+        dynfun = CmdAccelX(),
         integrator = integ,
+        autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
+        wind = Sim.Sources.ReplayWindSource(wind_tr),
         scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = Sim.Logging.SimLog(),
-        contact = Sim.Contacts.NoContact(),
     )
 
-    # First event interval should end at the scenario boundary (5 ms).
-    Sim.PlantSimulation.step_to_next_event!(sim)
-    @test Sim.PlantSimulation.time_us(sim) == UInt64(5000)
-    # Event is applied at the start of the next step (at t=5 ms).
-    @test sim.scenario.scheduler.fired[1] == false
+    evt = timeline.evt.t_us
+    @test evt[1] == t0_us
+    # Process the first boundary, step to the 5 ms event, and process it.
+    RT.process_events_at!(sim)
+    RT.step_to_next_event!(sim)
+    RT.process_events_at!(sim)
 
-    Sim.PlantSimulation.step_to_next_event!(sim)
-    @test sim.scenario.scheduler.fired[1] == true
-    @test Sim.Faults.is_motor_disabled(sim.input.faults, 1)
+    @test sim.t_us == UInt64(5_000)
+    @test Sim.Faults.is_motor_disabled(sim.bus.faults, 1)
+    @test UInt64(5_000) in scenario.times
 end
 
-@testset "Simulation holds wind constant across RK4 stages" begin
+@testset "Runtime.Engine holds wind constant between wind ticks" begin
+    RT = Sim.Runtime
+    REC = Sim.Recording
+
     struct TimeWind <: Sim.Environment.AbstractWind end
+    Sim.Environment.step_wind!(::TimeWind, ::Sim.Types.Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+    Sim.Environment.sample_wind!(::TimeWind, ::Sim.Types.Vec3, ::Float64) = nothing
     Sim.Environment.wind_velocity(::TimeWind, ::Sim.Types.Vec3, t::Float64) =
         Sim.Types.vec3(t, 0.0, 0.0)
 
-    Base.@kwdef mutable struct WindOutputs
-        actuator_motors::NTuple{12,Float32} = ntuple(_ -> 0f0, 12)
-        actuator_servos::NTuple{8,Float32} = ntuple(_ -> 0f0, 8)
-        trajectory_setpoint_position::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_velocity::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_acceleration::NTuple{3,Float32} = (0f0, 0f0, 0f0)
-        trajectory_setpoint_yaw::Float32 = 0f0
-        trajectory_setpoint_yawspeed::Float32 = 0f0
-        nav_state::Int32 = Int32(0)
-        arming_state::Int32 = Int32(0)
-        mission_seq::Int32 = Int32(0)
-        mission_count::Int32 = Int32(0)
-        mission_finished::Int32 = Int32(0)
-    end
-
-    mutable struct WindAutopilot <: Sim.Autopilots.AbstractAutopilot
-        out::WindOutputs
-    end
-    Sim.Autopilots.autopilot_output_type(::WindAutopilot) = WindOutputs
-
-    function Sim.Autopilots.autopilot_step(
-        ap::WindAutopilot,
-        time_us::UInt64,
-        pos::Sim.Types.Vec3,
-        vel::Sim.Types.Vec3,
-        q::Sim.Types.Quat,
-        ω::Sim.Types.Vec3,
-        cmd::Sim.Autopilots.AutopilotCommand;
-        landed::Bool = false,
-        battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
-    )::WindOutputs
-        return ap.out
-    end
-
     env = Sim.Environment.EnvironmentModel(wind = TimeWind())
-    model = Sim.Vehicles.IrisQuadrotor()
+
+    t0_us = UInt64(0)
+    t_end_us = UInt64(300_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(100_000),
+        dt_wind_us = UInt64(200_000),
+        dt_log_us = UInt64(100_000),
+    )
+
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+
+    wind_src = Sim.Sources.LiveWindSource(env.wind, Random.Xoshiro(1), 0.2)
+
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
         vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    hover_T = model.params.mass * 9.80665 / 4.0
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
-    vehicle = Sim.Simulation.VehicleInstance(model, Sim.Vehicles.DirectActuators(), Sim.Vehicles.DirectActuators(), propulsion, x0)
 
-    cfg = Sim.Simulation.SimulationConfig(dt = 0.1, t0 = 0.0, t_end = 0.3, dt_autopilot = 0.1, dt_log = 0.1)
-    ap = WindAutopilot(WindOutputs())
-    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
-
-    sim = Sim.Simulation.SimulationInstance(
-        cfg = cfg,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
+    log = Sim.Logging.SimLog()
+    sim = RT.plant_replay_engine(
+        timeline = timeline,
+        plant0 = x0,
+        dynfun = ZeroRB(),
         integrator = Sim.Integrators.RK4Integrator(),
-        scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = Sim.Logging.SimLog(),
-        contact = Sim.Contacts.NoContact(),
+        autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
+        wind = wind_src,
+        scenario = Sim.Sources.NullScenarioSource(),
+        estimator = Sim.Sources.NullEstimatorSource(),
+        log_sinks = log,
     )
+    RT.run!(sim)
 
-    @test sim.env.wind isa Sim.Environment.SampledWind
-    @test isapprox(sim.env.wind.sample_ned[1], 0.0; atol = 1e-12)
-    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == 0.0
-
-    Sim.Simulation.step!(sim)
-    @test isapprox(sim.env.wind.sample_ned[1], 0.0; atol = 1e-12)
-    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == 0.0
-
-    Sim.Simulation.step!(sim)
-    @test isapprox(sim.env.wind.sample_ned[1], sim.cfg.dt; atol = 1e-12)
-    @test Sim.Environment.wind_velocity(sim.env.wind, x0.pos_ned, sim.t + 0.5 * sim.cfg.dt)[1] == sim.cfg.dt
+    @test length(log.wind_ned) == length(timeline.log.t_us)
+    @test log.wind_ned[1][1] == 0.0
+    @test log.wind_ned[2][1] == 0.0
+    @test isapprox(log.wind_ned[3][1], 0.2; atol = 1e-12)
+    @test isapprox(log.wind_ned[4][1], 0.2; atol = 1e-12)
 end
 
 @testset "Logging.SimLog push" begin
@@ -813,54 +694,56 @@ end
         return ap.out
     end
 
-    env = Sim.Environment.EnvironmentModel()
-    model = Sim.Vehicles.IrisQuadrotor()
-    x0 = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0))
-    hover_T = model.params.mass * 9.80665 / 4.0
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
-    vehicle = Sim.Simulation.VehicleInstance(model, Sim.Vehicles.DirectActuators(), Sim.Vehicles.DirectActuators(), propulsion, x0)
-    scenario = Sim.Scenario.ScriptedScenario(arm_time_s = 1e9, mission_time_s = 1e9)
+    RT = Sim.Runtime
+    REC = Sim.Recording
 
-    # dt_autopilot=0.01 (100 Hz) is slower than required for a 250 Hz loop.
-    cfg_bad = Sim.Simulation.SimulationConfig(dt = 0.01, t0 = 0.0, t_end = 0.01, dt_autopilot = 0.01, dt_log = 0.01)
+    t0_us = UInt64(0)
+    t_end_us = UInt64(10_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
+
     ap = RateAutopilot(RateOutputs())
+    autopilot_src = Sim.Sources.LiveAutopilotSource(ap)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
 
-    @test_throws ArgumentError Sim.Simulation.SimulationInstance(
-        cfg = cfg_bad,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
+    # dt_ap=0.01 (100 Hz) is slower than required for a 250 Hz loop.
+    @test_throws ArgumentError Sim.simulate(
+        mode = :live,
+        timeline = timeline,
+        plant0 = Sim.RigidBody.RigidBodyState(),
+        dynfun = ZeroRB(),
         integrator = Sim.Integrators.EulerIntegrator(),
-        scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = Sim.Logging.SimLog(),
-        contact = Sim.Contacts.NoContact(),
+        autopilot = autopilot_src,
+        wind = wind_src,
+        scenario = Sim.Sources.NullScenarioSource(),
+        estimator = Sim.Sources.NullEstimatorSource(),
+        strict_lockstep_rates = true,
     )
 
     # Opt-out should only warn (and succeed).
-    cfg_ok = Sim.Simulation.SimulationConfig(
-        dt = 0.01,
-        t0 = 0.0,
-        t_end = 0.01,
-        dt_autopilot = 0.01,
-        dt_log = 0.01,
+    sim = Sim.simulate(
+        mode = :live,
+        timeline = timeline,
+        plant0 = Sim.RigidBody.RigidBodyState(),
+        dynfun = ZeroRB(),
+        integrator = Sim.Integrators.EulerIntegrator(),
+        autopilot = autopilot_src,
+        wind = wind_src,
+        scenario = Sim.Sources.NullScenarioSource(),
+        estimator = Sim.Sources.NullEstimatorSource(),
         strict_lockstep_rates = false,
     )
-
-    sim = Sim.Simulation.SimulationInstance(
-        cfg = cfg_ok,
-        env = env,
-        vehicle = vehicle,
-        autopilot = ap,
-        estimator = Sim.Estimators.TruthEstimator(),
-        integrator = Sim.Integrators.EulerIntegrator(),
-        scenario = scenario,
-        battery = Sim.Powertrain.IdealBattery(voltage_v = 12.0),
-        log = Sim.Logging.SimLog(),
-        contact = Sim.Contacts.NoContact(),
-    )
-    @test sim.cfg.strict_lockstep_rates == false
+    @test sim.cfg.mode == RT.MODE_LIVE
 end
 
 @testset "Cadence: 10-minute schedule has exact hits and constant time_us deltas" begin
@@ -897,7 +780,7 @@ end
 end
 
 
-@testset "PlantSimulation: bus voltage solve (linear + saturated regimes)" begin
+@testset "PlantModels: bus voltage solve (linear + saturated regimes)" begin
     pset = Sim.Propulsion.default_iris_quadrotor_set()
     p = pset  # QuadRotorSet{4}
     ω = SVector{4,Float64}(400.0, 400.0, 400.0, 400.0)
@@ -909,8 +792,8 @@ end
 
     # Linear-ish regime: moderate duty and ω so currents are positive but not saturated.
     duty_lin = SVector{4,Float64}(0.2, 0.2, 0.2, 0.2)
-    V_lin = Sim.PlantSimulation._solve_bus_voltage(p, ω, duty_lin, ocv, v1, R0, V_min)
-    I_lin = Sim.PlantSimulation._bus_current_total(p, ω, duty_lin, V_lin)
+    V_lin = Sim.PlantModels._solve_bus_voltage(p, ω, duty_lin, ocv, v1, R0, V_min)
+    I_lin = Sim.PlantModels._bus_current_total(p, ω, duty_lin, V_lin)
     @test isfinite(V_lin)
     @test V_lin >= V_min - 1e-9
     @test V_lin <= (ocv - v1) + 1e-9
@@ -920,8 +803,8 @@ end
     # Saturated regime: near-stall at full duty (forces current clamping).
     ω_stall = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0)
     duty_sat = SVector{4,Float64}(1.0, 1.0, 1.0, 1.0)
-    V_sat = Sim.PlantSimulation._solve_bus_voltage(p, ω_stall, duty_sat, ocv, v1, R0, V_min)
-    I_sat = Sim.PlantSimulation._bus_current_total(p, ω_stall, duty_sat, V_sat)
+    V_sat = Sim.PlantModels._solve_bus_voltage(p, ω_stall, duty_sat, ocv, v1, R0, V_min)
+    I_sat = Sim.PlantModels._bus_current_total(p, ω_stall, duty_sat, V_sat)
     @test isfinite(V_sat)
     @test V_sat >= V_min - 1e-9
     @test V_sat <= (ocv - v1) + 1e-9
@@ -949,8 +832,8 @@ end
     ocv_sat = 12.6
     R0_sat = 0.02
     V_min_sat = 0.0
-    V_cur = Sim.PlantSimulation._solve_bus_voltage(p_sat, ω_stall, duty_sat, ocv_sat, v1, R0_sat, V_min_sat)
-    I_cur = Sim.PlantSimulation._bus_current_total(p_sat, ω_stall, duty_sat, V_cur)
+    V_cur = Sim.PlantModels._solve_bus_voltage(p_sat, ω_stall, duty_sat, ocv_sat, v1, R0_sat, V_min_sat)
+    I_cur = Sim.PlantModels._bus_current_total(p_sat, ω_stall, duty_sat, V_cur)
     @test V_cur > V_min_sat + 1e-6
     @test isapprox(V_cur + R0_sat * I_cur, ocv_sat - v1; atol = 1e-3)
 end

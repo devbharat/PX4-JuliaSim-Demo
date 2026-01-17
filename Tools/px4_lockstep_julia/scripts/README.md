@@ -18,3 +18,14 @@ python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --outp
 ```
 
 Add `--show` to open an interactive window.
+
+## Integrator comparison plots
+
+If you run the integrator comparison with replay logs enabled (`IRIS_LOG_DIR`), you
+can generate summary + trajectory/error plots:
+
+```bash
+python Tools/px4_lockstep_julia/scripts/plot_integrator_compare.py \
+  --summary Tools/px4_lockstep_julia/examples/replay/out/iris_YYYYMMDD_HHMMSS_summary.csv \
+  --log-dir Tools/px4_lockstep_julia/examples/replay/out
+```

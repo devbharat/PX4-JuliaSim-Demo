@@ -29,7 +29,7 @@ Design constraints
   but those should be treated as *parameters* + a mirrored copy of the integrated state.
 
 This file focuses on shared plant data structures and helper math; coupled dynamics are
-implemented in `PlantSimulation.jl`.
+implemented in `PlantModels` (e.g., `PlantModels.CoupledMultirotorModel`).
 """
 module Plant
 
@@ -165,8 +165,16 @@ data. Fields may be `nothing` if not populated by the caller.
 """
 Base.@kwdef struct PlantOutputs{N}
     rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
+
+    # Electrical bus (positive current = discharge).
     bus_current_a::Float64 = 0.0
     bus_voltage_v::Float64 = NaN
+
+    # Atmosphere + local relative flow at the vehicle.
+    rho_kgm3::Float64 = NaN
+    temp_k::Float64 = NaN
+    air_vel_body::Vec3 = Vec3(NaN, NaN, NaN)
+
     battery_status::Union{Nothing,Powertrain.BatteryStatus} = nothing
 end
 

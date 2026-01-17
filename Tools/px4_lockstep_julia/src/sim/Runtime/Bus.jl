@@ -1,28 +1,22 @@
-"""Signal bus definition (Option A).
+"""Runtime.Bus
 
-The bus is the *explicit coupling contract* between components.
+Signal bus schema for the canonical `Sim.Runtime.Engine`.
 
-Design constraints
-------------------
-- **Typed**: fields have fixed meanings and units.
-- **Versioned**: `BUS_SCHEMA_VERSION` must change if semantics change.
-- **Deterministic sampling**: bus values are considered piecewise-constant between
-  event boundaries unless otherwise documented.
+The bus is the explicit coupling contract between discrete-time sources
+(scenario / wind / estimator / autopilot) and the continuous-time plant.
 
-The bus intentionally does not try to store everything. It stores the signals required
-to:
-- drive the plant (commands, wind, environment)
-- feed PX4 (battery status, pose)
-- support record/replay (streams aligned to time axes)
+Constraints
+-----------
+- **Typed**: fixed meaning + units per field.
+- **Versioned**: bump `BUS_SCHEMA_VERSION` if field semantics/units change.
+- **Deterministic sampling**: values are treated as piecewise-constant between
+  event boundaries unless documented otherwise.
 
-This file defines the schema and helper constructors.
-
-NOTE
-----
-This is a first-pass schema. Expect to iterate.
+This is intentionally minimal: it contains the signals required to:
+- drive the plant (actuator commands, wind, faults)
+- feed PX4 (battery status, estimated state)
+- record/replay (streams aligned to axes)
 """
-
-using StaticArrays
 
 using ..Types: Vec3, vec3, Quat
 using ..Vehicles: ActuatorCommand
@@ -31,39 +25,31 @@ using ..Autopilots: AutopilotCommand
 using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
-# Optional: for richer bus fields later.
-# using ..Plant: PlantState
-
 """Bump this when *field meanings or units* change."""
 const BUS_SCHEMA_VERSION = 5
 
-"""A minimal environment snapshot for bus-level coupling."""
+"""A minimal atmosphere snapshot for bus-level coupling."""
 Base.@kwdef struct EnvSample
     rho_kgm3::Float64 = 1.225
     temp_k::Float64 = 288.15
 end
 
-"""Battery telemetry as presented to PX4 and logs.
-
-We intentionally reuse `Sim.Powertrain.BatteryStatus` to avoid duplicate schema drift.
-"""
+"""Battery telemetry as presented to PX4 and logs."""
 const BatteryTelemetry = BatteryStatus
 
 """Top-level bus state.
 
 Fields
 ------
-- `time_us`: current simulation time (authoritative)
+- `time_us`: current simulation time (authoritative integer microseconds)
 - `cmd`: latest actuator command packet (ZOH between autopilot ticks)
 - `wind_ned`: latest wind sample (sample-and-hold between wind ticks)
-- `env`: atmosphere snapshot (typically derived from altitude deterministically)
-- `battery`: battery telemetry (updated by plant at boundaries)
-
-Future additions (likely)
-------------------------
-- PX4 setpoints (trajectory setpoint, thrust setpoint) for logging
-- sensor injection streams
-- failure/mode flags
+- `faults`: bus-level fault state (scenario publishes; plant consumes)
+- `ap_cmd`: high-level autopilot request (arm/mission/RTL)
+- `landed`: landed flag for PX4
+- `est`: estimated state presented to autopilot (truth or injected estimator)
+- `env`: minimal atmosphere sample (optional)
+- `battery`: battery telemetry presented to PX4
 """
 mutable struct SimBus
     schema_version::Int
@@ -79,10 +65,8 @@ mutable struct SimBus
     ap_cmd::AutopilotCommand
     landed::Bool
 
-    # Estimated state presented to the autopilot (deterministic discrete-time estimator).
-    #
-    # Contract: this field must be updated *before* the autopilot tick at the same `time_us`.
-    # `NullEstimatorSource` publishes truth-as-estimate.
+    # Estimated state presented to the autopilot.
+    # Contract: updated *before* the autopilot tick at the same `time_us`.
     est::EstimatedState
 
     env::EnvSample
@@ -111,12 +95,13 @@ end
 
 """Reset bus to a known baseline at time `t_us`.
 
-This is helpful for deterministic replays and tests.
+This is useful for deterministic replays and tests.
 """
 function reset_bus!(bus::SimBus, t_us::UInt64)
     bus.schema_version == BUS_SCHEMA_VERSION || error(
         "BUS_SCHEMA_VERSION mismatch: bus has $(bus.schema_version), expected $(BUS_SCHEMA_VERSION)",
     )
+
     bus.time_us = t_us
     bus.cmd = ActuatorCommand()
     bus.wind_ned = vec3(0, 0, 0)
@@ -133,3 +118,5 @@ function reset_bus!(bus::SimBus, t_us::UInt64)
     bus.battery = BatteryTelemetry()
     return nothing
 end
+
+export SimBus, BUS_SCHEMA_VERSION, reset_bus!, EnvSample

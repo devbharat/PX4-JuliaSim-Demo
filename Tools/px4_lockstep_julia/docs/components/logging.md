@@ -1,30 +1,93 @@
 # Logging
 
-## Role
+The `Sim.Logging` module provides a *structured logging* interface decoupled from record/replay:
 
-`src/sim/Logging.jl` provides deterministic logging with both in-memory and streaming
-CSV sinks.
+- **Record/replay** is handled by `Sim.Recording` (Tier-0 traces stored by a recorder).
+- **Logging** is handled by `Sim.Logging` (write “sim logs” to memory or a file sink).
 
-## Key Decisions and Rationale
+## What gets logged
 
-- **Columnar `SimLog`:** minimizes allocations and enables `reserve!` to size buffers for
-  long runs.
-- **Schema versioning:** `CSV_SCHEMA_VERSION` lets downstream tooling detect breaking
-  column changes.
-- **Pre-step snapshots:** logs represent the state at the start of each interval,
-  matching PX4 time semantics and controller sample-and-hold.
-- **Streaming option:** `CSVLogSink` writes incrementally to avoid large in-memory logs.
+A log entry is intended to represent a deterministic, pre-step snapshot of the sim at a boundary time `t_k`:
 
-## Integration Contracts
+- rigid body state (`RigidBodyState`) at `t_k`
+- actuator command applied at `t_k`
+- wind sample at `t_k`
+- (optionally) propulsion outputs (rotor thrust/omega)
+- (optionally) battery telemetry
 
-- Logging must not mutate simulation state.
-- Rotor outputs may be `NaN` when not available (non-plant or non-rotor cases).
+## Log sinks
 
-## Caveats
+A *log sink* receives log entries and decides how to store them.
 
-- Logs are pre-step snapshots; interpreting them as post-step states will shift
-  controller/plant timing.
-- `CSVLogSink` writes synchronously on each `log!` call and can become IO-bound for long
-  runs.
-- `time_us` defaults to rounding `t`; provide exact microsecond time for strict
-  lockstep analysis.
+Built-in sinks:
+
+- `Sim.Logging.SimLog` — an in-memory log (useful for debugging / quick plots)
+- `Sim.Logging.CSVLogSink` — writes the standard sim log schema to a CSV file
+
+Both implement `Sim.Logging.AbstractLogSink`.
+
+## Log schema
+
+The CSV output is defined by a single versioned schema object:
+
+- `Sim.Logging.csv_schema() -> LogSchema`
+
+The schema contains ordered columns with basic metadata:
+
+- `name` (CSV column name)
+- `unit`
+- `desc`
+
+CSV files written by `CSVLogSink` and `write_csv` start with:
+
+1. `# schema_version=<int>`
+2. `# schema_name=<string>`
+3. `<comma-separated header line>`
+
+This makes logs self-describing without adding any heavy dependencies.
+
+## Runtime integration
+
+`Sim.Runtime.Engine` supports log sinks via the `log_sinks` keyword.
+
+At each `timeline.log` boundary, the engine:
+
+1. records Tier-0 signals to the recorder (if one is present)
+2. emits a log entry to each configured log sink
+
+This makes logging usable in *live* runs even when you are not recording a Tier-0 trace.
+
+### Example: attach a CSV log sink
+
+```julia
+using PX4Lockstep
+const SIM = PX4Lockstep.Sim
+
+sink = SIM.Logging.CSVLogSink("out/sim_log.csv")
+
+sim = SIM.simulate(
+    mode = :live,
+    timeline = timeline,
+    plant0 = plant0,
+    dynfun = dynfun,
+    integrator = SIM.Integrators.RK4Integrator(),
+    autopilot = autopilot,
+    wind = wind,
+    scenario = scenario,
+    estimator = estimator,
+    telemetry = SIM.Runtime.NullTelemetry(),
+    recorder = nothing,
+    log_sinks = sink,   # <- can also pass a tuple/vector of sinks
+)
+
+SIM.Runtime.run!(sim)
+```
+
+## Adding new sinks (HDF5 later)
+
+To add a new sink (e.g., HDF5), implement:
+
+- `log!(sink, t_s, rb_state, actuator_cmd; kwargs...)`
+- `close!(sink)`
+
+and pass it via `log_sinks = ...`.

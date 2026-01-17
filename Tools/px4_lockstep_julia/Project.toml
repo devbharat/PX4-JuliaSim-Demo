@@ -3,6 +3,7 @@ uuid = "05d710f3-cab8-494a-a8a6-ce1ba4a271f6"
 version = "0.1.0"
 
 [deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -11,6 +12,7 @@ Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+Dates = "1"
 Libdl = "1"
 LinearAlgebra = "1"
 Printf = "1"

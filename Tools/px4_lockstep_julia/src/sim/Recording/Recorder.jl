@@ -1,17 +1,22 @@
-"""Recorders for Option A record/replay.
+"""Recording.Recorder
+
+Recorders for Option A record/replay.
 
 A recorder captures a set of **streams** aligned to time axes.
 
 This file defines:
 - `AbstractRecorder` interface
 - `NullRecorder` (no-op)
-- `InMemoryRecorder` (small deterministic capture suitable for tests)
+- `InMemoryRecorder` (deterministic capture suitable for tests and small runs)
 
-HDF5 support is planned but intentionally not implemented yet to keep dependencies
-minimal. See `docs/record_replay_todo.md`.
+Persistence backends
+--------------------
+The dependency-light first pass uses an in-memory recorder + Julia Serialization.
+For large logs/long missions, add an HDF5-backed recorder/writer (planned).
 """
 
-# NOTE: We are in `PX4Lockstep.Sim.RecordReplay`.
+using ..Runtime: TimeAxis, Timeline
+import ..Runtime: record!, finalize!
 
 abstract type AbstractRecorder end
 
@@ -23,10 +28,9 @@ struct NullRecorder <: AbstractRecorder end
 
 """In-memory deterministic recorder.
 
-This recorder stores streams as simple vectors in memory.
-It is intended for:
+This recorder stores streams as vectors in memory and is intended for:
 - unit tests
-- small debug runs
+- short debug runs
 
 It is **not** intended for long missions.
 
@@ -41,7 +45,7 @@ and later convert them into `Trace` objects.
 TODO
 ----
 - Enforce that recorded times match the expected timeline axes.
-- Add helpers that directly build `ZOHTrace/SampledTrace/SampleHoldTrace`.
+- Add an HDF5 backend for large runs.
 """
 mutable struct InMemoryRecorder <: AbstractRecorder
     times::Dict{Symbol,Vector{UInt64}}
@@ -136,19 +140,7 @@ function sampled_trace(rec::InMemoryRecorder, name::Symbol, axis::TimeAxis)
     return SampledTrace(axis, v)
 end
 
-"""Build the standard Tier-0 traces from an in-memory recorder.
-
-Expected streams
-----------------
-- `:cmd`      on `timeline.ap`
-- `:wind_ned` on `timeline.wind`
-- `:plant`    on `timeline.log`
-- `:battery`  on `timeline.log`
-
-Returns
--------
-NamedTuple `(cmd, wind_ned, plant, battery)` of trace objects.
-"""
+"""Build the standard Tier-0 traces from an in-memory recorder."""
 function tier0_traces(rec::InMemoryRecorder, timeline::Timeline)
     cmd = zoh_trace(rec, :cmd, timeline.ap)
     wind_ned = samplehold_trace(rec, :wind_ned, timeline.wind)
@@ -157,34 +149,7 @@ function tier0_traces(rec::InMemoryRecorder, timeline::Timeline)
     return (; cmd, wind_ned, plant, battery)
 end
 
-"""Build scenario output traces from an in-memory recorder.
-
-Scenario outputs are recorded as **bus streams**.
-
-Preferred (robust) streams
---------------------------
-If present, we prefer the `*_evt` streams aligned to `timeline.evt`:
-
-* `:ap_cmd_evt`  on `timeline.evt`
-* `:landed_evt`  on `timeline.evt`
-* `:faults_evt`  on `timeline.evt`
-
-These capture dynamic scenario outputs (e.g. `When(...)`-driven fault changes) that
-may change at arbitrary event boundaries.
-
-Fallback streams
-----------------
-For older recordings (or tiny static scenarios), we fall back to the small
-scenario-axis streams:
-
-* `:ap_cmd`  on `timeline.scn`
-* `:landed`  on `timeline.scn`
-* `:faults`  on `timeline.scn`
-
-Returns
--------
-NamedTuple `(ap_cmd, landed, faults)` containing `ZOHTrace`s.
-"""
+"""Build scenario output traces from an in-memory recorder."""
 function scenario_traces(rec::InMemoryRecorder, timeline::Timeline)
     if haskey(rec.times, :faults_evt)
         ap_cmd = zoh_trace(rec, :ap_cmd_evt, timeline.evt)
@@ -199,20 +164,7 @@ function scenario_traces(rec::InMemoryRecorder, timeline::Timeline)
     return (; ap_cmd, landed, faults)
 end
 
-"""Build estimator output trace from an in-memory recorder.
-
-Expected streams
-----------------
-* `:est` on `timeline.ap`
-
-Returns
--------
-NamedTuple `(est,)` containing a `ZOHTrace`.
-
-Notes
------
-This is optional and is typically recorded only in Tier-1+.
-"""
+"""Build estimator output trace from an in-memory recorder."""
 function estimator_traces(rec::InMemoryRecorder, timeline::Timeline)
     est = zoh_trace(rec, :est, timeline.ap)
     return (; est)
@@ -225,3 +177,9 @@ TODO: implement HDF5 backend.
 function write_recording(::AbstractRecorder, ::AbstractString)
     error("TODO: write_recording is not implemented yet (planned HDF5 backend)")
 end
+
+export AbstractRecorder, NullRecorder, InMemoryRecorder
+export stream_times, stream_values
+export zoh_trace, samplehold_trace, sampled_trace
+export tier0_traces, scenario_traces, estimator_traces
+export write_recording

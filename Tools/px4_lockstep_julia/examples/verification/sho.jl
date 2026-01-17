@@ -44,29 +44,52 @@ function main()
         @printf("%-6s  %-8.4g  %-12.3e  %-12.3e\n", name, h, x_err, dE)
     end
 
-    # Adaptive RK45: integrate the whole interval in one call.
-    rk45 = Sim.Integrators.RK45Integrator(
-        rtol_pos = 1e-10,
-        atol_pos = 1e-10,
-        rtol_vel = 1e-10,
-        atol_vel = 1e-10,
-        rtol_ω = 1e-12,
-        atol_ω = 1e-12,
-        atol_att_rad = 1e-12,
-        h_min = 1e-6,
-        h_max = 0.05,
-    )
+    adaptive = [
+        (
+            "RK23",
+            Sim.Integrators.RK23Integrator(
+                rtol_pos = 1e-10,
+                atol_pos = 1e-10,
+                rtol_vel = 1e-10,
+                atol_vel = 1e-10,
+                rtol_ω = 1e-12,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.05,
+            ),
+        ),
+        (
+            "RK45",
+            Sim.Integrators.RK45Integrator(
+                rtol_pos = 1e-10,
+                atol_pos = 1e-10,
+                rtol_vel = 1e-10,
+                atol_vel = 1e-10,
+                rtol_ω = 1e-12,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.05,
+            ),
+        ),
+    ]
 
-    x_end = Sim.Integrators.step_integrator(rk45, f, 0.0, x0, nothing, T)
-    x_ref, v_ref = V.sho_analytic(case, T)
-    x_err = abs(x_end.pos_ned[1] - x_ref)
-    E0 = V.sho_energy(case, case.x0, case.v0)
-    E1 = V.sho_energy(case, x_end.pos_ned[1], x_end.vel_ned[1])
-    dE = abs(E1 - E0) / E0
-    @printf("%-6s  %-8s  %-12.3e  %-12.3e\n", "RK45", "adapt", x_err, dE)
+    stats = Tuple{String,Sim.Integrators.IntegratorStats}[]
+    for (name, integ) in adaptive
+        x_end = Sim.Integrators.step_integrator(integ, f, 0.0, x0, nothing, T)
+        x_ref, v_ref = V.sho_analytic(case, T)
+        x_err = abs(x_end.pos_ned[1] - x_ref)
+        E0 = V.sho_energy(case, case.x0, case.v0)
+        E1 = V.sho_energy(case, x_end.pos_ned[1], x_end.vel_ned[1])
+        dE = abs(E1 - E0) / E0
+        @printf("%-6s  %-8s  %-12.3e  %-12.3e\n", name, "adapt", x_err, dE)
+        push!(stats, (name, Sim.Integrators.last_stats(integ)))
+    end
 
-    st = Sim.Integrators.last_stats(rk45)
-    println("\nRK45 stats: nfev=$(st.nfev), accept=$(st.naccept), reject=$(st.nreject), h_last=$(st.h_last)")
+    for (name, st) in stats
+        println("\n$(name) stats: nfev=$(st.nfev), accept=$(st.naccept), reject=$(st.nreject), h_last=$(st.h_last)")
+    end
 end
 
 main()

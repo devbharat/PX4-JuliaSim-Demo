@@ -2,12 +2,13 @@ using Test
 using StaticArrays
 
 const Sim = PX4Lockstep.Sim
-const RR = Sim.RecordReplay
+const RT = Sim.Runtime
+const REC = Sim.Recording
 
 """A minimal deterministic dynamics: x-acceleration from cmd.motors[1].
 
 We use `RigidBodyState` only (attitude/body rates are held constant), so this exercises:
-- record/replay scheduling
+- event-boundary traversal on `Timeline.evt`
 - ZOH command sampling between autopilot ticks
 - deterministic timeline traversal
 """
@@ -24,11 +25,11 @@ function (f::CmdAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plan
 end
 
 
-@testset "RecordReplay.BusEngine: replay integration matches analytic" begin
+@testset "Runtime.Engine: replay integration matches analytic" begin
     # 0.1s run, autopilot is the densest axis so evt == ap (piecewise-constant inputs).
     t0_us = UInt64(0)
     t_end_us = UInt64(100_000)
-    timeline = RR.build_timeline(
+    timeline = RT.build_timeline(
         t0_us,
         t_end_us;
         dt_ap_us = UInt64(10_000),
@@ -43,10 +44,10 @@ end
         motors = SVector{12,Float64}(ntuple(j -> j == 1 ? a : 0.0, 12))
         cmd_data[i] = Sim.Vehicles.ActuatorCommand(motors = motors)
     end
-    cmd_tr = RR.ZOHTrace(timeline.ap, cmd_data)
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
 
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
-    wind_tr = RR.SampleHoldTrace(timeline.wind, wind_data)
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
@@ -56,16 +57,18 @@ end
     )
 
     integ = Sim.Integrators.RK4Integrator()
-    sim = RR.plant_replay_engine(
+    ap_src = Sim.Sources.ReplayAutopilotSource(cmd_tr)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+    sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
         dynfun = CmdAccelX(),
         integrator = integ,
-        cmd_trace = cmd_tr,
-        wind_trace = wind_tr,
+        autopilot = ap_src,
+        wind = wind_src,
     )
 
-    RR.run!(sim)
+    RT.run!(sim)
 
     # Analytic: acceleration 0 for 0.05s, then 1 for 0.05s.
     @test isapprox(sim.plant.vel_ned[1], 0.05; atol = 1e-12)
@@ -73,10 +76,10 @@ end
 end
 
 
-@testset "RecordReplay.BusEngine: record mode captures axis-aligned traces" begin
+@testset "Runtime.Engine: record mode captures axis-aligned traces" begin
     t0_us = UInt64(0)
     t_end_us = UInt64(100_000)
-    timeline = RR.build_timeline(
+    timeline = RT.build_timeline(
         t0_us,
         t_end_us;
         dt_ap_us = UInt64(10_000),
@@ -90,10 +93,10 @@ end
         motors = SVector{12,Float64}(ntuple(j -> j == 1 ? a : 0.0, 12))
         cmd_data[i] = Sim.Vehicles.ActuatorCommand(motors = motors)
     end
-    cmd_tr = RR.ZOHTrace(timeline.ap, cmd_data)
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
 
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
-    wind_tr = RR.SampleHoldTrace(timeline.wind, wind_data)
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
@@ -102,22 +105,24 @@ end
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
 
-    rec = RR.InMemoryRecorder()
+    rec = REC.InMemoryRecorder()
     integ = Sim.Integrators.EulerIntegrator()
-    sim = RR.plant_replay_engine(
+
+    ap_src = Sim.Sources.ReplayAutopilotSource(cmd_tr)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+
+    sim = RT.plant_record_engine(
         timeline = timeline,
         plant0 = x0,
         dynfun = CmdAccelX(),
         integrator = integ,
-        cmd_trace = cmd_tr,
-        wind_trace = wind_tr,
+        autopilot = ap_src,
+        wind = wind_src,
         recorder = rec,
     )
+    RT.run!(sim)
 
-    sim.cfg = RR.EngineConfig(mode = RR.MODE_RECORD)
-    RR.run!(sim)
-
-    traces = RR.tier0_traces(rec, timeline)
+    traces = REC.tier0_traces(rec, timeline)
 
     @test traces.cmd.axis.t_us == timeline.ap.t_us
     @test traces.wind_ned.axis.t_us == timeline.wind.t_us
@@ -128,10 +133,57 @@ end
 end
 
 
-@testset "RecordReplay.BusEngine: DirectActuators snap at autopilot ticks" begin
+@testset "Runtime.Engine: record_estimator captures estimator stream" begin
+    t0_us = UInt64(0)
+    t_end_us = UInt64(20_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    cmd_data = [Sim.Vehicles.ActuatorCommand() for _ in timeline.ap.t_us]
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
+
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(1.0, 2.0, 3.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    rec = REC.InMemoryRecorder()
+    Sim.simulate(
+        mode = :record,
+        timeline = timeline,
+        plant0 = x0,
+        dynfun = CmdAccelX(),
+        integrator = Sim.Integrators.EulerIntegrator(),
+        autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
+        wind = Sim.Sources.ReplayWindSource(wind_tr),
+        scenario = Sim.Sources.NullScenarioSource(),
+        estimator = Sim.Sources.NullEstimatorSource(),
+        recorder = rec,
+        record_estimator = true,
+    )
+
+    traces = REC.estimator_traces(rec, timeline)
+    @test traces.est.axis.t_us == timeline.ap.t_us
+    @test traces.est isa REC.ZOHTrace
+    @test traces.est.data[1].pos_ned == x0.pos_ned
+    @test traces.est.data[end].pos_ned == x0.pos_ned
+end
+
+
+@testset "Runtime.Engine: DirectActuators snap at autopilot ticks" begin
     t0_us = UInt64(0)
     t_end_us = UInt64(10_000)
-    timeline = RR.build_timeline(
+    timeline = RT.build_timeline(
         t0_us,
         t_end_us;
         dt_ap_us = UInt64(10_000),
@@ -141,10 +193,10 @@ end
 
     motors = SVector{12,Float64}(ntuple(i -> i <= 4 ? 0.5 : 0.0, 12))
     cmd_data = [Sim.Vehicles.ActuatorCommand(motors = motors) for _ in timeline.ap.t_us]
-    cmd_tr = RR.ZOHTrace(timeline.ap, cmd_data)
+    cmd_tr = REC.ZOHTrace(timeline.ap, cmd_data)
 
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
-    wind_tr = RR.SampleHoldTrace(timeline.wind, wind_data)
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
     env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.NoWind())
     model = Sim.Vehicles.IrisQuadrotor()
@@ -156,7 +208,7 @@ end
     rb0 = Sim.RigidBody.RigidBodyState()
     plant0 = Sim.Plant.init_plant_state(rb0, motor_act, servo_act, propulsion, battery)
 
-    dynfun = Sim.PlantSimulation.PlantDynamicsWithContact(
+    dynfun = Sim.PlantModels.CoupledMultirotorModel(
         model,
         env,
         Sim.Contacts.NoContact(),
@@ -167,34 +219,36 @@ end
     )
 
     integ = Sim.Integrators.RK4Integrator()
-    sim = RR.plant_replay_engine(
+    ap_src = Sim.Sources.ReplayAutopilotSource(cmd_tr)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+    sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = plant0,
         dynfun = dynfun,
         integrator = integ,
-        cmd_trace = cmd_tr,
-        wind_trace = wind_tr,
+        autopilot = ap_src,
+        wind = wind_src,
     )
 
-    RR.run!(sim)
+    RT.run!(sim)
 
     @test sim.plant.rotor_ω[1] > 0.0
 end
 
 
-@testset "RecordReplay.load_recording enforces schema version" begin
-    timeline = RR.build_timeline(UInt64(0), UInt64(1_000);
+@testset "Recording.load_recording enforces schema version" begin
+    timeline = RT.build_timeline(UInt64(0), UInt64(1_000);
         dt_ap_us = UInt64(1_000),
         dt_wind_us = UInt64(1_000),
         dt_log_us = UInt64(1_000),
     )
-    rec = RR.Tier0Recording(
-        bus_schema_version = RR.BUS_SCHEMA_VERSION - 1,
+    rec = REC.Tier0Recording(
+        bus_schema_version = RT.BUS_SCHEMA_VERSION - 1,
         timeline = timeline,
         plant0 = Sim.RigidBody.RigidBodyState(),
-        recorder = RR.InMemoryRecorder(),
+        recorder = REC.InMemoryRecorder(),
     )
     path = joinpath(mktempdir(), "bad_recording.jls")
-    RR.save_recording(path, rec)
-    @test_throws ErrorException RR.load_recording(path)
+    REC.save_recording(path, rec)
+    @test_throws ErrorException REC.load_recording(path)
 end

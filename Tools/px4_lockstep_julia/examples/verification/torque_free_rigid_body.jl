@@ -57,30 +57,54 @@ function main()
         @printf("%-6s  %-8.4g  %-12.3e  %-12.3e  %-12.3e\n", name, dt, dE, dL, qn)
     end
 
-    # Adaptive RK45 reference.
-    rk45 = Sim.Integrators.RK45Integrator(
-        rtol_pos = 1e-12,
-        atol_pos = 1e-12,
-        rtol_vel = 1e-12,
-        atol_vel = 1e-12,
-        rtol_ω = 1e-10,
-        atol_ω = 1e-12,
-        atol_att_rad = 1e-12,
-        h_min = 1e-6,
-        h_max = 0.02,
-    )
-    x_end = Sim.Integrators.step_integrator(rk45, f, 0.0, x0, nothing, T)
+    adaptive = [
+        (
+            "RK23",
+            Sim.Integrators.RK23Integrator(
+                rtol_pos = 1e-12,
+                atol_pos = 1e-12,
+                rtol_vel = 1e-12,
+                atol_vel = 1e-12,
+                rtol_ω = 1e-10,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.02,
+            ),
+        ),
+        (
+            "RK45",
+            Sim.Integrators.RK45Integrator(
+                rtol_pos = 1e-12,
+                atol_pos = 1e-12,
+                rtol_vel = 1e-12,
+                atol_vel = 1e-12,
+                rtol_ω = 1e-10,
+                atol_ω = 1e-12,
+                atol_att_rad = 1e-12,
+                h_min = 1e-6,
+                h_max = 0.02,
+            ),
+        ),
+    ]
 
-    E0 = V.rigidbody_rot_energy(case.I_body, x0.ω_body)
-    E1 = V.rigidbody_rot_energy(case.I_body, x_end.ω_body)
-    dE = abs(E1 - E0) / E0
-    L0 = V.rigidbody_angmom_ned(x0.q_bn, case.I_body, x0.ω_body)
-    L1 = V.rigidbody_angmom_ned(x_end.q_bn, case.I_body, x_end.ω_body)
-    dL = norm(L1 - L0)
-    qn = abs(norm(x_end.q_bn) - 1.0)
-    @printf("%-6s  %-8s  %-12.3e  %-12.3e  %-12.3e\n", "RK45", "adapt", dE, dL, qn)
-    st = Sim.Integrators.last_stats(rk45)
-    println("\nRK45 stats: nfev=$(st.nfev), accept=$(st.naccept), reject=$(st.nreject), h_last=$(st.h_last)")
+    stats = Tuple{String,Sim.Integrators.IntegratorStats}[]
+    for (name, integ) in adaptive
+        x_end = Sim.Integrators.step_integrator(integ, f, 0.0, x0, nothing, T)
+        E0 = V.rigidbody_rot_energy(case.I_body, x0.ω_body)
+        E1 = V.rigidbody_rot_energy(case.I_body, x_end.ω_body)
+        dE = abs(E1 - E0) / E0
+        L0 = V.rigidbody_angmom_ned(x0.q_bn, case.I_body, x0.ω_body)
+        L1 = V.rigidbody_angmom_ned(x_end.q_bn, case.I_body, x_end.ω_body)
+        dL = norm(L1 - L0)
+        qn = abs(norm(x_end.q_bn) - 1.0)
+        @printf("%-6s  %-8s  %-12.3e  %-12.3e  %-12.3e\n", name, "adapt", dE, dL, qn)
+        push!(stats, (name, Sim.Integrators.last_stats(integ)))
+    end
+
+    for (name, st) in stats
+        println("\n$(name) stats: nfev=$(st.nfev), accept=$(st.naccept), reject=$(st.nreject), h_last=$(st.h_last)")
+    end
 end
 
 main()

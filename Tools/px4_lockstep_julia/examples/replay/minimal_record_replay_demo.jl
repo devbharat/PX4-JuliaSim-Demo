@@ -5,7 +5,7 @@ This script is intentionally tiny and deterministic. It does **not** run PX4.
 It demonstrates the core Option A loop:
 - build a multi-axis `Timeline`
 - define recorded `cmd(t)` and `wind(t)` traces
-- run `BusEngine` in replay mode
+- run `Engine` in replay mode
 - run again in record mode and rebuild traces from the recorder
 
 Run
@@ -17,7 +17,9 @@ using StaticArrays
 using PX4Lockstep
 
 const Sim = PX4Lockstep.Sim
-const RR = Sim.RecordReplay
+const RT = Sim.Runtime
+const Rec = Sim.Recording
+const Log = Sim.Logging
 
 struct CmdAccelX end
 
@@ -35,13 +37,19 @@ end
 function main()
     t0_us = UInt64(0)
     t_end_us = UInt64(100_000)
-    timeline = RR.build_timeline(
+    timeline = RT.build_timeline(
         t0_us,
         t_end_us;
         dt_ap_us = UInt64(10_000),
         dt_wind_us = UInt64(20_000),
         dt_log_us = UInt64(50_000),
     )
+
+    # Optional: structured log sink (CSV). This is independent of the Tier-0 recorder.
+    out_dir = joinpath(@__DIR__, "out")
+    mkpath(out_dir)
+    csv_sink_replay = Log.CSVLogSink(joinpath(out_dir, "demo_log_replay.csv"))
+    csv_sink_record = Log.CSVLogSink(joinpath(out_dir, "demo_log_record.csv"))
 
     # Command: 0 for t < 0.05, 1 for t >= 0.05.
     cmd_data = Vector{Sim.Vehicles.ActuatorCommand}(undef, length(timeline.ap.t_us))
@@ -50,10 +58,13 @@ function main()
         motors = SVector{12,Float64}(ntuple(j -> j == 1 ? a : 0.0, 12))
         cmd_data[i] = Sim.Vehicles.ActuatorCommand(motors = motors)
     end
-    cmd_tr = RR.ZOHTrace(timeline.ap, cmd_data)
+    cmd_tr = Rec.ZOHTrace(timeline.ap, cmd_data)
 
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
-    wind_tr = RR.SampleHoldTrace(timeline.wind, wind_data)
+    wind_tr = Rec.SampleHoldTrace(timeline.wind, wind_data)
+
+    ap_src = Sim.Sources.ReplayAutopilotSource(cmd_tr)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
 
     x0 = Sim.RigidBody.RigidBodyState(
         pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
@@ -63,33 +74,34 @@ function main()
     )
 
     # Replay run.
-    sim = RR.plant_replay_engine(
+    sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
         dynfun = CmdAccelX(),
         integrator = Sim.Integrators.RK4Integrator(),
-        cmd_trace = cmd_tr,
-        wind_trace = wind_tr,
+        autopilot = ap_src,
+        wind = wind_src,
+        log_sinks = csv_sink_replay,
     )
-    RR.run!(sim)
+    RT.run!(sim)
 
     println("Replay final pos_x = ", sim.plant.pos_ned[1], "  vel_x = ", sim.plant.vel_ned[1])
 
     # Record run (using the same replay sources, just to show trace capture + rebuild).
-    rec = RR.InMemoryRecorder()
-    sim2 = RR.plant_replay_engine(
+    rec = Rec.InMemoryRecorder()
+    sim2 = RT.plant_record_engine(
         timeline = timeline,
         plant0 = x0,
         dynfun = CmdAccelX(),
         integrator = Sim.Integrators.EulerIntegrator(),
-        cmd_trace = cmd_tr,
-        wind_trace = wind_tr,
+        autopilot = ap_src,
+        wind = wind_src,
         recorder = rec,
+        log_sinks = csv_sink_record,
     )
-    sim2.cfg = RR.EngineConfig(mode = RR.MODE_RECORD)
-    RR.run!(sim2)
+    RT.run!(sim2)
 
-    tr2 = RR.tier0_traces(rec, timeline)
+    tr2 = Rec.tier0_traces(rec, timeline)
     println("Recorded cmd samples: ", length(tr2.cmd.data), ", wind samples: ", length(tr2.wind_ned.data))
 end
 

@@ -29,7 +29,7 @@ high-level mission inputs and discrete event injection.
 ## Caveats
 
 - `AtTime` requires microsecond-quantized times; non-quantized values raise errors.
-- `AtStep` events require a fixed-step engine with a `step` counter.
+- `AtStep` events are not currently supported by the canonical engine (`Runtime.Engine`). Prefer `AtTime` (possibly derived from `timeline.phys`), or extend the runtime to expose a deterministic step counter.
 - `When` events can fire late by up to one event interval in the event-driven engine.
 - `ScriptedScenario` uses float time thresholds; align them to `dt` for deterministic
   tick boundaries.

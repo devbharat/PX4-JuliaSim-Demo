@@ -123,7 +123,7 @@ Consumes:
 
 Location:
 
-* `src/sim/PlantSimulation.jl` (`_eval_propulsion_and_bus` and bus solve path)
+* `src/sim/PlantModels/CoupledMultirotor.jl` (`_eval_propulsion_and_bus` and bus solve path)
 
 ### 3.3 Estimator source (discrete consumer)
 
@@ -133,7 +133,7 @@ Consumes:
 
 Location:
 
-* `src/sim/RecordReplay/Sources.jl` (`LiveEstimatorSource.update!`)
+* `src/sim/Sources/Estimator.jl` (`LiveEstimatorSource.update!`)
 
 ### 3.4 Autopilot source (discrete consumer)
 

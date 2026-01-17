@@ -16,7 +16,12 @@ query algebraic plant outputs at event boundaries.
 
 - Implementations must be pure and deterministic.
 - Engines should call `plant_outputs` only at event boundaries.
-- `PlantSimulation.PlantDynamicsWithContact` supplies the default implementation.
+- `PlantModels.CoupledMultirotorModel` supplies the default implementation.
+
+Additional protocol
+-------------------
+`plant_project(f, x)` may be implemented by a plant model to enforce deterministic
+hard bounds (e.g., ω ≥ 0, SOC ∈ [0,1]) after each accepted integration interval.
 
 ## Caveats
 

@@ -114,7 +114,7 @@ end
 
 @inline function _sim_now_us(sim)::UInt64
     T = typeof(sim)
-    # PlantSimulationInstance-style timebase.
+    # Engine-style timebase.
     if Base.hasfield(T, :t_us)
         return getfield(sim, :t_us)
     end

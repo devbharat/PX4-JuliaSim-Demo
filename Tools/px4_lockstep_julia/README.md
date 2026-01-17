@@ -31,14 +31,15 @@ julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 4. Run the example:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
 ```
 
-5. Run the adaptive PlantSimulation example (full-plant RK45):
+5. Recommended: run the **record → replay integrator comparison** (PX4 live, then plant-only replay sweep):
 
 ```bash
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_plantsim.jl
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
 ```
 
 Outputs:
@@ -138,57 +139,50 @@ The simulation framework is organized as composable modules:
   * thin bridge from sim truth → PX4 lockstep inputs
 * `PX4Lockstep.Sim.Logging`
   * `SimLog` in-memory logging and `CSVLogSink` streaming logs
-* `PX4Lockstep.Sim.Simulation`
-  * deterministic engine: scenario → PX4 → actuators → integrate → log
-* `PX4Lockstep.Sim.PlantSimulation`
-  * event-driven variable-step engine: integrates full plant between event boundaries
-* `PX4Lockstep.Sim.RecordReplay`
-  * **WIP** first-class record/replay architecture based on an event-sourced typed signal bus
-  * design docs: `Tools/px4_lockstep_julia/docs/record_replay.md`
-  * TODO tracker: `Tools/px4_lockstep_julia/docs/record_replay_todo.md`
+* `PX4Lockstep.Sim.Runtime`
+  * **canonical** event-driven engine (live / record / replay)
+  * integrates full plant between event boundaries using fixed or adaptive integrators
+* `PX4Lockstep.Sim.Recording` / `PX4Lockstep.Sim.Sources`
+  * traces, recorders, and live/replay sources feeding the runtime engine
+* `PX4Lockstep.Sim.PlantModels`
+  * plant RHS functors and bus-coupled plant output evaluation (`plant_outputs`)
 
 ### Estimator injection (noise + delay)
 
-You can inject estimated-state noise and latency before PX4 sees the state:
+Estimator injection (noise, bias, and delay) is provided by discrete **sources**.
 
-```julia
-base_est = Sim.Estimators.NoisyEstimator(
-    pos_sigma_m=Sim.Types.vec3(0.3, 0.3, 0.5),
-    vel_sigma_mps=Sim.Types.vec3(0.1, 0.1, 0.2),
-    yaw_sigma_rad=deg2rad(2.0),
-    rate_sigma_rad_s=Sim.Types.vec3(0.02, 0.02, 0.03),
-    bias_tau_s=20.0,
-    pos_bias_sigma_m=Sim.Types.vec3(0.5, 0.5, 0.5),
-)
+- Live runs typically use `Sim.Sources.LiveEstimatorSource(estimator_model, rng; dt_est_s=...)`.
+- Replay runs can use `Sim.Sources.ReplayEstimatorSource(trace)`.
 
-# NOTE: `DelayedEstimator` is step-quantized. In this sim, the estimator is stepped at the
-# autopilot cadence (`dt_autopilot` / effective `ap_dt`), so `dt_est` must match that cadence
-# and `delay_s` must be an exact multiple.
-est = Sim.Estimators.DelayedEstimator(base_est; delay_s=0.008, dt_est=0.004)
-
-sim = Sim.Simulation.SimulationInstance(
-    ...,
-    estimator=est,
-)
-```
+See `src/sim/Workflows/Iris.jl` for an end-to-end configuration (it wires a noisy + delayed estimator into the runtime engine at the autopilot cadence).
 
 ### Multi-rate stepping
 
-Use `dt_autopilot` and `dt_log` to decouple physics, PX4, and logging rates:
+The simulator is event-driven. You configure cadences via a `Sim.Runtime.Timeline`:
+
+- `ap` axis: PX4 lockstep ticks
+- `wind` axis: wind sample-and-hold updates
+- `log` axis: logging samples
+- optional `phys` axis: fixed physics step boundaries (if you want strict fixed-step integration)
+
+Example:
 
 ```julia
-sim_cfg = Sim.Simulation.SimulationConfig(
-    dt=0.002,
-    dt_autopilot=0.01,
-    dt_log=0.01,
-    t_end=90.0,
-    seed=1,
+using PX4Lockstep.Sim
+
+timeline = Sim.Runtime.build_timeline(
+    t_end_s=20.0,
+    dt_autopilot_s=0.004,
+    dt_wind_s=0.004,
+    dt_log_s=0.01,
+    dt_phys_s=0.002,  # optional
 )
 ```
 
-For `PX4LockstepAutopilot`, the simulator checks that `dt_autopilot` is not slower than
-the fastest enabled internal PX4 task rate (derived from the lockstep config). This is
-enforced by default; set `strict_lockstep_rates=false` to override.
+The runtime engine integrates the full plant between the **next** boundaries in the union axis.
+Between boundaries, inputs are held constant (ZOH).
+
+For PX4 lockstep, the autopilot cadence must be compatible with the PX4 internal scheduling. The autopilot bridge enforces this by default.
 
 ### Extending
 
@@ -206,8 +200,14 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 * CSV logs include `time_us` (exact lockstep microsecond time) as of `schema_version=2`.
 
 ## Example Run
-```PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/iris_mission_lockstep_sim.jl
-python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --output sim_plot.png --inflow-output sim_inflow.png
+```bash
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+
+python Tools/px4_lockstep_julia/scripts/plot_sim_log.py \
+  --log sim_log.csv \
+  --output sim_plot.png \
+  --inflow-output sim_inflow.png
 ```
 <img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
 <img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />

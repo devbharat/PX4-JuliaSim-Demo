@@ -1,20 +1,20 @@
-# Record/Replay Examples (Option A)
+# Record/Replay Examples
 
-These examples are **scaffolding** for the new first-class record/replay architecture
-(`PX4Lockstep.Sim.RecordReplay`).
+These examples exercise the unified simulation runtime:
 
-Status: **partially functional**.
-
-* `minimal_record_replay_demo.jl` demonstrates the core bus + timeline + traces + engine loop (no PX4).
-* Iris PX4-live **record** and plant-only **replay** are working.
-
-The goal is to make the intended workflows explicit and then fill in the implementation
-in small, verifiable steps.
+- `PX4Lockstep.Sim.Runtime` (one canonical engine)
+- `PX4Lockstep.Sim.Recording` (Tier-0 recorder + traces)
+- `PX4Lockstep.Sim.Sources` (live + replay sources)
+- `PX4Lockstep.Sim.Workflows` ("just run it" wrappers)
 
 ## Quick start: Iris integrator comparison (recommended)
 
-This is the clean UX wrapper that records a baseline PX4 run and then sweeps
-plant integrators via replay:
+This is the "clean UX" wrapper:
+
+- run a short PX4 lockstep mission **live**
+- **record** Tier-0 streams
+- **replay** the exact same inputs while sweeping plant integrators
+- write CSV summaries under `examples/replay/out/`
 
 ```bash
 PX4_LOCKSTEP_LIB=/path/to/libpx4_lockstep.(so|dylib) \
@@ -22,30 +22,22 @@ PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints 
   julia --project=Tools/px4_lockstep_julia -O3 Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
 ```
 
-It will write a Tier-0 recording and a summary CSV under `examples/replay/out/`.
+To emit per-solver replay logs for plotting, set `IRIS_LOG_DIR` (and optionally
+`IRIS_LOG_PREFIX`). This will create CSV logs named like
+`<prefix>_ref_log.csv` and `<prefix>_<solver>_log.csv`.
 
-## Intended workflows
+## Minimal deterministic demo (no PX4)
 
-### 1) Iris record run (PX4 live)
-- Run PX4 lockstep live
-- Record Tier-0 streams:
-  - `cmd(t)` on autopilot ticks
-  - `wind(t)` on wind ticks
-  - `plant(t)` + `battery(t)` on log ticks
-  - scenario outputs (including `faults`) on scenario/event ticks
+- `minimal_record_replay_demo.jl` demonstrates the core timeline + traces + replay loop.
 
-### 2) Iris plant-only replay (integrator sweep)
-- Replace PX4 with `ReplayAutopilotSource` using recorded `cmd(t)`
-- Replace wind model with `ReplayWindSource` using recorded `wind(t)`
-- Replay scenario outputs so **plant-affecting faults** are applied identically
-- Sweep integrators and compare to a reference replay (RK45 tight, plant-aware)
+## Where the real logic lives
 
-## Files
+The example scripts are intentionally thin. The canonical Iris workflow lives in:
 
-- `minimal_record_replay_demo.jl`: tiny deterministic demo (no PX4)
-- `iris_common.jl`: shared Iris defaults (to keep scripts consistent)
-- `iris_record_run.jl`: PX4-live record → Tier-0 `.jls`
-- `iris_replay_integrator_sweep.jl`: plant-only replay sweep (needs `IRIS_RECORD_IN`)
-- `iris_integrator_compare.jl`: **one-shot** record + replay + summary (recommended)
+- `PX4Lockstep.Sim.Workflows.simulate_iris_mission(...)`
+- `PX4Lockstep.Sim.Workflows.compare_integrators_iris_mission(...)`
 
-See `docs/record_replay.md` for the design.
+See:
+
+- `docs/engine_unification.md`
+- `docs/components/record-replay.md`

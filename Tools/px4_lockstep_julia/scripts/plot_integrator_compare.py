@@ -71,6 +71,58 @@ def _safe_series(data: dict[str, list[float]], key: str) -> list[float] | None:
     return values
 
 
+def _align_by_time_us(
+    ref: dict[str, list[float]],
+    sol: dict[str, list[float]],
+) -> tuple[list[float], dict[str, list[float]], dict[str, list[float]]]:
+    """Align two logs by integer `time_us` (microseconds).
+
+    Why: the float `time_s` axis is formatted/rounded in CSV. If a solver produces
+    a different number of samples (or a slightly different time grid), aligning by
+    index will create artificial "error drift".
+
+    Returns:
+      (t_s, ref_aligned, sol_aligned)
+
+    Falls back to index alignment (min length) when `time_us` is missing.
+    """
+
+    ref_tus = _safe_series(ref, "time_us")
+    sol_tus = _safe_series(sol, "time_us")
+    ref_ts = _safe_series(ref, "time_s")
+
+    if ref_tus is None or sol_tus is None or ref_ts is None:
+        # Best-effort index alignment.
+        n = min(len(ref_ts) if ref_ts is not None else 0, len(sol.get("time_s", [])))
+        t = list(ref_ts[:n]) if ref_ts is not None else list(range(n))
+        ref_a = {k: v[:n] for k, v in ref.items()}
+        sol_a = {k: v[:n] for k, v in sol.items()}
+        return t, ref_a, sol_a
+
+    ref_idx = {int(t): i for i, t in enumerate(ref_tus)}
+    sol_idx = {int(t): i for i, t in enumerate(sol_tus)}
+    common = sorted(set(ref_idx.keys()).intersection(sol_idx.keys()))
+
+    if not common:
+        # No overlap; fall back to index alignment.
+        n = min(len(ref_ts), len(sol.get("time_s", [])))
+        t = list(ref_ts[:n])
+        ref_a = {k: v[:n] for k, v in ref.items()}
+        sol_a = {k: v[:n] for k, v in sol.items()}
+        return t, ref_a, sol_a
+
+    t = [ref_ts[ref_idx[tus]] for tus in common]
+
+    def pick(data: dict[str, list[float]], idx_map: dict[int, int]) -> dict[str, list[float]]:
+        out: dict[str, list[float]] = {}
+        for k, series in data.items():
+            # Assume all series share the same indexing as time_us.
+            out[k] = [series[idx_map[tus]] for tus in common]
+        return out
+
+    return t, pick(ref, ref_idx), pick(sol, sol_idx)
+
+
 def _vector_norm(xs: list[float], ys: list[float], zs: list[float]) -> list[float]:
     return [math.sqrt(x * x + y * y + z * z) for x, y, z in zip(xs, ys, zs)]
 
@@ -302,17 +354,19 @@ def plot_errors(
     ax_pos, ax_vel, ax_att, ax_rates = axes.flatten()
 
     for label, data in solver_logs.items():
-        errors = _error_series(ref, data)
-        n = min(len(t_ref), len(data.get("time_s", [])))
-        t = t_ref[:n]
+        # Align by integer time_us axis when available. This guards against
+        # subtle drift/formatting differences when comparing logs produced
+        # by different runs.
+        t, ref_a, data_a = _align_by_time_us(ref, data)
+        errors = _error_series(ref_a, data_a)
         if "pos" in errors:
-            ax_pos.plot(t, errors["pos"], label=label)
+            ax_pos.plot(t[: len(errors["pos"])], errors["pos"], label=label)
         if "vel" in errors:
-            ax_vel.plot(t, errors["vel"], label=label)
+            ax_vel.plot(t[: len(errors["vel"])], errors["vel"], label=label)
         if "att" in errors:
-            ax_att.plot(t, errors["att"], label=label)
+            ax_att.plot(t[: len(errors["att"])], errors["att"], label=label)
         if "rates" in errors:
-            ax_rates.plot(t, errors["rates"], label=label)
+            ax_rates.plot(t[: len(errors["rates"])], errors["rates"], label=label)
 
     ax_pos.set_title("Position error")
     ax_pos.set_ylabel("m")

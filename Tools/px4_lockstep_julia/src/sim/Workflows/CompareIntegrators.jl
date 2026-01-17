@@ -318,7 +318,8 @@ end
 This is the main "just run it" entrypoint for integrator envelope validation.
 
 Defaults:
-- If `recording_in` is not provided, it records a Tier-0 run using RK4.
+- If `recording_in` is not provided, it records a Tier-0 run using `record_integrator`.
+- If `record_integrator` is `nothing`, it uses a deepcopy of `reference_integrator`.
 - Then it replays plant-only using the Tier-0 streams and sweeps `solvers`.
 
 You can either:
@@ -359,7 +360,15 @@ function compare_integrators_iris_mission(;
     home = iris_default_home(),
     contact = iris_default_contact(),
     # Integrators
-    record_integrator::Integrators.AbstractIntegrator = iris_integrator(:RK4),
+    #
+    # NOTE: If you don't explicitly provide `record_integrator`, we default it to a *fresh copy*
+    # of `reference_integrator`.
+    #
+    # Why: the Tier0 recording is what generates the replayed `:cmd` trace. If that trace is
+    # generated with a different (e.g. lower accuracy) integrator than the reference replay,
+    # you're effectively applying a controller command sequence tuned to a *different plant*
+    # and can see open-loop drift that looks like solver error growth.
+    record_integrator::Union{Nothing,Integrators.AbstractIntegrator} = nothing,
     reference_integrator::Integrators.AbstractIntegrator = iris_reference_integrator(),
     # Behavior
     print_table::Bool = true,
@@ -382,6 +391,21 @@ function compare_integrators_iris_mission(;
     println("  t_end=$(t_end_s)s, dt_ap=$(dt_autopilot_s)s, dt_wind=$(dt_wind_s)s, dt_log=$(dt_log_s)s")
     println("  solvers: ", join(string.(solvers), ", "))
     log_dir === nothing || println("  log_dir: $(log_dir)")
+
+    # If we are recording (PX4 live), ensure the recorded command trace corresponds to the
+    # *same reference plant dynamics* used for the replay baseline.
+    #
+    # If you record with a different integrator than the reference replay, the resulting
+    # command trace can be slightly "tuned" to the record integrator's trajectory; replaying
+    # open-loop with another integrator can then accumulate drift over long horizons.
+    #
+    # To make the default UX sane, we default `record_integrator` to a fresh copy of
+    # `reference_integrator` (unless the caller explicitly overrides it).
+    record_integrator_eff = record_integrator === nothing ? deepcopy(reference_integrator) : deepcopy(record_integrator)
+    Integrators.reset!(record_integrator_eff)
+    if recording_in === nothing
+        record_integrator === nothing && println("  record_integrator: (default) deepcopy(reference_integrator)")
+    end
 
     # Acquire recording.
     rec = if recording_in !== nothing
@@ -406,7 +430,7 @@ function compare_integrators_iris_mission(;
             dt_log_s = dt_log_s,
             dt_phys_s = dt_phys_s,
             seed = seed,
-            integrator = record_integrator,
+            integrator = record_integrator_eff,
             home = home,
             contact = contact,
         )

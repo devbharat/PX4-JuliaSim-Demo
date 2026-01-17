@@ -26,6 +26,20 @@ To emit per-solver replay logs for plotting, set `IRIS_LOG_DIR` (and optionally
 `IRIS_LOG_PREFIX`). This will create CSV logs named like
 `<prefix>_ref_log.csv` and `<prefix>_<solver>_log.csv`.
 
+## Determinism check (same integrator repeated)
+
+This workflow replays the same Tier-0 recording multiple times with the same
+integrator to verify deterministic replay. Set `IRIS_DETERMINISM_SOLVER` and
+`IRIS_DETERMINISM_N` to control which integrator and how many repeats.
+
+```bash
+PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
+IRIS_DETERMINISM_SOLVER=RK4 IRIS_DETERMINISM_N=3 \
+IRIS_LOG_DIR=Tools/px4_lockstep_julia/examples/replay/out \
+  julia --project=Tools/px4_lockstep_julia \
+    Tools/px4_lockstep_julia/examples/replay/iris_integrator_determinism.jl
+```
+
 ## Minimal deterministic demo (no PX4)
 
 - `minimal_record_replay_demo.jl` demonstrates the core timeline + traces + replay loop.

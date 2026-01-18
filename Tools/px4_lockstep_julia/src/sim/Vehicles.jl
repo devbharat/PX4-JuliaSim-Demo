@@ -18,7 +18,7 @@ module Vehicles
 
 using ..Types: Vec3, Quat, Mat3, vec3, quat_to_dcm
 using ..RigidBody: RigidBodyState, RigidBodyDeriv, quat_deriv
-using ..Environment: EnvironmentModel, wind_velocity, gravity_accel
+using ..Environment: EnvironmentModel, gravity_accel
 using ..Propulsion: RotorOutput
 using LinearAlgebra
 using StaticArrays
@@ -50,6 +50,54 @@ Base.@kwdef struct ActuatorCommand
     servos::SVector{8,Float64} = zero(SVector{8,Float64})
 end
 
+@inline function _finite_or(x::Float64, fallback::Float64)
+    return isfinite(x) ? x : fallback
+end
+
+"""Validate that an `ActuatorCommand` is finite and within expected ABI ranges.
+
+Ranges
+------
+- `motors[i]` must be in `[0,1]`
+- `servos[i]` must be in `[-1,1]`
+
+This is intended for *engine boundary* validation.
+"""
+function validate(cmd::ActuatorCommand; atol::Float64 = 1e-6)
+    m = cmd.motors
+    s = cmd.servos
+    @inbounds for i = 1:12
+        v = m[i]
+        isfinite(v) || error("ActuatorCommand.motors[$i] is not finite: $v")
+        (-atol <= v <= 1.0 + atol) ||
+            error("ActuatorCommand.motors[$i] out of range [0,1]: $v")
+    end
+    @inbounds for i = 1:8
+        v = s[i]
+        isfinite(v) || error("ActuatorCommand.servos[$i] is not finite: $v")
+        (-1.0 - atol <= v <= 1.0 + atol) ||
+            error("ActuatorCommand.servos[$i] out of range [-1,1]: $v")
+    end
+    return nothing
+end
+
+"""Deterministically sanitize an `ActuatorCommand`.
+
+Behavior
+--------
+- Non-finite values are replaced with 0.0.
+- Values are clamped to ABI ranges: motors `[0,1]`, servos `[-1,1]`.
+- If `strict=true`, this will `error(...)` on any non-finite value or value outside
+  the allowed range (within a small tolerance) *before* clamping.
+"""
+function sanitize(cmd::ActuatorCommand; strict::Bool = false, atol::Float64 = 1e-6)
+    strict && validate(cmd; atol = atol)
+
+    motors = SVector{12,Float64}(ntuple(i -> clamp(_finite_or(cmd.motors[i], 0.0), 0.0, 1.0), 12))
+    servos = SVector{8,Float64}(ntuple(i -> clamp(_finite_or(cmd.servos[i], 0.0), -1.0, 1.0), 8))
+    return ActuatorCommand(motors = motors, servos = servos)
+end
+
 ############################
 # Vehicle model interface
 ############################
@@ -68,7 +116,13 @@ function inertia_diag end
 
 """Compute the rigid-body dynamics.
 
-`dynamics(t, state, u)` must return `RigidBodyDeriv`.
+`dynamics(model, env, t, x, u, wind_ned)` must return `RigidBodyDeriv`.
+
+Design contract
+---------------
+The canonical simulation engine treats **wind as a first-class input** sampled into the
+runtime bus (sample-and-hold). Vehicle dynamics must therefore use `wind_ned` provided by
+the plant input rather than reading `env.wind` (which may be disabled during replay).
 
 `u` is vehicle-specific (e.g. rotor thrust/torque for multirotors).
 """
@@ -268,6 +322,7 @@ function dynamics(
     t::Float64,
     x::RigidBodyState,
     u,
+    wind_ned::Vec3,
 )
     p = model.params
     m = p.mass
@@ -286,8 +341,9 @@ function dynamics(
     F_ned = R_bn * F_body
 
     # Simple linear drag based on air-relative velocity.
-    w = wind_velocity(env.wind, x.pos_ned, t)
-    v_rel = x.vel_ned - w
+    # Important: wind must come from the **bus** (sample-and-hold) so record/replay uses
+    # the exact same forcing. Do not read `env.wind` here.
+    v_rel = x.vel_ned - wind_ned
     F_drag = -p.linear_drag .* v_rel
 
     # Gravity in NED.

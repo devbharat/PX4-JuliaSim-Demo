@@ -12,6 +12,7 @@ The wind published on the bus is treated as **sample-and-hold** between wind tic
 using Random: AbstractRNG
 
 using ..Environment: AbstractWind, step_wind!, sample_wind!, wind_velocity
+using ..Runtime: dt_to_us
 
 """Base type for wind sources."""
 abstract type AbstractWindSource <: AbstractSource end
@@ -29,21 +30,20 @@ Determinism rules
 mutable struct LiveWindSource{W,R} <: AbstractWindSource
     wind::W
     rng::R
-    dt_wind_s::Float64
+    dt_wind_us::UInt64
 
     function LiveWindSource(wind::W, rng::R, dt_wind_s::Real) where {W<:AbstractWind,R}
-        return new{W,R}(wind, rng, Float64(dt_wind_s))
+        return new{W,R}(wind, rng, dt_to_us(Float64(dt_wind_s)))
     end
 end
 
 function update!(src::LiveWindSource, bus::SimBus, plant_state, t_us::UInt64)
     rb = _rb_state(plant_state)
-    t_s = Float64(t_us) * 1e-6
     pos = rb.pos_ned
 
-    step_wind!(src.wind, pos, t_s, src.dt_wind_s, src.rng)
-    sample_wind!(src.wind, pos, t_s)
-    bus.wind_ned = wind_velocity(src.wind, pos, t_s)
+    step_wind!(src.wind, pos, t_us, src.dt_wind_us, src.rng)
+    sample_wind!(src.wind, pos, t_us)
+    bus.wind_ned = wind_velocity(src.wind, pos, t_us)
     return nothing
 end
 

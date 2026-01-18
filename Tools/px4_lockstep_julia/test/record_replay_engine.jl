@@ -1,4 +1,5 @@
 using Test
+using Random
 using StaticArrays
 
 const Sim = PX4Lockstep.Sim
@@ -253,13 +254,33 @@ end
     # recorded inputs and assert that the logged plant states match at every log tick.
 
     veh = Sim.iris_default_vehicle()
-    env = Sim.iris_default_env_replay()
+
+    # Record with a non-zero "live" environment wind model, but replay with the
+    # canonical replay environment (NoWind). If the plant ever reads env.wind
+    # directly, this test will diverge.
+    env_replay = Sim.iris_default_env_replay()
+    env_record = Sim.Environment.EnvironmentModel(
+        atmosphere = env_replay.atmosphere,
+        wind = Sim.Environment.ConstantWind(Sim.Types.vec3(5.0, 0.0, 0.0)),
+        gravity = env_replay.gravity,
+        origin = env_replay.origin,
+    )
     battery = Sim.iris_default_battery()
     contact = Sim.Contacts.NoContact()
 
-    model = Sim.PlantModels.CoupledMultirotorModel(
+    model_record = Sim.PlantModels.CoupledMultirotorModel(
         veh.model,
-        env,
+        env_record,
+        contact,
+        veh.motor_actuators,
+        veh.servo_actuators,
+        veh.propulsion,
+        battery,
+    )
+
+    model_replay = Sim.PlantModels.CoupledMultirotorModel(
+        veh.model,
+        env_replay,
         contact,
         veh.motor_actuators,
         veh.servo_actuators,
@@ -292,10 +313,8 @@ end
 
     ap_live = ConstantMotorAutopilotSource(cmd)
 
-    # A simple constant wind trace for record mode (all zeros).
-    wind_vals = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in tl.wind.t_us]
-    wind_tr = REC.SampleHoldTrace(tl.wind, wind_vals)
-    wind_live = Sim.Sources.ReplayWindSource(wind_tr)
+    # Record wind from the live wind model.
+    wind_live = Sim.Sources.LiveWindSource(env_record.wind, Random.MersenneTwister(0), 0.01)
 
     scenario = Sim.Sources.NullScenarioSource()
     estimator = Sim.Sources.NullEstimatorSource()
@@ -305,11 +324,11 @@ end
     # --- Record ---
     rec1 = REC.InMemoryRecorder()
     sim1 = RT.Engine(
-        RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false);
+        RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false, strict_cmd = true);
         timeline = tl,
         bus = RT.SimBus(time_us = UInt64(0)),
         plant0 = plant0,
-        dynfun = model,
+        dynfun = model_record,
         integrator = integ,
         autopilot = ap_live,
         wind = wind_live,
@@ -342,11 +361,11 @@ end
         # --- Replay (record again to compare traces) ---
         rec2 = REC.InMemoryRecorder()
         sim2 = RT.Engine(
-            RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false);
+            RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false, strict_cmd = true);
             timeline = tl,
             bus = RT.SimBus(time_us = UInt64(0)),
             plant0 = plant0,
-            dynfun = model,
+            dynfun = model_replay,
             integrator = integ,
             autopilot = ap_replay,
             wind = wind_replay,
@@ -375,6 +394,109 @@ end
         end
     end
 end
+
+
+@testset "Stage ordering: scenario -> wind -> derived outputs -> autopilot" begin
+    # The canonical engine should guarantee that a scenario mutation at a boundary
+    # is visible to the wind source at the same boundary, and that derived outputs
+    # are computed before the autopilot runs.
+
+    # Scenario: disconnect the battery and inject a step gust at t=0.
+    mutable struct OrderScenario{W}
+        wind::W
+        dv_ned::Sim.Types.Vec3
+        duration_s::Float64
+        fired::Bool
+    end
+
+    function RT.update!(src::OrderScenario, bus::RT.SimBus, plant_state, t_us::UInt64)
+        if !src.fired && t_us == 0
+            src.fired = true
+            bus.faults = Sim.Faults.set_battery_connected(bus.faults, false)
+            Sim.Environment.add_step_gust!(src.wind, src.dv_ned, t_us, src.duration_s)
+        end
+        return nothing
+    end
+
+    mutable struct CaptureAutopilot
+        seen_t_us::Vector{UInt64}
+        seen_wind::Vector{Sim.Types.Vec3}
+        seen_batt_connected::Vector{Bool}
+    end
+
+    function RT.update!(src::CaptureAutopilot, bus::RT.SimBus, plant, t_us::UInt64)
+        push!(src.seen_t_us, t_us)
+        push!(src.seen_wind, bus.wind_ned)
+        push!(src.seen_batt_connected, bus.battery.connected)
+        bus.cmd = Sim.Vehicles.ActuatorCommand() # don't care
+        return nothing
+    end
+
+    veh = Sim.iris_default_vehicle()
+    batt = Sim.iris_default_battery()
+    env0 = Sim.iris_default_env_replay()
+    wind_model = Sim.Environment.OUWind(
+        mean = Sim.Types.vec3(0.0, 0.0, 0.0),
+        σ = Sim.Types.vec3(0.0, 0.0, 0.0), # deterministic
+        τ_s = 1.0,
+    )
+    env = Sim.Environment.EnvironmentModel(
+        atmosphere = env0.atmosphere,
+        wind = wind_model,
+        gravity = env0.gravity,
+        origin = env0.origin,
+    )
+
+    contact = Sim.Contacts.NoContact()
+    model = Sim.PlantModels.CoupledMultirotorModel(
+        veh.model,
+        env,
+        contact,
+        veh.motor_actuators,
+        veh.servo_actuators,
+        veh.propulsion,
+        batt,
+    )
+    rb0 = Sim.RigidBody.RigidBodyState()
+    plant0 = Sim.Plant.init_plant_state(
+        rb0,
+        veh.motor_actuators,
+        veh.servo_actuators,
+        veh.propulsion,
+        batt,
+    )
+
+    tl = RT.build_timeline(UInt64(0), UInt64(10_000);
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    scenario = OrderScenario(wind_model, Sim.Types.vec3(3.0, 0.0, 0.0), 1.0, false)
+    wind_src = Sim.Sources.LiveWindSource(wind_model, Random.Xoshiro(1), 0.01)
+    autopilot = CaptureAutopilot(UInt64[], Sim.Types.Vec3[], Bool[])
+
+    eng = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_LIVE, enable_derived_outputs = true);
+        timeline = tl,
+        plant0 = plant0,
+        dynfun = model,
+        integrator = Sim.Integrators.RK4Integrator(),
+        scenario = scenario,
+        wind = wind_src,
+        autopilot = autopilot,
+        estimator = Sim.Sources.NullEstimatorSource(),
+        telemetry = RT.NullTelemetry(),
+    )
+
+    RT.run!(eng)
+
+    # Autopilot should have run at t=0 and should observe the scenario+wind effects.
+    @test autopilot.seen_t_us[1] == 0
+    @test autopilot.seen_wind[1] == Sim.Types.vec3(3.0, 0.0, 0.0)
+    @test autopilot.seen_batt_connected[1] == false
+end
+
 @testset "Recording.load_recording enforces schema version" begin
     timeline = RT.build_timeline(UInt64(0), UInt64(1_000);
         dt_ap_us = UInt64(1_000),

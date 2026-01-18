@@ -750,7 +750,7 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput
         _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
 
     # Rigid-body dynamics.
-    d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out)
+    d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out, u.wind_ned)
 
     # Contact forces (NED) applied at COM.
     F_contact = contact_force_ned(f.contact, x.rb, t)

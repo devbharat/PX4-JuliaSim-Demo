@@ -98,15 +98,61 @@ end
 
 abstract type AbstractWind end
 
+"""Convert seconds to integer microseconds with an exactness check.
+
+This is used for event-aligned wind constructs (gust start/stop) so activation is
+evaluated on the same microsecond grid as the canonical runtime engine.
+"""
+@inline function _sec_to_us(t_s::Real; allow_zero::Bool = true)::UInt64
+    t = Float64(t_s)
+    t >= 0.0 || throw(ArgumentError("time must be >= 0 s; got $t"))
+    us = round(Int64, t * 1e6)
+    # Require exact microsecond representability (same spirit as Runtime.dt_to_us).
+    abs(t - (Float64(us) * 1e-6)) <= 1e-15 || throw(
+        ArgumentError(
+            "time=$t is not an integer multiple of 1 µs (got us=$us -> $(Float64(us)*1e-6))",
+        ),
+    )
+    if !allow_zero && us < 1
+        throw(ArgumentError("time must be >= 1 µs"))
+    end
+    return UInt64(max(0, us))
+end
+
+@inline _round_us(t_s::Float64)::UInt64 = UInt64(round(Int64, t_s * 1e6))
+
 struct NoWind <: AbstractWind end
 wind_velocity(::NoWind, ::Vec3, ::Float64) = vec3(0, 0, 0)
-
 """Advance a wind model by one step (default: no-op).
 
 Stateful wind models (e.g. OU turbulence) should override this.
 """
 step_wind!(::AbstractWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
 step_wind!(::NoWind, ::Vec3, ::Float64, ::Float64, ::AbstractRNG) = nothing
+
+# -----------------------------------------------------------------------------
+# Integer-microsecond overloads (canonical engine timebase)
+# -----------------------------------------------------------------------------
+
+"""Wind velocity sampled at integer-microsecond time `t_us`.
+
+The canonical simulation engine uses integer microseconds for all scheduling. These
+overloads make it possible to express wind constructs (e.g. gust start/stop) without
+Float64 time edge cases.
+"""
+@inline function wind_velocity(w::AbstractWind, pos_ned::Vec3, t_us::UInt64)
+    return wind_velocity(w, pos_ned, Float64(t_us) * 1e-6)
+end
+
+"""Advance a wind model by one step using integer microseconds."""
+@inline function step_wind!(w::AbstractWind, pos_ned::Vec3, t_us::UInt64, dt_us::UInt64, rng::AbstractRNG)
+    return step_wind!(w, pos_ned, Float64(t_us) * 1e-6, Float64(dt_us) * 1e-6, rng)
+end
+
+"""Sample wind at integer-microsecond time (default: direct call to `wind_velocity`)."""
+@inline function sample_wind!(w::AbstractWind, pos_ned::Vec3, t_us::UInt64)
+    return wind_velocity(w, pos_ned, t_us)
+end
 
 """Constant wind velocity in NED (m/s)."""
 struct ConstantWind <: AbstractWind
@@ -132,6 +178,10 @@ function wind_velocity(w::SampledWind, ::Vec3, ::Float64)
     return w.sample_ned
 end
 
+function wind_velocity(w::SampledWind, ::Vec3, ::UInt64)
+    return w.sample_ned
+end
+
 function step_wind!(
     w::SampledWind,
     pos_ned::Vec3,
@@ -145,7 +195,11 @@ end
 
 """Sample the wrapped wind model and hold the value for the current tick."""
 function sample_wind!(w::SampledWind, pos_ned::Vec3, t::Float64)
-    w.sample_ned = wind_velocity(w.inner, pos_ned, t)
+    return sample_wind!(w, pos_ned, _round_us(t))
+end
+
+function sample_wind!(w::SampledWind, pos_ned::Vec3, t_us::UInt64)
+    w.sample_ned = wind_velocity(w.inner, pos_ned, t_us)
     return w.sample_ned
 end
 
@@ -161,14 +215,26 @@ models later.
 struct GustStep <: AbstractWind
     mean::AbstractWind
     gust_v_ned::Vec3
-    t_on::Float64
-    t_off::Float64
+    t_on_us::UInt64
+    t_off_us::UInt64
+end
+
+function GustStep(mean::AbstractWind, gust_v_ned::Vec3, t_on_s::Real, t_off_s::Real)
+    t_on_us = _sec_to_us(t_on_s; allow_zero = true)
+    t_off_us = _sec_to_us(t_off_s; allow_zero = true)
+    t_off_us >= t_on_us ||
+        throw(ArgumentError("GustStep requires t_off >= t_on (got $t_on_s..$t_off_s)"))
+    return GustStep(mean, gust_v_ned, t_on_us, t_off_us)
+end
+
+function wind_velocity(w::GustStep, pos_ned::Vec3, t_us::UInt64)
+    v = wind_velocity(w.mean, pos_ned, t_us)
+    # Half-open interval avoids an extra "end tick" and makes scheduling behavior explicit.
+    return (t_us >= w.t_on_us && t_us < w.t_off_us) ? (v + w.gust_v_ned) : v
 end
 
 function wind_velocity(w::GustStep, pos_ned::Vec3, t::Float64)
-    v = wind_velocity(w.mean, pos_ned, t)
-    # Half-open interval avoids an extra "end tick" and makes scheduling behavior explicit.
-    return (t >= w.t_on && t < w.t_off) ? (v + w.gust_v_ned) : v
+    return wind_velocity(w, pos_ned, _round_us(t))
 end
 
 """Advance the wrapped mean wind model.
@@ -201,17 +267,21 @@ Base.@kwdef mutable struct OUWind <: AbstractWind
     v_gust::Vec3 = vec3(0.0, 0.0, 0.0)
     # Optional deterministic step gust for scenarios.
     step_gust::Vec3 = vec3(0.0, 0.0, 0.0)
-    step_until_s::Float64 = -Inf
+    step_until_us::UInt64 = 0
     last_dt::Float64 = NaN
     last_tau_s::Float64 = NaN
     phi::Float64 = 0.0
     scale::Float64 = 0.0
 end
 
-function wind_velocity(w::OUWind, ::Vec3, t::Float64)
+function wind_velocity(w::OUWind, ::Vec3, t_us::UInt64)
     # Half-open end time to make duration unambiguous at tick boundaries.
-    gust = (t < w.step_until_s) ? w.step_gust : vec3(0.0, 0.0, 0.0)
+    gust = (t_us < w.step_until_us) ? w.step_gust : vec3(0.0, 0.0, 0.0)
     return w.mean + w.v_gust + gust
+end
+
+function wind_velocity(w::OUWind, pos_ned::Vec3, t::Float64)
+    return wind_velocity(w, pos_ned, _round_us(t))
 end
 
 @inline function _ensure_ou_coeffs!(w::OUWind, dt::Float64)
@@ -265,14 +335,34 @@ set_mean_wind!(::AbstractWind, ::Vec3) =
 
 This is designed for scenario/event injection (e.g. a manual gust).
 """
-function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now::Float64, duration_s::Float64)
+function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now_us::UInt64, duration_us::UInt64)
     w.step_gust = dv_ned
-    w.step_until_s = t_now + max(0.0, duration_s)
+    w.step_until_us = t_now_us + duration_us
     return nothing
 end
-add_step_gust!(w::SampledWind, dv_ned::Vec3, t_now::Float64, duration_s::Float64) =
-    add_step_gust!(w.inner, dv_ned, t_now, duration_s)
-add_step_gust!(::AbstractWind, ::Vec3, ::Float64, ::Float64) =
+
+function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now_us::UInt64, duration_s::Real)
+    duration_us = _sec_to_us(max(0.0, Float64(duration_s)); allow_zero = true)
+    return add_step_gust!(w, dv_ned, t_now_us, duration_us)
+end
+
+function add_step_gust!(w::OUWind, dv_ned::Vec3, t_now_s::Float64, duration_s::Real)
+    # Float64 overload is for convenience only; internally we evaluate on integer microseconds.
+    return add_step_gust!(w, dv_ned, _round_us(t_now_s), duration_s)
+end
+
+add_step_gust!(w::SampledWind, dv_ned::Vec3, t_now_us::UInt64, duration_us::UInt64) =
+    add_step_gust!(w.inner, dv_ned, t_now_us, duration_us)
+add_step_gust!(w::SampledWind, dv_ned::Vec3, t_now_us::UInt64, duration_s::Real) =
+    add_step_gust!(w.inner, dv_ned, t_now_us, duration_s)
+add_step_gust!(w::SampledWind, dv_ned::Vec3, t_now_s::Float64, duration_s::Real) =
+    add_step_gust!(w.inner, dv_ned, t_now_s, duration_s)
+
+add_step_gust!(::AbstractWind, ::Vec3, ::UInt64, ::UInt64) =
+    throw(ArgumentError("add_step_gust! not supported for this wind type"))
+add_step_gust!(::AbstractWind, ::Vec3, ::UInt64, ::Real) =
+    throw(ArgumentError("add_step_gust! not supported for this wind type"))
+add_step_gust!(::AbstractWind, ::Vec3, ::Float64, ::Real) =
     throw(ArgumentError("add_step_gust! not supported for this wind type"))
 
 ############################

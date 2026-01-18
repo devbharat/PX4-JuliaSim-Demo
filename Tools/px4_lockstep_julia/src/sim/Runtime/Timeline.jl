@@ -131,6 +131,12 @@ function build_timeline(
     wind = periodic_axis(:wind, t0_us, t_end_us, dt_wind_us)
     log = periodic_axis(:log, t0_us, t_end_us, dt_log_us)
 
+    # Logging is primarily an observability/recording concern. Ensure a final snapshot
+    # exists at `t_end_us` even when `dt_log_us` does not evenly divide the horizon.
+    if log.t_us[end] != t_end_us
+        log = TimeAxis(:log, vcat(log.t_us, t_end_us))
+    end
+
     # Filter + sort scenario times; include only inside window.
     # Always include `t0_us` so scenario outputs have a valid initial sample.
     scn = UInt64[t for t in scn_times_us if (t >= t0_us && t <= t_end_us)]

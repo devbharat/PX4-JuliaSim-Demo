@@ -166,6 +166,51 @@ end
     end
 end
 
+
+@testset "plant_outputs purity and RHS consistency" begin
+    setup = _iris_fullplant()
+    model = setup.model
+    x0 = setup.plant0
+
+    # Non-trivial input so we exercise the bus solve + battery currents.
+    motors = SVector{12,Float64}(0.4, 0.4, 0.4, 0.4, 0, 0, 0, 0, 0, 0, 0, 0)
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors)
+    u = Sim.Plant.PlantInput(cmd = cmd, wind_ned = Sim.Types.vec3(3.0, 0.0, 0.0))
+    t = 0.0
+
+    # Snapshot a few mutable parameter fields; plant_outputs must not mutate them.
+    batt = model.battery
+    batt_snap = (batt.soc, batt.v1, batt.last_current_a)
+    prop = model.propulsion
+    prop_snap = [(u.enabled, u.ω_rad_s) for u in prop.units]
+
+    y1 = Sim.PlantModels.plant_outputs(model, t, x0, u)
+    y2 = Sim.PlantModels.plant_outputs(model, t, x0, u)
+    @test y1 == y2
+
+    @test (batt.soc, batt.v1, batt.last_current_a) == batt_snap
+    @test [(u.enabled, u.ω_rad_s) for u in prop.units] == prop_snap
+
+    # Consistency: RHS uses the same bus current in the battery SoC derivative.
+    dx = model(t, x0, u)
+    I_rhs = -dx.batt_soc_dot * batt.capacity_c
+    @test isfinite(y1.bus_current_a)
+    @test isfinite(I_rhs)
+    @test isapprox(I_rhs, y1.bus_current_a; rtol = 1e-12, atol = 1e-12)
+
+    # Battery disconnected should force zero bus power and a disconnected status.
+    u_off = Sim.Plant.PlantInput(
+        cmd = cmd,
+        wind_ned = u.wind_ned,
+        faults = Sim.Faults.FaultState(battery_connected = false),
+    )
+    y_off = Sim.PlantModels.plant_outputs(model, t, x0, u_off)
+    @test y_off.bus_current_a == 0.0
+    @test y_off.bus_voltage_v == 0.0
+    @test y_off.battery_status !== nothing
+    @test y_off.battery_status.connected == false
+end
+
 @testset "Verification Tier 2 - Full-plant contract tests" begin
     @testset "Full-plant ballistic free-fall (no thrust, no wind)" begin
         # Goal: catch NED sign, gravity sign, quaternion handling, and engine stepping issues.
@@ -351,43 +396,43 @@ end
 
         x = RB.RigidBodyState()  # identity attitude, zero rates
 
-        T = 5.0
+        thrust = 5.0
         Q = 0.05
 
         # Balanced yaw torque (two +Q, two -Q) should yield ~zero body angular acceleration.
         u_bal = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(T, T, T, T),
+            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
             shaft_torque_nm = SVector{4,Float64}(Q, Q, -Q, -Q),
             ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             bus_current_a = 0.0,
         )
-        dx = Sim.Vehicles.dynamics(model, env, 0.0, x, u_bal)
+        dx = Sim.Vehicles.dynamics(model, env, 0.0, x, u_bal, T.vec3(0.0, 0.0, 0.0))
         @test isapprox(dx.ω_dot[1], 0.0; atol=1e-12)
         @test isapprox(dx.ω_dot[2], 0.0; atol=1e-12)
         @test isapprox(dx.ω_dot[3], 0.0; atol=1e-12)
 
         # Non-canceling yaw torque should produce a clear yaw acceleration sign.
         u_yaw_pos = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(T, T, T, T),
+            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
             shaft_torque_nm = SVector{4,Float64}(Q, Q, Q, Q),
             ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             bus_current_a = 0.0,
         )
-        dxp = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_pos)
+        dxp = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_pos, T.vec3(0.0, 0.0, 0.0))
         @test isapprox(dxp.ω_dot[1], 0.0; atol=1e-12)
         @test isapprox(dxp.ω_dot[2], 0.0; atol=1e-12)
         @test dxp.ω_dot[3] > 0.0
 
         u_yaw_neg = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(T, T, T, T),
+            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
             shaft_torque_nm = SVector{4,Float64}(-Q, -Q, -Q, -Q),
             ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
             bus_current_a = 0.0,
         )
-        dxn = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_neg)
+        dxn = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_neg, T.vec3(0.0, 0.0, 0.0))
         @test isapprox(dxn.ω_dot[1], 0.0; atol=1e-12)
         @test isapprox(dxn.ω_dot[2], 0.0; atol=1e-12)
         @test dxn.ω_dot[3] < 0.0
@@ -610,16 +655,6 @@ end
         #   (not their own drifted states), integrate to t_{k+1}, and compare.
         #
         # This avoids confusing unstable open-loop divergence with solver accuracy.
-        #
-        # Implementation plan:
-        # - Load a deterministic Tier0 Iris recording (or generate one if missing).
-        # - Build replay sources from tier0 + scenario traces.
-        # - Build a tight reference integrator (RK45) to produce x_ref(t_k).
-        # - For each event boundary interval:
-        #   - Evaluate held inputs from traces for [t_k, t_{k+1}].
-        #   - Step both integrators from x_ref(t_k) to t_{k+1}.
-        #   - Compare errors using Verification.plant_error and assert thresholds.
-        # - Report max local defect and ensure it stays within expected bounds.
         @test_skip true
     end
 end

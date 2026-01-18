@@ -20,7 +20,7 @@ This is intentionally lightweight and avoids external dependencies.
 """
 module Events
 
-export AbstractEvent, AtTime, AtStep, When, EventScheduler, step_events!, next_at_time_us
+export AbstractEvent, AtTime, When, EventScheduler, step_events!, next_at_time_us
 
 abstract type AbstractEvent end
 
@@ -47,17 +47,6 @@ function AtTime(t_fire_s::Real, action::F) where {F}
     return AtTime{F}(UInt64(t_us), action)
 end
 
-"""Step-triggered one-shot event.
-
-Semantics: fires once when `sim.step >= step_fire`.
-"""
-struct AtStep{F} <: AbstractEvent
-    step_fire::Int
-    action::F
-end
-
-AtStep(step_fire::Integer, action::F) where {F} = AtStep{F}(Int(step_fire), action)
-
 """Condition-triggered one-shot event."""
 struct When{C,F} <: AbstractEvent
     condition::C  # condition(sim, t)::Bool
@@ -81,7 +70,7 @@ This is intended for hybrid/event-driven simulators to include scenario events a
 event boundaries.
 
 * Returns `nothing` if no unfired future `AtTime` events exist.
-* Only considers `AtTime` events (not `When` or `AtStep`).
+* Only considers `AtTime` events (not `When`).
 
 Notes
 -----
@@ -142,25 +131,11 @@ end
     return now_us >= e.t_fire_us
 end
 
-@inline function _should_fire(e::AtStep, sim, ::Float64)
-    T = typeof(sim)
-    if !Base.hasfield(T, :step)
-        error("AtStep events require sim.step; not supported for sim type $(T)")
-    end
-    step = getfield(sim, :step)
-    return step >= e.step_fire
-end
-
 @inline function _should_fire(e::When, sim, t::Float64)
     return e.condition(sim, t)
 end
 
 @inline function _apply!(e::AtTime, sim, t::Float64)
-    e.action(sim, t)
-    return nothing
-end
-
-@inline function _apply!(e::AtStep, sim, t::Float64)
     e.action(sim, t)
     return nothing
 end

@@ -29,7 +29,7 @@ Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 
 using ..Types: Vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
-using ..Vehicles: ActuatorCommand
+using ..Vehicles: ActuatorCommand, sanitize
 using ..Powertrain: BatteryStatus
 using ..Plant: PlantInput
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
@@ -141,6 +141,12 @@ an event-axis stream.
 
     """Development-time validation checks for determinism invariants."""
     validator::EngineValidator = EngineValidator()
+
+    """If true, sanitize actuator commands at the engine boundary."""
+    sanitize_cmd::Bool = true
+
+    """If true, invalid actuator commands throw instead of being silently clamped."""
+    strict_cmd::Bool = false
 end
 
 """Lightweight runtime stats (non-authoritative, but useful for debugging)."""
@@ -303,7 +309,8 @@ This constructor is intentionally minimal: sources (live or replay) must be prov
 explicitly so `Runtime` does not depend on `Sources` or `Recording` modules.
 """
 function plant_record_engine(; kwargs...)
-    cfg = EngineConfig(mode = MODE_RECORD)
+    # Record runs are where determinism matters most; fail fast on bad actuator packets.
+    cfg = EngineConfig(mode = MODE_RECORD, strict_cmd = true)
     return Engine(cfg; kwargs...)
 end
 
@@ -427,6 +434,12 @@ function process_events_at!(sim::Engine)
             if ev.due_ap
                 # Autopilot consumes bus.est/battery and produces bus.cmd.
                 update!(sim.autopilot, sim.bus, sim.plant, sim.t_us)
+
+                # Defensive boundary validation: the plant integrator expects finite,
+                # range-bounded actuator commands. Record runs should fail fast.
+                if sim.cfg.sanitize_cmd
+                    sim.bus.cmd = sanitize(sim.bus.cmd; strict = sim.cfg.strict_cmd)
+                end
                 if sim.cfg.mode == MODE_RECORD
                     record!(sim.recorder, :cmd, sim.t_us, sim.bus.cmd)
                 end

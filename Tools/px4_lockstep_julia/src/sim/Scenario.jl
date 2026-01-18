@@ -280,7 +280,7 @@ function wind_step_at!(
 )
     push!(
         s.scheduler,
-        AtTime(t_start, (sim, t)->add_step_gust!(sim.env.wind, dv_ned, t, duration_s)),
+        AtTime(t_start, (sim, t)->add_step_gust!(sim.env.wind, dv_ned, sim.t_us, duration_s)),
     )
     return s
 end

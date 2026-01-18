@@ -66,6 +66,8 @@ function simulate(;
     enable_derived_outputs::Bool = true,
     record_faults_evt::Bool = true,
     record_estimator::Bool = false,
+    sanitize_cmd::Bool = true,
+    strict_cmd::Bool = (mode === :record),
     validator = Runtime.EngineValidator(),
     strict_lockstep_rates::Bool = true,
 )
@@ -85,6 +87,8 @@ function simulate(;
         record_faults_evt = record_faults_evt,
         record_estimator = record_estimator,
         validator = validator,
+        sanitize_cmd = sanitize_cmd,
+        strict_cmd = strict_cmd,
     )
 
     if emode == Runtime.MODE_RECORD && recorder === nothing

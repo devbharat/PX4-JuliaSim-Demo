@@ -610,6 +610,16 @@ end
         #   (not their own drifted states), integrate to t_{k+1}, and compare.
         #
         # This avoids confusing unstable open-loop divergence with solver accuracy.
+        #
+        # Implementation plan:
+        # - Load a deterministic Tier0 Iris recording (or generate one if missing).
+        # - Build replay sources from tier0 + scenario traces.
+        # - Build a tight reference integrator (RK45) to produce x_ref(t_k).
+        # - For each event boundary interval:
+        #   - Evaluate held inputs from traces for [t_k, t_{k+1}].
+        #   - Step both integrators from x_ref(t_k) to t_{k+1}.
+        #   - Compare errors using Verification.plant_error and assert thresholds.
+        # - Report max local defect and ensure it stays within expected bounds.
         @test_skip true
     end
 end

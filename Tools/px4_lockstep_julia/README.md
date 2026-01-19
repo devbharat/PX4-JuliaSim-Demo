@@ -218,5 +218,4 @@ python Tools/px4_lockstep_julia/scripts/plot_sim_log.py \
   --output sim_plot.png \
   --inflow-output sim_inflow.png
 ```
-<img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/471d5aef-7533-461b-a4b8-528f4beb6d4a" />
-<img width="1650" height="1350" alt="sim_inflow" src="https://github.com/user-attachments/assets/9a56fcc1-7016-4707-ba5f-b48d3257bf92" />
+<img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/f7fede13-1ced-49a6-825f-605dc3c274fc" />

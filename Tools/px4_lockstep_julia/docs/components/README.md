@@ -20,10 +20,10 @@ There are two primary layers:
 
 ```
 truth plant state ─┐
-                  ├─> estimator source ─> bus.est ─┐
-scenario outputs ─┤                              ├─> autopilot source ─> bus.cmd
-wind source ──────┤                              │
-                  └─> derived outputs (battery) ─┘
+                   ├─> estimator source ─> bus.est ─┐
+scenario outputs ──┤                                ├─> autopilot source ─> bus.cmd
+wind source ───────┤                                │
+                   └─> derived outputs (battery) ───┘
 
 bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 ```

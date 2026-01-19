@@ -266,7 +266,7 @@ function simulate_iris_mission(;
     if mode === :replay
         recording_in === nothing &&
             error("simulate_iris_mission(mode=:replay) requires recording_in")
-        rec = Recording.load_recording(recording_in)
+        rec = Recording.read_recording(recording_in)
 
         # Replay sources
         traces = Recording.tier0_traces(rec)
@@ -279,7 +279,13 @@ function simulate_iris_mission(;
             )
         end
 
-        scenario = Sources.ReplayScenarioSource(scn_tr.ap_cmd, scn_tr.landed, scn_tr.faults)
+        wind_dist = hasproperty(scn_tr, :wind_dist) ? scn_tr.wind_dist : nothing
+        scenario = Sources.ReplayScenarioSource(
+            scn_tr.ap_cmd,
+            scn_tr.landed,
+            scn_tr.faults;
+            wind_dist = wind_dist,
+        )
         wind = Sources.ReplayWindSource(traces.wind_ned)
         autopilot = Sources.ReplayAutopilotSource(traces.cmd)
 
@@ -320,12 +326,7 @@ function simulate_iris_mission(;
     estimator_obj = iris_default_estimator(dt_autopilot_s)
     dynfun = iris_dynfun(env, vehicle, battery; contact = contact)
 
-    scenario_src = Sources.LiveScenarioSource(
-        scenario_obj;
-        env = env,
-        vehicle = vehicle,
-        battery = battery,
-    )
+    scenario_src = Sources.LiveScenarioSource(scenario_obj)
     wind_src = Sources.LiveWindSource(env.wind, Random.Xoshiro(seed), dt_wind_s)
     est_src =
         Sources.LiveEstimatorSource(estimator_obj, Random.Xoshiro(seed + 1), dt_autopilot_s)
@@ -385,7 +386,7 @@ function simulate_iris_mission(;
             )
 
             if recording_out !== nothing
-                Recording.save_recording(recording_out, rec)
+                Recording.write_recording(recording_out, rec)
             end
             return rec
         end

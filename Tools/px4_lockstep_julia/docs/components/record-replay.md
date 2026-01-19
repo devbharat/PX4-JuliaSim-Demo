@@ -22,8 +22,8 @@ publish bus fields.
 - **Optional estimator stream:** enable `record_estimator=true` to capture `est` on
   the autopilot axis for estimator replay.
 - **Deterministic ordering:** sources update in a fixed order and record
-  `ap_cmd_evt`, `landed_evt`, and `faults_evt` on the event axis to avoid missing
-  dynamic transitions.
+  `ap_cmd_evt`, `landed_evt`, `faults_evt`, and `wind_dist_evt` on the event axis to
+  avoid missing dynamic transitions.
 
 ## Integration Contracts
 
@@ -31,7 +31,7 @@ publish bus fields.
 - `Engine` must hold `bus.cmd`, `bus.wind_ned`, and `bus.faults` constant across the
   integration interval.
 - `plant_outputs` is queried at boundaries to update battery telemetry deterministically.
-- `load_recording` validates schema version, axes, and required streams.
+- `read_recording` validates schema version, axes, and required streams.
 
 ## Caveats
 

@@ -263,15 +263,6 @@ end
     ρ::Float64,
     Vax::Float64,
 )
-    if !unit.enabled
-        b = unit.motor.viscous_friction_nm_per_rad_s
-        J = unit.motor.J_kgm2
-        ω_dot = (-(b * ω)) / J
-        if ω <= 0.0 && ω_dot < 0.0
-            ω_dot = 0.0
-        end
-        return 0.0, 0.0, ω_dot, 0.0, 0.0
-    end
 
     esc = unit.esc
     motor = unit.motor
@@ -325,7 +316,6 @@ end
     I_bus_total = 0.0
     @inbounds for i = 1:N
         unit = p.units[i]
-        unit.enabled || continue
 
         d = clamp(duty[i], 0.0, 1.0)
         if d < unit.esc.deadzone
@@ -369,7 +359,6 @@ end
     any_active = false
     @inbounds for i = 1:N
         unit = p.units[i]
-        unit.enabled || continue
 
         d = clamp(duty[i], 0.0, 1.0)
         if d < unit.esc.deadzone
@@ -400,7 +389,6 @@ end
     # Validate that every active motor is actually in the linear region at this V.
     @inbounds for i = 1:N
         unit = p.units[i]
-        unit.enabled || continue
 
         d = clamp(duty[i], 0.0, 1.0)
         if d < unit.esc.deadzone
@@ -488,7 +476,6 @@ function _solve_bus_voltage(
         B = 0.0
         @inbounds for i = 1:N
             unit = p.units[i]
-            unit.enabled || continue
 
             d = clamp(duty[i], 0.0, 1.0)
             if d < unit.esc.deadzone

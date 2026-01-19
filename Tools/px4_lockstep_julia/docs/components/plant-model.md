@@ -15,14 +15,14 @@ deterministic variable-step integration.
 - **Explicit input/output split:** `PlantInput` holds commands, wind, and faults;
   `PlantOutputs` carries algebraic couplings (rotor outputs, bus voltage/current,
   battery status) so the RHS stays pure.
-- **Compatibility shims:** `init_plant_state` and `sync_components_from_plant!` bridge
-  legacy mutable components during the transition to full-plant integration.
+- **Single source of truth:** subsystem model objects are treated as **parameter-only**;
+  `PlantState` is canonical during integration.
 
 ## Integration Contracts
 
 - `PlantInput` must be updated only at event boundaries.
-- `PlantState` is the single source of truth during integration.
-- Sync shims are allowed after integration, not during RHS evaluation.
+- The plant RHS must be pure: no RNG and no mutation of shared state.
+- No component objects are synchronized from `PlantState` in the canonical engine path.
 
 ## Caveats
 
@@ -30,5 +30,3 @@ deterministic variable-step integration.
   channels require interface changes.
 - `PlantInput` currently includes actuator commands, wind, and faults; additional
   couplings must be added explicitly.
-- Legacy component shims must be synchronized after integration; mutating them inside
-  the RHS breaks determinism.

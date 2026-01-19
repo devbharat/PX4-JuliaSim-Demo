@@ -145,7 +145,13 @@ Float64 time edge cases.
 end
 
 """Advance a wind model by one step using integer microseconds."""
-@inline function step_wind!(w::AbstractWind, pos_ned::Vec3, t_us::UInt64, dt_us::UInt64, rng::AbstractRNG)
+@inline function step_wind!(
+    w::AbstractWind,
+    pos_ned::Vec3,
+    t_us::UInt64,
+    dt_us::UInt64,
+    rng::AbstractRNG,
+)
     return step_wind!(w, pos_ned, Float64(t_us) * 1e-6, Float64(dt_us) * 1e-6, rng)
 end
 

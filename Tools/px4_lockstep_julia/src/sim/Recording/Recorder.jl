@@ -155,12 +155,20 @@ function scenario_traces(rec::InMemoryRecorder, timeline::Timeline)
         ap_cmd = zoh_trace(rec, :ap_cmd_evt, timeline.evt)
         landed = zoh_trace(rec, :landed_evt, timeline.evt)
         faults = zoh_trace(rec, :faults_evt, timeline.evt)
+        if haskey(rec.times, :wind_dist_evt)
+            wind_dist = zoh_trace(rec, :wind_dist_evt, timeline.evt)
+            return (; ap_cmd, landed, faults, wind_dist)
+        end
         return (; ap_cmd, landed, faults)
     end
 
     ap_cmd = zoh_trace(rec, :ap_cmd, timeline.scn)
     landed = zoh_trace(rec, :landed, timeline.scn)
     faults = zoh_trace(rec, :faults, timeline.scn)
+    if haskey(rec.times, :wind_dist)
+        wind_dist = zoh_trace(rec, :wind_dist, timeline.scn)
+        return (; ap_cmd, landed, faults, wind_dist)
+    end
     return (; ap_cmd, landed, faults)
 end
 
@@ -170,16 +178,8 @@ function estimator_traces(rec::InMemoryRecorder, timeline::Timeline)
     return (; est)
 end
 
-"""Write recorder contents to a persistent file (planned).
-
-TODO: implement the HDF5 backend.
-"""
-function write_recording(::AbstractRecorder, ::AbstractString)
-    error("write_recording is not implemented yet (planned HDF5 backend)")
-end
 
 export AbstractRecorder, NullRecorder, InMemoryRecorder
 export stream_times, stream_values
 export zoh_trace, samplehold_trace, sampled_trace
 export tier0_traces, scenario_traces, estimator_traces
-export write_recording

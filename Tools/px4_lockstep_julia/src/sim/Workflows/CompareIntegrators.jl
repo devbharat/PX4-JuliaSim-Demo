@@ -207,11 +207,23 @@ function compare_integrators_recording(;
     scenario_src = Sources.NullScenarioSource()
     if require_scenario
         scn = Recording.scenario_traces(recording)
-        scenario_src = Sources.ReplayScenarioSource(scn.ap_cmd, scn.landed, scn.faults)
+        wind_dist = hasproperty(scn, :wind_dist) ? scn.wind_dist : nothing
+        scenario_src = Sources.ReplayScenarioSource(
+            scn.ap_cmd,
+            scn.landed,
+            scn.faults;
+            wind_dist = wind_dist,
+        )
     else
         try
             scn = Recording.scenario_traces(recording)
-            scenario_src = Sources.ReplayScenarioSource(scn.ap_cmd, scn.landed, scn.faults)
+            wind_dist = hasproperty(scn, :wind_dist) ? scn.wind_dist : nothing
+            scenario_src = Sources.ReplayScenarioSource(
+                scn.ap_cmd,
+                scn.landed,
+                scn.faults;
+                wind_dist = wind_dist,
+            )
         catch
             scenario_src = Sources.NullScenarioSource()
         end
@@ -421,7 +433,7 @@ function compare_integrators_iris_mission(;
     # Acquire recording.
     rec = if recording_in !== nothing
         println("[compare_integrators_iris_mission] Using existing recording: $(recording_in)")
-        Recording.load_recording(recording_in)
+        Recording.read_recording(recording_in)
     else
         mission_path === nothing && error(
             "No recording_in provided and PX4_LOCKSTEP_MISSION is not set. " *

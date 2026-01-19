@@ -196,19 +196,41 @@ end
 end
 
 
-@testset "Scheduling.StepTrigger" begin
-    trig = Sim.Scheduling.StepTrigger(5)
-    @test Sim.Scheduling.due(trig, 0)
-    @test !Sim.Scheduling.due(trig, 1)
-    @test Sim.Scheduling.due(trig, 5)
-    @test Sim.Scheduling.due(trig, 10)
+@testset "Runtime.Scheduler: due flags are correct" begin
+    RT = Sim.Runtime
 
-    trig2 = Sim.Scheduling.StepTrigger(4; offset_steps = 2)
-    @test !Sim.Scheduling.due(trig2, 0)
-    @test !Sim.Scheduling.due(trig2, 1)
-    @test Sim.Scheduling.due(trig2, 2)
-    @test !Sim.Scheduling.due(trig2, 3)
-    @test Sim.Scheduling.due(trig2, 6)
+    t0_us = UInt64(0)
+    t_end_us = UInt64(20_000)  # 0.02 s
+
+    tl = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(20_000),
+        dt_log_us = UInt64(10_000),
+        dt_phys_us = UInt64(2_000),
+    )
+
+    sched = RT.Scheduler(tl)
+
+    ev0 = RT.boundary_event(sched)
+    @test ev0.time_us == t0_us
+    @test ev0.due_ap
+    @test ev0.due_wind
+    @test ev0.due_log
+    @test ev0.due_scn
+    @test ev0.due_phys
+
+    RT.consume_boundary!(sched, ev0)
+    RT.advance_evt!(sched)
+
+    ev1 = RT.boundary_event(sched)
+    @test ev1.time_us == UInt64(2_000)
+    @test !ev1.due_ap
+    @test !ev1.due_wind
+    @test !ev1.due_log
+    @test !ev1.due_scn
+    @test ev1.due_phys
 end
 
 @testset "PX4Lockstep ABI handshake helper" begin
@@ -591,7 +613,16 @@ end
 
     # Spin only rotor 3 (which has rotor_dir = -1 in the default set).
     duties = SVector{4,Float64}(0.0, 0.0, 0.5, 0.0)
-    out = Sim.Propulsion.step_propulsion!(prop, duties, 16.0, 1.225, Sim.Types.vec3(0.0, 0.0, 0.0), 0.002)
+    ω0 = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0)
+    out = Sim.Propulsion.step_propulsion!(
+        prop,
+        ω0,
+        duties,
+        16.0,
+        1.225,
+        Sim.Types.vec3(0.0, 0.0, 0.0),
+        0.002,
+    )
 
     @test out.shaft_torque_nm[3] < 0.0
 
@@ -828,37 +859,52 @@ end
     @test sim.cfg.mode == RT.MODE_LIVE
 end
 
-@testset "Cadence: 10-minute schedule has exact hits and constant time_us deltas" begin
-    # This is intentionally a *scheduler-level* test: it proves no drift over long horizons
-    # without running full vehicle dynamics.
-    dt = 0.002
-    dt_us = Int(round(dt * 1e6))
-    ap_dt = 0.01
-    ap_steps = Int(round(ap_dt / dt))
+@testset "Runtime.Scheduler: 10-minute schedule has exact hits and constant time_us deltas" begin
+    # Scheduler-level test: no drift over long horizons even with a dense physics axis.
+    RT = Sim.Runtime
 
-    total_time_s = 600.0  # 10 minutes
-    total_steps = Int(round(total_time_s / dt))
+    t0_us = UInt64(0)
+    t_end_us = UInt64(600_000_000)  # 600 s
 
-    trig = Sim.Scheduling.StepTrigger(ap_steps)
-    expected_hits = (total_steps - 1) ÷ ap_steps + 1
+    dt_phys_us = UInt64(2_000)
+    dt_ap_us = UInt64(10_000)
+
+    tl = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = dt_ap_us,
+        dt_wind_us = UInt64(20_000),
+        dt_log_us = UInt64(50_000),
+        dt_phys_us = dt_phys_us,
+    )
+
+    sched = RT.Scheduler(tl)
 
     hits = 0
-    last_us = nothing
-    for step = 0:(total_steps-1)
-        if Sim.Scheduling.due(trig, step)
-            t_us = UInt64(step * dt_us)
-            if last_us !== nothing
-                @test t_us - last_us == UInt64(ap_steps * dt_us)
-            end
-            last_us = t_us
+    last_ap_us = nothing
+
+    while true
+        ev = RT.boundary_event(sched)
+
+        if ev.due_ap
             hits += 1
+            if last_ap_us !== nothing
+                @test ev.time_us - last_ap_us == dt_ap_us
+            end
+            last_ap_us = ev.time_us
+        end
+
+        RT.consume_boundary!(sched, ev)
+
+        if RT.has_next(sched)
+            RT.advance_evt!(sched)
+        else
+            break
         end
     end
 
-    @test hits == expected_hits
-
-    last_trigger_step = ((total_steps - 1) ÷ ap_steps) * ap_steps
-    @test last_us == UInt64(last_trigger_step * dt_us)
+    @test hits == length(tl.ap.t_us)
+    @test last_ap_us == t_end_us
 end
 
 
@@ -900,16 +946,21 @@ end
 
     # Current-limited regime (force I_lin >= Imax but avoid V_min clamp).
     p_sat = Sim.Propulsion.default_iris_quadrotor_set()
-    for unit in p_sat.units
-        unit.motor = Sim.Propulsion.BLDCMotorParams(
-            Kv_rpm_per_volt = unit.motor.Kv_rpm_per_volt,
-            R_ohm = unit.motor.R_ohm,
-            J_kgm2 = unit.motor.J_kgm2,
-            I0_a = unit.motor.I0_a,
-            viscous_friction_nm_per_rad_s = unit.motor.viscous_friction_nm_per_rad_s,
-            max_current_a = 5.0,
-        )
-    end
+    units_sat = [
+        Sim.Propulsion.MotorPropUnit(
+            esc = unit.esc,
+            motor = Sim.Propulsion.BLDCMotorParams(
+                Kv_rpm_per_volt = unit.motor.Kv_rpm_per_volt,
+                R_ohm = unit.motor.R_ohm,
+                J_kgm2 = unit.motor.J_kgm2,
+                I0_a = unit.motor.I0_a,
+                viscous_friction_nm_per_rad_s = unit.motor.viscous_friction_nm_per_rad_s,
+                max_current_a = 5.0,
+            ),
+            prop = unit.prop,
+        ) for unit in p_sat.units
+    ]
+    p_sat = Sim.Propulsion.QuadRotorSet{4}(units_sat, p_sat.rotor_dir)
 
     ocv_sat = 12.6
     R0_sat = 0.02

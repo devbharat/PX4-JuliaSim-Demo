@@ -25,7 +25,13 @@ export reserve!
 export LogColumn, LogSchema, csv_schema, csv_header_line, write_csv_header
 
 # Update this when CSV columns are added, removed, or renamed.
-const CSV_SCHEMA_VERSION = 2
+const CSV_SCHEMA_VERSION = 3
+
+# Logging currently records actuator motor commands as 12 channels (PX4 lockstep ABI).
+# For consistency (and to avoid silently dropping info for hex/octo/VTOL), rotor
+# convenience outputs are also logged as up to 12 channels.
+const MAX_ROTORS_LOG = 12
+const NAN_ROTOR_TUPLE = ntuple(_ -> NaN, MAX_ROTORS_LOG)
 
 ############################
 # Explicit log schema
@@ -105,15 +111,31 @@ const CSV_LOG_SCHEMA = LogSchema(
         LogColumn("m10", "norm", "motor command 10"),
         LogColumn("m11", "norm", "motor command 11"),
         LogColumn("m12", "norm", "motor command 12"),
-        # rotor outputs (optional convenience)
+        # rotor outputs (optional convenience, up to 12)
         LogColumn("rotor_w1", "rad/s", "rotor omega 1"),
         LogColumn("rotor_w2", "rad/s", "rotor omega 2"),
         LogColumn("rotor_w3", "rad/s", "rotor omega 3"),
         LogColumn("rotor_w4", "rad/s", "rotor omega 4"),
+        LogColumn("rotor_w5", "rad/s", "rotor omega 5"),
+        LogColumn("rotor_w6", "rad/s", "rotor omega 6"),
+        LogColumn("rotor_w7", "rad/s", "rotor omega 7"),
+        LogColumn("rotor_w8", "rad/s", "rotor omega 8"),
+        LogColumn("rotor_w9", "rad/s", "rotor omega 9"),
+        LogColumn("rotor_w10", "rad/s", "rotor omega 10"),
+        LogColumn("rotor_w11", "rad/s", "rotor omega 11"),
+        LogColumn("rotor_w12", "rad/s", "rotor omega 12"),
         LogColumn("rotor_T1", "N", "rotor thrust 1"),
         LogColumn("rotor_T2", "N", "rotor thrust 2"),
         LogColumn("rotor_T3", "N", "rotor thrust 3"),
         LogColumn("rotor_T4", "N", "rotor thrust 4"),
+        LogColumn("rotor_T5", "N", "rotor thrust 5"),
+        LogColumn("rotor_T6", "N", "rotor thrust 6"),
+        LogColumn("rotor_T7", "N", "rotor thrust 7"),
+        LogColumn("rotor_T8", "N", "rotor thrust 8"),
+        LogColumn("rotor_T9", "N", "rotor thrust 9"),
+        LogColumn("rotor_T10", "N", "rotor thrust 10"),
+        LogColumn("rotor_T11", "N", "rotor thrust 11"),
+        LogColumn("rotor_T12", "N", "rotor thrust 12"),
         # environment
         LogColumn("wind_x", "m/s", "wind NED x"),
         LogColumn("wind_y", "m/s", "wind NED y"),
@@ -194,8 +216,8 @@ mutable struct SimLog <: AbstractLogSink
     motor_cmd12::Vector{NTuple{12,Float64}}
 
     # propulsion outputs (optional)
-    rotor_omega_rad_s::Vector{NTuple{4,Float64}}
-    rotor_thrust_n::Vector{NTuple{4,Float64}}
+    rotor_omega_rad_s::Vector{NTuple{12,Float64}}
+    rotor_thrust_n::Vector{NTuple{12,Float64}}
 
     # environment (sampled at vehicle position)
     wind_ned::Vector{NTuple{3,Float64}}
@@ -233,8 +255,8 @@ function SimLog()
         Float64[],
         NTuple{4,Float64}[],
         NTuple{12,Float64}[],
-        NTuple{4,Float64}[],
-        NTuple{4,Float64}[],
+        NTuple{12,Float64}[],
+        NTuple{12,Float64}[],
         NTuple{3,Float64}[],
         Float64[],
         NTuple{3,Float64}[],
@@ -350,8 +372,8 @@ function log!(
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     yaw_sp::Float64 = NaN,
     yawspeed_sp::Float64 = NaN,
-    rotor_omega::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
-    rotor_thrust::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
+    rotor_omega::NTuple{12,Float64} = NAN_ROTOR_TUPLE,
+    rotor_thrust::NTuple{12,Float64} = NAN_ROTOR_TUPLE,
 )
     push!(sink.t, t)
     push!(sink.time_us, time_us)
@@ -409,8 +431,8 @@ function log!(
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     yaw_sp::Float64 = NaN,
     yawspeed_sp::Float64 = NaN,
-    rotor_omega::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
-    rotor_thrust::NTuple{4,Float64} = (NaN, NaN, NaN, NaN),
+    rotor_omega::NTuple{12,Float64} = NAN_ROTOR_TUPLE,
+    rotor_thrust::NTuple{12,Float64} = NAN_ROTOR_TUPLE,
 )
     io = sink.io
     if !sink.wrote_header
@@ -451,23 +473,13 @@ function log!(
         m[11],
         m[12]
     )
-    # rotor outputs
-    @printf(
-        io,
-        "%.6f,%.6f,%.6f,%.6f,",
-        rotor_omega[1],
-        rotor_omega[2],
-        rotor_omega[3],
-        rotor_omega[4]
-    )
-    @printf(
-        io,
-        "%.6f,%.6f,%.6f,%.6f,",
-        rotor_thrust[1],
-        rotor_thrust[2],
-        rotor_thrust[3],
-        rotor_thrust[4]
-    )
+    # rotor outputs (convenience)
+    for i = 1:MAX_ROTORS_LOG
+        @printf(io, "%.6f,", rotor_omega[i])
+    end
+    for i = 1:MAX_ROTORS_LOG
+        @printf(io, "%.6f,", rotor_thrust[i])
+    end
     # environment
     @printf(io, "%.6f,%.6f,%.6f,%.6f,", wind_ned[1], wind_ned[2], wind_ned[3], rho)
     @printf(io, "%.6f,%.6f,%.6f,", air_vel_body[1], air_vel_body[2], air_vel_body[3])
@@ -547,8 +559,12 @@ function write_csv(log::SimLog, path::AbstractString)
                 m12[12]
             )
 
-            @printf(io, "%.6f,%.6f,%.6f,%.6f,", ωr[1], ωr[2], ωr[3], ωr[4])
-            @printf(io, "%.6f,%.6f,%.6f,%.6f,", Tr[1], Tr[2], Tr[3], Tr[4])
+            for j = 1:MAX_ROTORS_LOG
+                @printf(io, "%.6f,", ωr[j])
+            end
+            for j = 1:MAX_ROTORS_LOG
+                @printf(io, "%.6f,", Tr[j])
+            end
 
             @printf(
                 io,

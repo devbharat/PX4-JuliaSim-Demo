@@ -28,7 +28,6 @@ module Sim
 
 include("Types.jl")
 include("Faults.jl")
-include("Scheduling.jl")
 include("Noise.jl")
 include("RigidBody.jl")
 include("Environment.jl")

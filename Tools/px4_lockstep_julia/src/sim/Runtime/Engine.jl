@@ -31,7 +31,7 @@ using ..Types: Vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize
 using ..Powertrain: BatteryStatus
-using ..Plant: PlantInput
+using ..Plant: PlantInput, PlantOutputs, PlantState
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
 
 import ..plant_outputs
@@ -186,6 +186,9 @@ mutable struct Engine{PS,DF,I,AP,W,SC,ES,TL,R}
     t_us::UInt64
     t_s::Float64
 
+    # deterministic boundary counter (0-based index into timeline.evt)
+    step::Int
+
     # state
     bus::SimBus
     plant::PS
@@ -232,6 +235,8 @@ function Engine(
     t_us = current_us(sched)
     t_s = Float64(t_us) * 1e-6
 
+    step = Int(sched.evt_idx) - 1
+
     # Reset bus time + schema invariants.
     reset_bus!(bus, t_us)
 
@@ -243,6 +248,7 @@ function Engine(
         sched,
         t_us,
         t_s,
+        step,
         bus,
         plant0,
         dynfun,
@@ -332,10 +338,12 @@ This is intentionally the *only* place where discrete ordering semantics are def
 function process_events_at!(sim::Engine)
     # Current boundary is defined by the scheduler.
     ev = boundary_event(sim.sched)
+    prev_wind_dist = sim.bus.wind_dist_ned
 
     # Make time authoritative + consistent everywhere.
     sim.t_us = ev.time_us
     sim.t_s = Float64(sim.t_us) * 1e-6
+    sim.step = Int(sim.sched.evt_idx) - 1
     sim.bus.time_us = sim.t_us
 
     # Fail fast on determinism/scheduler invariants.
@@ -347,11 +355,19 @@ function process_events_at!(sim::Engine)
             # Scenario first: can set bus-level faults and high-level commands.
             update!(sim.scenario, sim.bus, sim.plant, sim.t_us)
 
+            # If the wind axis is not due, apply any change in the scenario wind
+            # disturbance immediately so the held wind sample is consistent.
+            if !ev.due_wind
+                sim.bus.wind_ned =
+                    sim.bus.wind_ned + (sim.bus.wind_dist_ned - prev_wind_dist)
+            end
+
             # Optionally record dense scenario streams on evt axis.
             if sim.cfg.mode == MODE_RECORD && sim.cfg.record_faults_evt
                 record!(sim.recorder, :faults_evt, sim.t_us, sim.bus.faults)
                 record!(sim.recorder, :ap_cmd_evt, sim.t_us, sim.bus.ap_cmd)
                 record!(sim.recorder, :landed_evt, sim.t_us, sim.bus.landed)
+                record!(sim.recorder, :wind_dist_evt, sim.t_us, sim.bus.wind_dist_ned)
             end
 
             # Also record on the scenario axis when due (small stream for static scenarios).
@@ -359,11 +375,16 @@ function process_events_at!(sim::Engine)
                 record!(sim.recorder, :faults, sim.t_us, sim.bus.faults)
                 record!(sim.recorder, :ap_cmd, sim.t_us, sim.bus.ap_cmd)
                 record!(sim.recorder, :landed, sim.t_us, sim.bus.landed)
+                record!(sim.recorder, :wind_dist, sim.t_us, sim.bus.wind_dist_ned)
             end
 
         elseif stage === :wind
             if ev.due_wind
                 update!(sim.wind, sim.bus, sim.plant, sim.t_us)
+
+                # Apply any scenario-requested wind disturbance after the base wind
+                # source updates the sample.
+                sim.bus.wind_ned = sim.bus.wind_ned + sim.bus.wind_dist_ned
                 if sim.cfg.mode == MODE_RECORD
                     record!(sim.recorder, :wind_ned, sim.t_us, sim.bus.wind_ned)
                 end
@@ -380,6 +401,11 @@ function process_events_at!(sim::Engine)
 
                 if applicable(plant_outputs, sim.dynfun, sim.t_s, sim.plant, u)
                     y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
+                    y isa PlantOutputs || error(
+                        "plant_outputs must return Plant.PlantOutputs; got " *
+                        string(typeof(y)),
+                    )
+
                     sim.outputs.plant_y = y
                     sim.outputs.derived_valid = true
 
@@ -389,20 +415,15 @@ function process_events_at!(sim::Engine)
                         sim.bus.battery = y.battery_status
                     end
 
-                    # Optional env cache for sinks/telemetry.
-                    if hasproperty(y, :rho_kgm3)
-                        rho = getproperty(y, :rho_kgm3)
-                        if isfinite(rho)
-                            sim.bus.env =
-                                EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
-                        end
+                    # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
+                    rho = y.rho_kgm3
+                    if isfinite(rho)
+                        sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
                     end
-                    if hasproperty(y, :temp_k)
-                        temp = getproperty(y, :temp_k)
-                        if isfinite(temp)
-                            sim.bus.env =
-                                EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
-                        end
+                    temp = y.temp_k
+                    if isfinite(temp)
+                        sim.bus.env =
+                            EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                     end
                 else
                     sim.outputs.plant_y = nothing
@@ -490,113 +511,65 @@ end
 ############################
 
 @inline _rb_state(x::RigidBodyState) = x
+@inline _rb_state(x::PlantState) = x.rb
 
 @inline function _rb_state(x)
     if hasproperty(x, :rb)
         return getproperty(x, :rb)
     end
     error(
-        "Plant state does not expose an `rb` field; cannot emit rigid-body logs. Got: " *
+        "Plant state must expose an `rb` field to emit rigid-body logs. Got: " *
         string(typeof(x)),
     )
 end
 
-@inline function _rotor_omega_tuple(plant)::NTuple{4,Float64}
-    if hasproperty(plant, :rotor_ω)
-        ω = getproperty(plant, :rotor_ω)
-        n = length(ω)
-        return (
-            n >= 1 ? ω[1] : NaN,
-            n >= 2 ? ω[2] : NaN,
-            n >= 3 ? ω[3] : NaN,
-            n >= 4 ? ω[4] : NaN,
-        )
-    end
-    return (NaN, NaN, NaN, NaN)
+@inline function _rotor_omega_tuple(plant::PlantState)::NTuple{12,Float64}
+    ω = plant.rotor_ω
+    n = length(ω)
+    return ntuple(i -> i <= n ? Float64(ω[i]) : NaN, 12)
 end
 
-@inline function _rotor_thrust_tuple(y)::NTuple{4,Float64}
-    if y === nothing || !hasproperty(y, :rotors)
-        return (NaN, NaN, NaN, NaN)
-    end
-    rot = getproperty(y, :rotors)
-    rot === nothing && return (NaN, NaN, NaN, NaN)
+@inline _rotor_omega_tuple(::Any)::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
+
+@inline _rotor_thrust_tuple(::Nothing)::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
+
+@inline function _rotor_thrust_tuple(y::PlantOutputs)::NTuple{12,Float64}
+    rot = y.rotors
+    rot === nothing && return Logging.NAN_ROTOR_TUPLE
     th = rot.thrust_n
     n = length(th)
-    return (
-        n >= 1 ? th[1] : NaN,
-        n >= 2 ? th[2] : NaN,
-        n >= 3 ? th[3] : NaN,
-        n >= 4 ? th[4] : NaN,
-    )
+    return ntuple(i -> i <= n ? Float64(th[i]) : NaN, 12)
 end
+
+@inline _rotor_thrust_tuple(::Any)::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
 
 @inline function _to_ntuple3_float(v)
     return (Float64(v[1]), Float64(v[2]), Float64(v[3]))
 end
 
-@inline function _autopilot_log_fields(ap)
-    pos_sp = (NaN, NaN, NaN)
-    vel_sp = (NaN, NaN, NaN)
-    acc_sp = (NaN, NaN, NaN)
-    yaw_sp = NaN
-    yawspeed_sp = NaN
-    nav_state = Int32(-1)
-    arming_state = Int32(-1)
-    mission_seq = Int32(0)
-    mission_count = Int32(0)
-    mission_finished = Int32(0)
+"""Typed autopilot telemetry for structured logging.
 
-    if hasproperty(ap, :last_out)
-        out = getproperty(ap, :last_out)
-        if out !== nothing
-            if hasproperty(out, :trajectory_setpoint_position)
-                pos_sp = _to_ntuple3_float(getproperty(out, :trajectory_setpoint_position))
-            end
-            if hasproperty(out, :trajectory_setpoint_velocity)
-                vel_sp = _to_ntuple3_float(getproperty(out, :trajectory_setpoint_velocity))
-            end
-            if hasproperty(out, :trajectory_setpoint_acceleration)
-                acc_sp =
-                    _to_ntuple3_float(getproperty(out, :trajectory_setpoint_acceleration))
-            end
-            if hasproperty(out, :trajectory_setpoint_yaw)
-                yaw_sp = Float64(getproperty(out, :trajectory_setpoint_yaw))
-            end
-            if hasproperty(out, :trajectory_setpoint_yawspeed)
-                yawspeed_sp = Float64(getproperty(out, :trajectory_setpoint_yawspeed))
-            end
-            if hasproperty(out, :nav_state)
-                nav_state = Int32(getproperty(out, :nav_state))
-            end
-            if hasproperty(out, :arming_state)
-                arming_state = Int32(getproperty(out, :arming_state))
-            end
-            if hasproperty(out, :mission_seq)
-                mission_seq = Int32(getproperty(out, :mission_seq))
-            end
-            if hasproperty(out, :mission_count)
-                mission_count = Int32(getproperty(out, :mission_count))
-            end
-            if hasproperty(out, :mission_finished)
-                mission_finished = Int32(getproperty(out, :mission_finished))
-            end
-        end
-    end
-
-    return (
-        pos_sp,
-        vel_sp,
-        acc_sp,
-        yaw_sp,
-        yawspeed_sp,
-        nav_state,
-        arming_state,
-        mission_seq,
-        mission_count,
-        mission_finished,
-    )
+Autopilot sources should populate this contract at the source boundary so the
+runtime log schema is stable and missing data is explicit (NaNs / -1).
+"""
+Base.@kwdef struct AutopilotTelemetry
+    pos_sp::NTuple{3,Float64} = (NaN, NaN, NaN)
+    vel_sp::NTuple{3,Float64} = (NaN, NaN, NaN)
+    acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN)
+    yaw_sp::Float64 = NaN
+    yawspeed_sp::Float64 = NaN
+    nav_state::Int32 = Int32(-1)
+    arming_state::Int32 = Int32(-1)
+    mission_seq::Int32 = Int32(0)
+    mission_count::Int32 = Int32(0)
+    mission_finished::Int32 = Int32(0)
 end
+
+"""Protocol hook: extract typed autopilot telemetry.
+
+Default implementation returns missing values. Live sources should override.
+"""
+@inline autopilot_telemetry(::Any) = AutopilotTelemetry()
 
 """Emit boundary-time logs to all configured log sinks.
 
@@ -614,16 +587,7 @@ function _emit_logs_to_sinks!(sim::Engine)
     rotor_omega = _rotor_omega_tuple(sim.plant)
     rotor_thrust = _rotor_thrust_tuple(sim.outputs.plant_y)
 
-    pos_sp,
-    vel_sp,
-    acc_sp,
-    yaw_sp,
-    yawspeed_sp,
-    nav_state,
-    arming_state,
-    mission_seq,
-    mission_count,
-    mission_finished = _autopilot_log_fields(sim.autopilot)
+    ap_tel = autopilot_telemetry(sim.autopilot)
 
     for sink in sim.log_sinks
         Logging.log!(
@@ -638,16 +602,16 @@ function _emit_logs_to_sinks!(sim::Engine)
             battery = sim.bus.battery,
             rotor_omega = rotor_omega,
             rotor_thrust = rotor_thrust,
-            pos_sp = pos_sp,
-            vel_sp = vel_sp,
-            acc_sp = acc_sp,
-            yaw_sp = yaw_sp,
-            yawspeed_sp = yawspeed_sp,
-            nav_state = nav_state,
-            arming_state = arming_state,
-            mission_seq = mission_seq,
-            mission_count = mission_count,
-            mission_finished = mission_finished,
+            pos_sp = ap_tel.pos_sp,
+            vel_sp = ap_tel.vel_sp,
+            acc_sp = ap_tel.acc_sp,
+            yaw_sp = ap_tel.yaw_sp,
+            yawspeed_sp = ap_tel.yawspeed_sp,
+            nav_state = ap_tel.nav_state,
+            arming_state = ap_tel.arming_state,
+            mission_seq = ap_tel.mission_seq,
+            mission_count = ap_tel.mission_count,
+            mission_finished = ap_tel.mission_finished,
         )
     end
 
@@ -688,6 +652,7 @@ function step_to_next_event!(sim::Engine)
     # Advance authoritative time.
     sim.t_us = current_us(sim.sched)
     sim.t_s = Float64(sim.t_us) * 1e-6
+    sim.step = Int(sim.sched.evt_idx) - 1
 
     # Bookkeeping.
     sim.stats.n_intervals += 1

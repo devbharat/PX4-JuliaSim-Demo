@@ -1,35 +1,39 @@
-# Scenarios and Events
+# Scenario events
 
-## Role
+The scenario layer is a convenient place to express **hybrid-system** behavior:
 
-`src/sim/Scenario.jl` and `src/sim/Events.jl` provide a deterministic mechanism for
-high-level mission inputs and discrete event injection.
+- arm / disarm
+- start a mission / pulse RTL
+- inject a step gust
+- fail a motor or disconnect the battery
+- trigger actions when some condition becomes true
 
-## Key Decisions and Rationale
+The `Sim.Events` module provides a small, deterministic one-shot event scheduler that can be embedded inside a scenario.
 
-- **Scenario abstraction:** separates “what to command” from the simulation engine so
-  the same plant can be exercised under many conditions.
-- **Faults as signals:** scenarios publish `FaultState` instead of mutating propulsion
-  or battery objects, enabling record/replay.
-- **Microsecond `AtTime` events:** time triggers are stored as integer microseconds to
-  align with lockstep time and avoid drift.
-- **Multiple trigger types:** `AtTime`, `AtStep`, and `When` cover time, step count, and
-  state-dependent events without extra dependencies.
-- **One-shot semantics:** each event fires at most once, simplifying reasoning about
-  side effects and ensuring idempotency.
+## What the scheduler provides
 
-## Integration Contracts
+- **Multiple trigger types:**
+  - `AtTime(t_s, action)` fires once when `ctx.t_us >= t_s`.
+  - `AtStep(step, action)` fires once when `ctx.step >= step`.
+  - `When(cond, action)` fires once when `cond(state, ctx, t_s)` becomes true.
 
-- `process_events!` may mutate the simulation instance at event boundaries only.
-- `next_event_us` is used by the event-driven engine to schedule true boundaries.
-- `When` events are evaluated only when boundaries are processed, so their timing
-  resolution is limited to the event cadence.
-- `scenario_faults` returns the held fault state for the current boundary time.
+- **Deterministic timebase:** `AtTime` uses integer microseconds internally to avoid float drift.
+
+- **One-shot semantics:** every event fires at most once.
+
+## Canonical engine support
+
+The canonical simulator (`Sim.Runtime.Engine`) exposes a deterministic boundary counter:
+
+- `Engine.step` is a **0-based** count of processed event-axis boundaries.
+- Live scenarios executed through `Sim.Sources.LiveScenarioSource` receive a `ScenarioContext` snapshot that exposes `t_us` and `step` for use by `AtTime` / `AtStep` / `When`.
+
+If you want a specific physical time (e.g. “at exactly 3.275 s”), prefer `AtTime`. `AtStep` is most useful when you want to trigger after a deterministic number of engine boundaries (e.g. for scripted tests).
 
 ## Caveats
 
-- `AtTime` requires microsecond-quantized times; non-quantized values raise errors.
-- `AtStep` events are not currently supported by the canonical engine (`Runtime.Engine`). Prefer `AtTime` (possibly derived from `timeline.phys`), or extend the runtime to expose a deterministic step counter.
-- `When` events can fire late by up to one event interval in the event-driven engine.
-- `ScriptedScenario` uses float time thresholds; align them to `dt` for deterministic
-  tick boundaries.
+- Only `AtTime` events are currently discoverable up-front for inclusion as explicit timeline boundaries (`Runtime.build_timeline_for_run`).
+  - This is intentional: `AtTime` represents “hard” hybrid event times.
+  - `AtStep` events are evaluated when the scenario is stepped at boundaries.
+
+- Dynamic insertion of new `AtTime` boundaries at runtime is not yet supported.

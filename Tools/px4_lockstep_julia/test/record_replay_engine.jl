@@ -346,8 +346,8 @@ end
     # Persist and reload (exercises schema + I/O path).
     mktemp() do path, io
         close(io)
-        REC.save_recording(path, tier0)
-        tier0_loaded = REC.load_recording(path)
+        REC.write_recording(path, tier0)
+        tier0_loaded = REC.read_recording(path)
         REC.validate_recording(tier0_loaded)
 
         # Build replay sources from the loaded recording.
@@ -356,7 +356,13 @@ end
 
         ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
         wind_replay = Sim.Sources.ReplayWindSource(tr.wind_ned)
-        scenario_replay = Sim.Sources.ReplayScenarioSource(scn.ap_cmd, scn.landed, scn.faults)
+        wind_dist = hasproperty(scn, :wind_dist) ? scn.wind_dist : nothing
+        scenario_replay = Sim.Sources.ReplayScenarioSource(
+            scn.ap_cmd,
+            scn.landed,
+            scn.faults;
+            wind_dist = wind_dist,
+        )
 
         # --- Replay (record again to compare traces) ---
         rec2 = REC.InMemoryRecorder()
@@ -497,7 +503,7 @@ end
     @test autopilot.seen_batt_connected[1] == false
 end
 
-@testset "Recording.load_recording enforces schema version" begin
+@testset "Recording.read_recording enforces schema version" begin
     timeline = RT.build_timeline(UInt64(0), UInt64(1_000);
         dt_ap_us = UInt64(1_000),
         dt_wind_us = UInt64(1_000),
@@ -510,6 +516,6 @@ end
         recorder = REC.InMemoryRecorder(),
     )
     path = joinpath(mktempdir(), "bad_recording.jls")
-    REC.save_recording(path, rec)
-    @test_throws ErrorException REC.load_recording(path)
+    REC.write_recording(path, rec)
+    @test_throws ErrorException REC.read_recording(path)
 end

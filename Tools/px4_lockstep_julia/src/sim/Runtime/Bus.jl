@@ -26,7 +26,7 @@ using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
 """Bump this when *field meanings or units* change."""
-const BUS_SCHEMA_VERSION = 5
+const BUS_SCHEMA_VERSION = 6
 
 """A minimal atmosphere snapshot for bus-level coupling."""
 Base.@kwdef struct EnvSample
@@ -44,6 +44,7 @@ Fields
 - `time_us`: current simulation time (authoritative integer microseconds)
 - `cmd`: latest actuator command packet (ZOH between autopilot ticks)
 - `wind_ned`: latest wind sample (sample-and-hold between wind ticks)
+- `wind_dist_ned`: additive wind disturbance requested by scenario (ZOH between boundaries)
 - `faults`: bus-level fault state (scenario publishes; plant consumes)
 - `ap_cmd`: high-level autopilot request (arm/mission/RTL)
 - `landed`: landed flag for PX4
@@ -57,6 +58,7 @@ mutable struct SimBus
 
     cmd::ActuatorCommand
     wind_ned::Vec3
+    wind_dist_ned::Vec3
 
     # Fault state (piecewise-constant). Scenario publishes this.
     faults::FaultState
@@ -78,6 +80,7 @@ function SimBus(; time_us::UInt64 = 0)
         BUS_SCHEMA_VERSION,
         time_us,
         ActuatorCommand(),
+        vec3(0, 0, 0),
         vec3(0, 0, 0),
         FaultState(),
         AutopilotCommand(),
@@ -105,6 +108,7 @@ function reset_bus!(bus::SimBus, t_us::UInt64)
     bus.time_us = t_us
     bus.cmd = ActuatorCommand()
     bus.wind_ned = vec3(0, 0, 0)
+    bus.wind_dist_ned = vec3(0, 0, 0)
     bus.faults = FaultState()
     bus.ap_cmd = AutopilotCommand()
     bus.landed = true

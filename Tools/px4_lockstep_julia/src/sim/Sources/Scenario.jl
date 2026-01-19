@@ -20,6 +20,7 @@ is not sufficient (planned future extension).
 
 using ..Autopilots: AutopilotCommand
 using ..Faults: FaultState
+using ..Types: vec3
 
 using ..Scenario
 using ..Events: AtTime
@@ -37,12 +38,17 @@ function update!(::NullScenarioSource, bus::SimBus, plant_state, t_us::UInt64)
     bus.ap_cmd = AutopilotCommand()
     bus.landed = false
     bus.faults = FaultState()
+    bus.wind_dist_ned = vec3(0.0, 0.0, 0.0)
     return nothing
 end
 
 """Replay scenario source.
 
-Samples scenario output traces and publishes into `bus.ap_cmd`, `bus.landed`, `bus.faults`.
+Samples scenario output traces and publishes into:
+- `bus.ap_cmd`
+- `bus.landed`
+- `bus.faults`
+- `bus.wind_dist_ned` (optional)
 
 All traces are expected to be ZOH semantics.
 """
@@ -50,29 +56,28 @@ struct ReplayScenarioSource{
     TA<:ZOHTrace{AutopilotCommand},
     TL<:ZOHTrace{Bool},
     TF<:ZOHTrace{FaultState},
+    TW,
 } <: AbstractScenarioSource
     ap_cmd::TA
     landed::TL
     faults::TF
+    wind_dist::TW
+end
+
+function ReplayScenarioSource(ap_cmd, landed, faults; wind_dist = nothing)
+    return ReplayScenarioSource(ap_cmd, landed, faults, wind_dist)
 end
 
 function update!(src::ReplayScenarioSource, bus::SimBus, plant_state, t_us::UInt64)
     bus.ap_cmd = sample(src.ap_cmd, t_us)
     bus.landed = sample(src.landed, t_us)
     bus.faults = sample(src.faults, t_us)
+    if src.wind_dist === nothing
+        bus.wind_dist_ned = vec3(0.0, 0.0, 0.0)
+    else
+        bus.wind_dist_ned = sample(src.wind_dist, t_us)
+    end
     return nothing
-end
-
-"""Adapter that provides a scenario with access to environment/vehicle/battery objects.
-
-This is a compatibility shim for pre-record/replay scenario code.
-Long term, scenarios should publish bus-level commands/faults only (no mutation).
-"""
-mutable struct ScenarioSimView{E,V,B}
-    t_us::UInt64
-    env::E
-    vehicle::V
-    battery::B
 end
 
 """Live scenario source.
@@ -84,27 +89,34 @@ Publishes:
 - `bus.landed`
 - `bus.faults`
 
-May also trigger scenario-side mutations via the provided `simview` (legacy).
+Scenarios receive a **read-only context snapshot** and publish explicit outputs.
 """
-mutable struct LiveScenarioSource{S,SV} <: AbstractScenarioSource
+mutable struct LiveScenarioSource{S} <: AbstractScenarioSource
     scenario::S
-    simview::SV
+    step::Int
 end
 
-function LiveScenarioSource(scenario; env, vehicle, battery)
-    simview = ScenarioSimView(UInt64(0), env, vehicle, battery)
-    return LiveScenarioSource{typeof(scenario),typeof(simview)}(scenario, simview)
-end
+LiveScenarioSource(scenario) = LiveScenarioSource{typeof(scenario)}(scenario, 0)
 
 function update!(src::LiveScenarioSource, bus::SimBus, plant_state, t_us::UInt64)
     rb = _rb_state(plant_state)
-    src.simview.t_us = t_us
     t_s = Float64(t_us) * 1e-6
 
-    ap_cmd, landed = Scenario.scenario_step(src.scenario, t_s, rb, src.simview)
-    bus.faults = Scenario.scenario_faults(src.scenario, t_s, rb, src.simview)
-    bus.ap_cmd = ap_cmd
-    bus.landed = landed
+    ctx = Scenario.ScenarioContext(
+        t_us = t_us,
+        t_s = t_s,
+        step = src.step,
+        plant = plant_state,
+        rb = rb,
+    )
+    out = Scenario.scenario_outputs(src.scenario, ctx)
+    bus.ap_cmd = out.ap_cmd
+    bus.landed = out.landed
+    bus.faults = out.faults
+    bus.wind_dist_ned = out.wind_dist_ned
+
+    # Deterministic boundary counter for AtStep scenario events.
+    src.step += 1
     return nothing
 end
 
@@ -146,6 +158,7 @@ function event_times_us(src::LiveScenarioSource, t0_us::UInt64, t_end_us::UInt64
     return UInt64[]
 end
 
+
 """Event times for replay scenario sources.
 
 Replay trace axes are used as the scenario axes.
@@ -158,5 +171,4 @@ function event_times_us(src::ReplayScenarioSource, t0_us::UInt64, t_end_us::UInt
     return out
 end
 
-export AbstractScenarioSource,
-    NullScenarioSource, ReplayScenarioSource, LiveScenarioSource, ScenarioSimView
+export AbstractScenarioSource, NullScenarioSource, ReplayScenarioSource, LiveScenarioSource

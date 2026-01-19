@@ -14,6 +14,8 @@ The goal is to keep the lockstep bridge thin and deterministic, while the Julia 
 
 ## Quick start
 
+Public entrypoints are documented in `docs/API.md`.
+
 1. Build `libpx4_lockstep` in your PX4 tree.
 2. Set environment variables (optional, `PX4Lockstep.jl` will also search the build tree):
 
@@ -126,8 +128,6 @@ The simulation framework is organized as composable modules:
   * pluggable contact model (`NoContact` by default; `FlatGroundContact` optional)
 * `PX4Lockstep.Sim.Events` / `PX4Lockstep.Sim.Scenario`
   * deterministic event scheduler (arm at t, gust injection, motor failure, SOC triggers, ...)
-* `PX4Lockstep.Sim.Scheduling`
-  * deterministic periodic triggers for multi-rate stepping (no threads)
 * `PX4Lockstep.Sim.Noise`
   * AR(1) bias + Gaussian noise utilities
 * `PX4Lockstep.Sim.Estimators`
@@ -140,6 +140,7 @@ The simulation framework is organized as composable modules:
 * `PX4Lockstep.Sim.Logging`
   * `SimLog` in-memory logging and `CSVLogSink` streaming logs
 * `PX4Lockstep.Sim.Runtime`
+  * deterministic multi-rate scheduling via integer-microsecond timeline axes (`Timeline` + `Scheduler`)
   * **canonical** event-driven engine (live / record / replay)
   * integrates full plant between event boundaries using fixed or adaptive integrators
 * `PX4Lockstep.Sim.Recording` / `PX4Lockstep.Sim.Sources`
@@ -170,12 +171,18 @@ Example:
 ```julia
 using PX4Lockstep.Sim
 
-timeline = Sim.Runtime.build_timeline(
-    t_end_s=20.0,
-    dt_autopilot_s=0.004,
-    dt_wind_s=0.004,
-    dt_log_s=0.01,
-    dt_phys_s=0.002,  # optional
+RT = Sim.Runtime
+
+t0_us = UInt64(0)
+t_end_us = RT.dt_to_us(20.0)
+
+timeline = RT.build_timeline(
+    t0_us,
+    t_end_us;
+    dt_ap_us = RT.dt_to_us(0.004),
+    dt_wind_us = RT.dt_to_us(0.004),
+    dt_log_us = RT.dt_to_us(0.01),
+    dt_phys_us = RT.dt_to_us(0.002),  # optional
 )
 ```
 
@@ -197,7 +204,7 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 * The framework uses NED as the world frame to match PX4.
 * Controller outputs are treated as piecewise-constant over each sim `dt`, which is the standard assumption for fixed-step closed-loop simulation.
 * Wind turbulence is advanced once per tick (seeded RNG) and held constant over the integration step for determinism.
-* CSV logs include `time_us` (exact lockstep microsecond time) as of `schema_version=2`.
+* CSV logs include `time_us` (exact lockstep microsecond time) as of `schema_version=3`.
 
 ## Example Run
 ```bash

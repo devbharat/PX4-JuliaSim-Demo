@@ -15,7 +15,7 @@ This directory collects component-level design notes for `PX4Lockstep.jl`.
 - [x] Propulsion (`src/sim/Propulsion.jl`)
 - [x] Powertrain (`src/sim/Powertrain.jl`)
 - [x] Scenario/events (`src/sim/Scenario.jl`, `src/sim/Events.jl`)
-- [x] Scheduling (`src/sim/Scheduling.jl`)
+- [x] Scheduling (`src/sim/Runtime/Timeline.jl`, `src/sim/Runtime/Scheduler.jl`)
 - [x] Estimators (`src/sim/Estimators.jl`)
 - [x] Noise utilities (`src/sim/Noise.jl`)
 - [x] Contacts (`src/sim/Contacts.jl`)

@@ -17,9 +17,16 @@ useful starting point for battery-related RTL and energy studies.
 """
 module Powertrain
 
-using Printf
-
 export BatteryStatus, AbstractBatteryModel, IdealBattery, TheveninBattery, step!, status
+
+# NOTE
+# ----
+# In the canonical runtime engine, battery *state* (SOC/V1) is integrated as part of
+# `Plant.PlantState`. Battery model objects in this module are therefore intended to
+# be **parameter-only**.
+#
+# For stand-alone stepping (outside the integrated plant), use the
+# `BatteryState` helper below and call `step!(model, state, I_bus, dt)`.
 
 ############################
 # Types
@@ -38,6 +45,20 @@ Base.@kwdef struct BatteryStatus
 end
 
 abstract type AbstractBatteryModel end
+
+"""Battery state for stand-alone battery stepping.
+
+The canonical multirotor plant integrates battery state (SOC/V1) inside
+`Plant.PlantState`, so the battery model objects in this module are parameter-only.
+
+This helper exists for any workflows that still want to step a battery model outside
+the integrated plant.
+"""
+Base.@kwdef mutable struct BatteryState
+    soc::Float64 = 1.0
+    v1::Float64 = 0.0
+    last_current_a::Float64 = 0.0
+end
 
 ############################
 # Helpers
@@ -78,11 +99,10 @@ end
 
 This is intentionally simple and deterministic.
 """
-mutable struct IdealBattery <: AbstractBatteryModel
+struct IdealBattery <: AbstractBatteryModel
     capacity_c::Float64          # coulombs
-    soc::Float64
+    soc0::Float64                # initial SOC used by `Plant.init_plant_state`
     voltage_v::Float64
-    last_current_a::Float64
     low_thr::Float64
     crit_thr::Float64
     emerg_thr::Float64
@@ -97,36 +117,32 @@ function IdealBattery(;
     emerg_thr::Float64 = 0.05,
 )
     capacity_c = capacity_ah * 3600.0
-    return IdealBattery(
-        capacity_c,
-        _clamp01(soc0),
-        voltage_v,
-        0.0,
-        low_thr,
-        crit_thr,
-        emerg_thr,
-    )
+    return IdealBattery(capacity_c, _clamp01(soc0), voltage_v, low_thr, crit_thr, emerg_thr)
 end
 
-"""Advance the battery model by `dt` seconds using a bus current draw.
+"""Construct a battery state from model parameters."""
+@inline function battery_state(b::IdealBattery)
+    return BatteryState(soc = _clamp01(b.soc0), v1 = 0.0, last_current_a = 0.0)
+end
 
-This is the preferred stepping API when using an explicit motor/ESC model.
-"""
-function step!(b::IdealBattery, I_bus_a::Float64, dt::Float64)
+"""Advance the ideal battery state by `dt` seconds given bus current draw."""
+function step!(b::IdealBattery, st::BatteryState, I_bus_a::Float64, dt::Float64)
     I = max(0.0, Float64(I_bus_a))
-    b.last_current_a = I
-    b.soc = _clamp01(b.soc - (I * dt) / b.capacity_c)
+    st.last_current_a = I
+    st.soc = _clamp01(st.soc - (I * dt) / b.capacity_c)
+    # Ideal battery has no polarization state.
+    st.v1 = 0.0
     return nothing
 end
 
-
-function status(b::IdealBattery)::BatteryStatus
+function status(b::IdealBattery, st::BatteryState)::BatteryStatus
+    rem = _clamp01(st.soc)
     return BatteryStatus(
         connected = true,
         voltage_v = b.voltage_v,
-        current_a = b.last_current_a,
-        remaining = b.soc,
-        warning = _warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
+        current_a = st.last_current_a,
+        remaining = rem,
+        warning = _warning_from_remaining(rem, b.low_thr, b.crit_thr, b.emerg_thr),
     )
 end
 
@@ -178,9 +194,9 @@ Polarization voltage state:
 SOC:
   dSOC/dt = -I / Q
 """
-mutable struct TheveninBattery <: AbstractBatteryModel
+struct TheveninBattery <: AbstractBatteryModel
     capacity_c::Float64
-    soc::Float64
+    soc0::Float64                # initial SOC used by `Plant.init_plant_state`
 
     ocv_soc::Vector{Float64}
     ocv_v::Vector{Float64}
@@ -188,16 +204,13 @@ mutable struct TheveninBattery <: AbstractBatteryModel
     r0::Float64
     r1::Float64
     c1::Float64
-    v1::Float64
+    v1_0::Float64                # initial polarization voltage used by `Plant.init_plant_state`
 
     min_voltage_v::Float64
-
-    last_current_a::Float64
 
     low_thr::Float64
     crit_thr::Float64
     emerg_thr::Float64
-
 end
 
 function TheveninBattery(;
@@ -226,44 +239,51 @@ function TheveninBattery(;
         c1,
         v1_0,
         min_voltage_v,
-        0.0,
         low_thr,
         crit_thr,
         emerg_thr,
     )
 end
 
-function step!(b::TheveninBattery, I_bus_a::Float64, dt::Float64)
+"""Construct a battery state from model parameters."""
+@inline function battery_state(b::TheveninBattery)
+    return BatteryState(soc = _clamp01(b.soc0), v1 = Float64(b.v1_0), last_current_a = 0.0)
+end
+
+function step!(b::TheveninBattery, st::BatteryState, I_bus_a::Float64, dt::Float64)
     I = max(0.0, Float64(I_bus_a))
-    b.last_current_a = I
+    st.last_current_a = I
 
     # SOC coulomb counting.
-    b.soc = _clamp01(b.soc - (I * dt) / b.capacity_c)
+    st.soc = _clamp01(st.soc - (I * dt) / b.capacity_c)
 
     # Polarization voltage dynamics.
     if b.r1 > 0.0 && b.c1 > 0.0
         τ = b.r1 * b.c1
         if τ < 1e-9
-            b.v1 = I * b.r1
+            st.v1 = I * b.r1
         else
             α = exp(-dt / τ)
-            b.v1 = b.v1 * α + I * b.r1 * (1.0 - α)
+            st.v1 = st.v1 * α + I * b.r1 * (1.0 - α)
         end
+    else
+        st.v1 = 0.0
     end
 
     return nothing
 end
 
-function status(b::TheveninBattery)::BatteryStatus
-    ocv = _interp_ocv(b.ocv_soc, b.ocv_v, b.soc)
-    V = ocv - b.last_current_a * b.r0 - b.v1
+function status(b::TheveninBattery, st::BatteryState)::BatteryStatus
+    rem = _clamp01(st.soc)
+    ocv = _interp_ocv(b.ocv_soc, b.ocv_v, rem)
+    V = ocv - st.last_current_a * b.r0 - st.v1
     V = max(b.min_voltage_v, V)
     return BatteryStatus(
         connected = true,
         voltage_v = V,
-        current_a = b.last_current_a,
-        remaining = b.soc,
-        warning = _warning_from_remaining(b.soc, b.low_thr, b.crit_thr, b.emerg_thr),
+        current_a = st.last_current_a,
+        remaining = rem,
+        warning = _warning_from_remaining(rem, b.low_thr, b.crit_thr, b.emerg_thr),
     )
 end
 

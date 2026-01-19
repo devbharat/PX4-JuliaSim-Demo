@@ -96,19 +96,32 @@ function _from_serialized(rec::Tier0RecordingSerialized)
     )
 end
 
-"""Save a recording to disk (binary serialization)."""
-function save_recording(path::AbstractString, rec::Tier0Recording)
+"""Write a Tier-0 recording to an IO stream.
+
+This is the **canonical** persistence entrypoint.
+
+Notes
+-----
+- The current format is Julia `Serialization` (binary).
+- This format is convenient and dependency-free but is **not** intended as a stable
+  long-lived archival format across Julia versions.
+"""
+function write_recording(io::IO, rec::Tier0Recording)
+    serialize(io, _to_serialized(rec))
+    return nothing
+end
+
+"""Write a Tier-0 recording to disk at `path` (binary serialization)."""
+function write_recording(path::AbstractString, rec::Tier0Recording)
     open(path, "w") do io
-        serialize(io, _to_serialized(rec))
+        write_recording(io, rec)
     end
     return nothing
 end
 
-"""Load a recording from disk (binary serialization)."""
-function load_recording(path::AbstractString)::Tier0Recording
-    rec = open(path, "r") do io
-        deserialize(io)
-    end
+"""Read a Tier-0 recording from an IO stream (binary serialization)."""
+function read_recording(io::IO)::Tier0Recording
+    rec = deserialize(io)
     if rec isa Tier0RecordingSerialized
         rec = _from_serialized(rec)
     elseif !(rec isa Tier0Recording)
@@ -122,6 +135,13 @@ function load_recording(path::AbstractString)::Tier0Recording
     # recording cannot be replayed by the current engine.
     validate_recording(rec)
     return rec
+end
+
+"""Read a Tier-0 recording from disk at `path` (binary serialization)."""
+function read_recording(path::AbstractString)::Tier0Recording
+    open(path, "r") do io
+        return read_recording(io)
+    end
 end
 
 """Validate that a Tier-0 recording is internally consistent.
@@ -205,6 +225,6 @@ tier0_traces(rec::Tier0Recording) = tier0_traces(rec.recorder, rec.timeline)
 scenario_traces(rec::Tier0Recording) = scenario_traces(rec.recorder, rec.timeline)
 estimator_traces(rec::Tier0Recording) = estimator_traces(rec.recorder, rec.timeline)
 
-export Tier0Recording, save_recording, load_recording
+export Tier0Recording, write_recording, read_recording
 export tier0_traces, scenario_traces, estimator_traces
 export validate_recording

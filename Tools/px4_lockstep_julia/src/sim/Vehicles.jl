@@ -93,8 +93,11 @@ Behavior
 function sanitize(cmd::ActuatorCommand; strict::Bool = false, atol::Float64 = 1e-6)
     strict && validate(cmd; atol = atol)
 
-    motors = SVector{12,Float64}(ntuple(i -> clamp(_finite_or(cmd.motors[i], 0.0), 0.0, 1.0), 12))
-    servos = SVector{8,Float64}(ntuple(i -> clamp(_finite_or(cmd.servos[i], 0.0), -1.0, 1.0), 8))
+    motors = SVector{12,Float64}(
+        ntuple(i -> clamp(_finite_or(cmd.motors[i], 0.0), 0.0, 1.0), 12),
+    )
+    servos =
+        SVector{8,Float64}(ntuple(i -> clamp(_finite_or(cmd.servos[i], 0.0), -1.0, 1.0), 8))
     return ActuatorCommand(motors = motors, servos = servos)
 end
 

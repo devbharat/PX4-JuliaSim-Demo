@@ -1,22 +1,42 @@
 # Scheduling
 
-## Role
+The canonical simulator (`Sim.Runtime.Engine`) uses **explicit integer-microsecond time axes** and advances the simulation on the **union** of those axes.
 
-`src/sim/Scheduling.jl` implements integer-step periodic triggers for the fixed-step
-engine.
+This replaces older “fixed-step + modular step counters” patterns and avoids float-time drift/jitter entirely.
 
-## Key Decisions and Rationale
+## Where scheduling lives
 
-- **Step-based triggers:** cadence is computed with integer modulo arithmetic (with
-  optional offsets) to avoid floating-point jitter.
+- `src/sim/Runtime/Timeline.jl`
+  - Builds periodic axes in **integer microseconds**.
+  - Merges axes into a single strictly-increasing event axis (`timeline.evt`).
+  - Enforces exact microsecond representability via `dt_to_us`.
 
-## Integration Contracts
+- `src/sim/Runtime/Scheduler.jl`
+  - Maintains per-axis indices.
+  - Reports whether each axis is **due** at the current event boundary.
 
-- Task periods must be integer multiples of the physics `dt`.
+- `src/sim/Runtime/Engine.jl`
+  - Defines the canonical stage order.
+  - Uses the scheduler `due_*` flags to decide which sources/loggers fire at each boundary.
 
-## Caveats
+## Axes
 
-- `StepTrigger` assumes a fixed `dt` and is not suitable for variable-step simulation.
-- Periods must be converted to integer step counts before constructing triggers; the
-  helper assumes validation happened upstream.
-- Offsets are expressed in steps and can shift phase; choose them deliberately.
+A `Runtime.Timeline` contains:
+
+- `timeline.ap`   : autopilot tick axis
+- `timeline.wind` : wind update axis
+- `timeline.log`  : logging/sampling axis
+- `timeline.scn`  : scenario axis (typically sparse, plus `t0`)
+- `timeline.phys` : optional extra integration boundary axis
+- `timeline.evt`  : union axis used for integration boundaries
+
+All times are stored as `UInt64` microseconds. Because axes are generated from integer periods, there is no cadence drift.
+
+## Scheduler contract
+
+At each event boundary, `Runtime.boundary_event(sched)` returns a struct with:
+
+- `time_us::UInt64`
+- `due_ap`, `due_wind`, `due_log`, `due_scn`, `due_phys` (booleans)
+
+The engine processes sources/loggers in a fixed order and calls `Runtime.consume_boundary!(sched, ev)` once the boundary has been fully processed.

@@ -17,16 +17,14 @@ This module provides:
   * A minimal `PlantInput` and `PlantOutputs` (algebraic coupling outputs).
   * State math helpers (`plant_add`, `plant_scale_add`, `plant_lincomb`) used by ODE
     integrators.
-  * Compatibility shims to initialize and synchronize the legacy mutable subsystem
-    objects (actuators/propulsion/battery) from/to the continuous `PlantState`.
 
 Design constraints
 ------------------
 * Determinism: ODE RHS evaluation must be a **pure** function of (t, x, u) with no RNG.
 * Inputs are piecewise constant between discrete event boundaries (autopilot, wind,
   failures). Adaptive substeps must never touch RNG or mutate shared state.
-* Maintain compatibility while migrating: legacy mutable objects may remain, but they
-  should be treated as parameters plus a mirrored copy of the integrated state.
+* Subsystem model objects may remain for convenience, but they are treated as
+  **parameter-only**. `PlantState` is the single source of truth during integration.
 
 This file focuses on shared plant data structures and helper math; coupled dynamics are
 implemented in `PlantModels` (e.g., `PlantModels.CoupledMultirotorModel`).
@@ -47,7 +45,6 @@ export PlantState,
     PlantInput,
     PlantOutputs,
     init_plant_state,
-    sync_components_from_plant!,
     plant_add,
     plant_scale_add,
     plant_lincomb
@@ -295,88 +292,52 @@ end
 end
 
 ############################
-# Compatibility shims (sync with legacy mutable models)
+# Initialization helpers
 ############################
 
-# Actuator state extraction.
+# Actuator state extraction for initialization.
 @inline _act_state(::Vehicles.DirectActuators, ::Val{N}) where {N} =
     (zero(SVector{N,Float64}), zero(SVector{N,Float64}))
 @inline _act_state(a::Vehicles.FirstOrderActuators{N}, ::Val{N}) where {N} =
     (a.y, zero(SVector{N,Float64}))
 @inline _act_state(a::Vehicles.SecondOrderActuators{N}, ::Val{N}) where {N} = (a.y, a.ydot)
 
-@inline function _set_act_state!(::Vehicles.DirectActuators, y, ydot)
-    return nothing
-end
-@inline function _set_act_state!(a::Vehicles.FirstOrderActuators, y, ydot)
-    a.y = y
-    return nothing
-end
-@inline function _set_act_state!(a::Vehicles.SecondOrderActuators, y, ydot)
-    a.y = y
-    a.ydot = ydot
-    return nothing
-end
-
-# Battery state extraction.
+# Battery initial state extraction.
+#
+# Battery model objects are parameter-only; state lives in PlantState.
 @inline function _battery_state(b::Powertrain.IdealBattery)
-    return (b.soc, 0.0)
+    return (b.soc0, 0.0)
 end
 @inline function _battery_state(b::Powertrain.TheveninBattery)
-    return (b.soc, b.v1)
+    return (b.soc0, b.v1_0)
 end
 
-@inline function _set_battery_state!(b::Powertrain.IdealBattery, soc::Float64, v1::Float64)
-    b.soc = soc
-    return nothing
-end
-@inline function _set_battery_state!(
-    b::Powertrain.TheveninBattery,
-    soc::Float64,
-    v1::Float64,
-)
-    b.soc = soc
-    b.v1 = v1
-    return nothing
-end
+"""Initialize a PlantState from initial actuator + propulsion + battery parameters.
 
-# Propulsion state extraction.
-function _propulsion_omega(p::Propulsion.QuadRotorSet{N}) where {N}
-    return SVector{N,Float64}(ntuple(i -> Float64(p.units[i].ω_rad_s), N))
-end
+Canonical semantics
+-------------------
+PlantState is the only source of truth during integration. Subsystem model objects
+(actuators/propulsion/battery) are treated as parameter-only inputs to the plant RHS
+and are not synchronized from the integrated state.
 
-function _set_propulsion_omega!(
-    p::Propulsion.QuadRotorSet{N},
-    ω::SVector{N,Float64},
-) where {N}
-    @inbounds for i = 1:N
-        p.units[i].ω_rad_s = ω[i]
-    end
-    return nothing
-end
-
-"""Initialize a `PlantState` from the current legacy subsystem states.
-
-This is a convenience bridge for incremental migration.
-
-Currently supports `Propulsion.QuadRotorSet` propulsion and the
-`IdealBattery`/`TheveninBattery` battery models.
+Notes
+-----
+- Actuator y/y_dot initial conditions are taken from the actuator objects (if present).
+- Rotor angular rates start at 0 rad/s.
 """
 function init_plant_state(
     rb::RigidBodyState,
     motor_actuators,
     servo_actuators,
-    propulsion,
+    propulsion::Propulsion.QuadRotorSet{N},
     battery::Powertrain.AbstractBatteryModel,
-)
+) where {N}
     my, mydot = _act_state(motor_actuators, Val(12))
     sy, sydot = _act_state(servo_actuators, Val(8))
     soc, v1 = _battery_state(battery)
 
-    propulsion === nothing && error("init_plant_state requires a propulsion model")
-
-    ω = _propulsion_omega(propulsion)
-    N = length(ω)
+    # Rotor angular rates are owned by the integrated plant state.
+    ω = zero(SVector{N,Float64})
 
     return PlantState{N}(
         rb = rb,
@@ -388,31 +349,6 @@ function init_plant_state(
         batt_soc = soc,
         batt_v1 = v1,
     )
-end
-
-"""Synchronize legacy mutable subsystem objects from the integrated `PlantState`.
-
-This is for compatibility (logging, external tooling). Long-term, the simulation should
-stop mutating subsystem models in the hot loop and treat them as read-only parameters.
-"""
-function sync_components_from_plant!(
-    x::PlantState{N},
-    motor_actuators,
-    servo_actuators,
-    propulsion,
-    battery::Powertrain.AbstractBatteryModel,
-) where {N}
-    _set_act_state!(motor_actuators, x.motors_y, x.motors_ydot)
-    _set_act_state!(servo_actuators, x.servos_y, x.servos_ydot)
-
-    if propulsion !== nothing
-        # Currently only QuadRotorSet is supported.
-        _set_propulsion_omega!(propulsion, x.rotor_ω)
-    end
-
-    _set_battery_state!(battery, x.batt_soc, x.batt_v1)
-
-    return nothing
 end
 
 end # module Plant

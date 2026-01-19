@@ -215,34 +215,4 @@ function autopilot_step(
     return out
 end
 
-"""Convenience overload: compute `time_us` from `t`.
-
-This exists for backwards compatibility, but **lockstep simulation should prefer** the
-`time_us::UInt64` entry point to avoid float → integer rounding artifacts.
-"""
-function autopilot_step(
-    ap::PX4LockstepAutopilot,
-    t::Float64,
-    state_pos_ned::Vec3,
-    state_vel_ned::Vec3,
-    q_bn::Quat,
-    ω_body::Vec3,
-    cmd::AutopilotCommand;
-    landed::Bool = false,
-    battery::BatteryStatus = BatteryStatus(),
-)::LockstepOutputs
-    time_us = UInt64(round(Int, t * 1e6))
-    return autopilot_step(
-        ap,
-        time_us,
-        state_pos_ned,
-        state_vel_ned,
-        q_bn,
-        ω_body,
-        cmd;
-        landed = landed,
-        battery = battery,
-    )
-end
-
 end # module Autopilots

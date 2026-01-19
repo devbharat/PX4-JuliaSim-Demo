@@ -143,26 +143,27 @@ end
 
         Q_c = batt.capacity_c
         τ = batt.r1 * batt.c1
-        soc0 = batt.soc
-        v1_0 = batt.v1
+        st = PT.battery_state(batt)
+        soc0 = st.soc
+        v1_0 = st.v1
 
         for k in 1:n
-            PT.step!(batt, I, dt)
+            PT.step!(batt, st, I, dt)
             t = k * dt
 
             soc_expected = soc0 - I * t / Q_c
             v1_expected = v1_0 * exp(-t / τ) + I * batt.r1 * (1.0 - exp(-t / τ))
 
-            @test isapprox(batt.soc, soc_expected; atol=1e-12)
-            @test isapprox(batt.v1, v1_expected; atol=1e-11)
+            @test isapprox(st.soc, soc_expected; atol=1e-12)
+            @test isapprox(st.v1, v1_expected; atol=1e-11)
 
             # Terminal voltage check (OCV is constant here).
             V_expected = 12.0 - I * batt.r0 - v1_expected
-            @test isapprox(PT.status(batt).voltage_v, V_expected; atol=1e-10)
+            @test isapprox(PT.status(batt, st).voltage_v, V_expected; atol=1e-10)
         end
 
-        @test batt.soc < soc0
-        @test batt.v1 > 0.0
+        @test st.soc < soc0
+        @test st.v1 > 0.0
     end
 end
 
@@ -180,16 +181,34 @@ end
 
     # Snapshot a few mutable parameter fields; plant_outputs must not mutate them.
     batt = model.battery
-    batt_snap = (batt.soc, batt.v1, batt.last_current_a)
+    batt_snap = (
+        soc0 = batt.soc0,
+        v1_0 = batt.v1_0,
+        ocv_soc = copy(batt.ocv_soc),
+        ocv_v = copy(batt.ocv_v),
+        r0 = batt.r0,
+        r1 = batt.r1,
+        c1 = batt.c1,
+        min_voltage_v = batt.min_voltage_v,
+    )
     prop = model.propulsion
-    prop_snap = [(u.enabled, u.ω_rad_s) for u in prop.units]
+    prop_snap = copy(prop.units)
 
     y1 = Sim.PlantModels.plant_outputs(model, t, x0, u)
     y2 = Sim.PlantModels.plant_outputs(model, t, x0, u)
     @test y1 == y2
 
-    @test (batt.soc, batt.v1, batt.last_current_a) == batt_snap
-    @test [(u.enabled, u.ω_rad_s) for u in prop.units] == prop_snap
+    @test (
+        soc0 = batt.soc0,
+        v1_0 = batt.v1_0,
+        ocv_soc = copy(batt.ocv_soc),
+        ocv_v = copy(batt.ocv_v),
+        r0 = batt.r0,
+        r1 = batt.r1,
+        c1 = batt.c1,
+        min_voltage_v = batt.min_voltage_v,
+    ) == batt_snap
+    @test prop.units == prop_snap
 
     # Consistency: RHS uses the same bus current in the battery SoC derivative.
     dx = model(t, x0, u)

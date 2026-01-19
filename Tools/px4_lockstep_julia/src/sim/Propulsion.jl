@@ -22,7 +22,6 @@ module Propulsion
 
 using ..Types: Vec3
 using StaticArrays
-using Random
 
 export ESCParams,
     BLDCMotorParams,
@@ -31,8 +30,17 @@ export ESCParams,
     RotorOutput,
     QuadRotorSet,
     default_iris_quadrotor_set,
-    step_propulsion!,
-    set_motor_enabled!
+    step_propulsion!
+
+############################
+# Type hierarchy
+############################
+
+"""Abstract motor parameter type."""
+abstract type MotorParams end
+
+"""Abstract propeller parameter type."""
+abstract type AbstractPropParams end
 
 ############################
 # Low-level component models
@@ -57,7 +65,7 @@ Units:
 * R in Ohms
 * J in kg*m^2 (rotor inertia)
 """
-Base.@kwdef struct BLDCMotorParams
+Base.@kwdef struct BLDCMotorParams <: MotorParams
     Kv_rpm_per_volt::Float64 = 920.0
     R_ohm::Float64 = 0.25
     J_kgm2::Float64 = 1.0e-5
@@ -88,7 +96,7 @@ where:
 The ratio kQ/kT has units of meters and corresponds to "torque per thrust" (similar to
 the `km` term in many quad models).
 """
-Base.@kwdef struct QuadraticPropParams
+Base.@kwdef struct QuadraticPropParams <: AbstractPropParams
     kT::Float64 = 3.0e-6
     kQ::Float64 = 1.5e-7
 
@@ -131,26 +139,21 @@ end
 
 """A combined ESC + motor + propeller unit.
 
-State:
-* `ω_rad_s`
-* `enabled` (for failures)
+This is a **parameter-only** container. Failure injection is expressed via
+`Faults.FaultState` (a bus signal), not by mutating propulsion objects.
 """
-mutable struct MotorPropUnit
+struct MotorPropUnit{M<:MotorParams,P<:AbstractPropParams}
     esc::ESCParams
-    motor::BLDCMotorParams
-    prop::QuadraticPropParams
-    ω_rad_s::Float64
-    enabled::Bool
+    motor::M
+    prop::P
 end
 
 function MotorPropUnit(;
     esc::ESCParams = ESCParams(),
-    motor::BLDCMotorParams = BLDCMotorParams(),
-    prop::QuadraticPropParams = QuadraticPropParams(),
-    ω0_rad_s::Float64 = 0.0,
-    enabled::Bool = true,
+    motor::MotorParams = BLDCMotorParams(),
+    prop::AbstractPropParams = QuadraticPropParams(),
 )
-    return MotorPropUnit(esc, motor, prop, ω0_rad_s, enabled)
+    return MotorPropUnit(esc, motor, prop)
 end
 
 """Per-rotor outputs produced by a propulsion step."""
@@ -160,12 +163,6 @@ Base.@kwdef struct RotorOutput{N}
     ω_rad_s::SVector{N,Float64}
     motor_current_a::SVector{N,Float64}
     bus_current_a::Float64
-end
-
-"""Set whether a motor/prop unit is enabled."""
-function set_motor_enabled!(u::MotorPropUnit, enabled::Bool)
-    u.enabled = enabled
-    return nothing
 end
 
 ############################
@@ -224,15 +221,7 @@ function default_iris_quadrotor_set(;
         inflow_kQ = inflow_kQ,
     )
 
-    units = [
-        MotorPropUnit(
-            esc = esc,
-            motor = motor,
-            prop = prop,
-            ω0_rad_s = 0.0,
-            enabled = true,
-        ) for _ = 1:N
-    ]
+    units = [MotorPropUnit(esc = esc, motor = motor, prop = prop) for _ = 1:N]
     # Iris typically has alternating directions; use 1,1,-1,-1 as a common pattern.
     rotor_dir =
         N == 4 ? SVector(1.0, 1.0, -1.0, -1.0) :
@@ -323,24 +312,15 @@ end
 
 Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
 """
-@inline function _step_unit!(
+@inline function _step_unit(
     u::MotorPropUnit,
+    ω::Float64,
     duty::Float64,
     V_bus::Float64,
     ρ::Float64,
     Vax::Float64,
     dt::Float64,
 )
-    if !u.enabled
-        # Spin down with friction only.
-        b = u.motor.viscous_friction_nm_per_rad_s
-        J = u.motor.J_kgm2
-        ω = u.ω_rad_s
-        ω = max(0.0, ω + (-(b*ω)/J) * dt)
-        u.ω_rad_s = ω
-        return 0.0, 0.0, ω, 0.0, 0.0
-    end
-
     esc = u.esc
     motor = u.motor
     prop = u.prop
@@ -350,56 +330,50 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
         d = 0.0
     end
 
-    # ESC: motor terminal voltage.
+    # Motor electrical model: current set by applied voltage and back-EMF.
     V_m = d * V_bus
-
     Ke = motor_Ke(motor)
     Kt = motor_Kt(motor)
     R = motor.R_ohm
 
-    ω = u.ω_rad_s
-
-    # Quasi-static motor current (clamp to [0, Imax]).
-    I_m = (V_m - Ke*ω) / R
+    I_m = (V_m - Ke * ω) / R
     I_m = clamp(I_m, 0.0, motor.max_current_a)
 
-    # Electromagnetic torque (subtract no-load current).
     τ_e = Kt * max(0.0, I_m - motor.I0_a)
-
-    # Load torque from propeller.
     τ_load = prop_torque(prop, ρ, ω, Vax)
 
-    # Rotor dynamics.
     b = motor.viscous_friction_nm_per_rad_s
     J = motor.J_kgm2
-    ω_dot = (τ_e - τ_load - b*ω) / J
-    ω_new = max(0.0, ω + ω_dot * dt)
-    u.ω_rad_s = ω_new
+    ω_dot = (τ_e - τ_load - b * ω) / J
 
-    # Outputs should be temporally consistent with the integrated state.
-    # Use a midpoint speed to avoid a "phase lead" where thrust uses ω_{k+1}
-    # while the integrated torque/current were based on ω_k.
+    ω_new = ω + ω_dot * dt
+    ω_new = max(0.0, ω_new)
+
+    # Use mid-step ω for thrust/torque outputs to reduce Euler bias.
     ω_mid = 0.5 * (ω + ω_new)
     T = prop_thrust(prop, ρ, ω_mid, Vax)
     Q = prop_torque(prop, ρ, ω_mid, Vax)
 
-    # Bus current from ideal PWM stage (power conservation w/ efficiency).
     I_bus = (d * I_m) / max(1e-6, esc.η)
-
     return T, Q, ω_new, I_m, I_bus
 end
 
 """Step a multirotor propulsion set.
 
-Inputs:
-* `duties` : normalized [0..1] per rotor (SVector length N)
-* `V_bus`  : battery bus voltage (V)
-* `ρ`      : air density at vehicle location (kg/m^3)
 
-Returns RotorOutput{N}.
+Inputs:
+* `ω_rad_s` : current rotor speeds (rad/s) per rotor (SVector length N)
+* `duties`  : normalized [0..1] per rotor (SVector length N)
+* `V_bus`   : battery bus voltage (V)
+* `ρ`       : air density at vehicle location (kg/m^3)
+* `v_air_body` : relative air velocity in body frame (m/s)
+* `dt`      : integration step (s)
+
+Returns a `RotorOutput{N}` with the updated `ω_rad_s`.
 """
 function step_propulsion!(
     p::QuadRotorSet{N},
+    ω_rad_s::SVector{N,Float64},
     duties::SVector{N,Float64},
     V_bus::Float64,
     ρ::Float64,
@@ -418,7 +392,8 @@ function step_propulsion!(
     Vax = -Float64(v_air_body[3])
 
     @inbounds for i = 1:N
-        Ti, Qi, ωi, Ii, Ibus = _step_unit!(p.units[i], duties[i], V_bus, ρ, Vax, dt)
+        Ti, Qi, ωi, Ii, Ibus =
+            _step_unit(p.units[i], ω_rad_s[i], duties[i], V_bus, ρ, Vax, dt)
         thrust[i] = Ti
         # Own yaw reaction torque sign here (single source of truth).
         torque[i] = p.rotor_dir[i] * Qi

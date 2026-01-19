@@ -12,7 +12,7 @@ A log entry is intended to represent a deterministic, pre-step snapshot of the s
 - rigid body state (`RigidBodyState`) at `t_k`
 - actuator command applied at `t_k`
 - wind sample at `t_k`
-- (optionally) propulsion outputs (rotor thrust/omega)
+- (optionally) propulsion outputs (rotor thrust/omega, up to 12 channels)
 - (optionally) battery telemetry
 
 ## Log sinks

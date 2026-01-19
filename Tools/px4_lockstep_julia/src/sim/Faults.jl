@@ -2,15 +2,6 @@
 
 First-class *fault / failure* signals.
 
-Why this module exists
-----------------------
-The simulator historically expressed failures by mutating model objects in-place
-(e.g. `set_motor_enabled!(...)` or modifying estimator structs). That approach:
-
-* makes **record/replay** brittle by requiring replay of mutation side effects,
-* increases hidden coupling between subsystems,
-* makes it hard to reason about determinism.
-
 This module defines a **typed, versionable fault state** that can be published on
 the signal bus and treated as a piecewise-constant input to both discrete and
 continuous components.

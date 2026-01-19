@@ -251,7 +251,7 @@ function simulate_iris_mission(;
     recording_out::Union{Nothing,AbstractString} = nothing,
     t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
     dt_autopilot_s::Float64 = 0.004,
-    dt_wind_s::Float64 = 0.002,
+    dt_wind_s::Float64 = 0.001,
     dt_log_s::Float64 = 0.01,
     dt_phys_s::Union{Nothing,Float64} = nothing,
     seed::Integer = 1,

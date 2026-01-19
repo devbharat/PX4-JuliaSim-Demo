@@ -368,7 +368,7 @@ function compare_integrators_iris_mission(;
     # Timeline + mission
     t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
     dt_autopilot_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_AUTOPILOT_S", "0.004")),
-    dt_wind_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_WIND_S", "0.002")),
+    dt_wind_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_WIND_S", "0.001")),
     dt_log_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_LOG_S", "0.01")),
     dt_phys_s::Union{Nothing,Float64} = nothing,
     seed::Integer = parse(Int, get(ENV, "IRIS_SEED", "1")),

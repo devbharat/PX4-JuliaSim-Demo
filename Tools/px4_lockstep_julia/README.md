@@ -33,8 +33,9 @@ julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 4. Run the example:
 
 ```bash
+IRIS_T_END_S=70 \
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'
 ```
 
 5. Recommended: run the **record → replay integrator comparison** (PX4 live, then plant-only replay sweep):
@@ -208,8 +209,9 @@ To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravi
 
 ## Example Run
 ```bash
+IRIS_T_END_S=70 \
 PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'
 
 python Tools/px4_lockstep_julia/scripts/plot_sim_log.py \
   --log sim_log.csv \

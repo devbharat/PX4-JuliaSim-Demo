@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -10,6 +11,7 @@
 #include <vector>
 
 #include <new>
+#include <pthread.h>
 
 #include <px4_platform_common/init.h>
 #include <px4_platform_common/defines.h>
@@ -90,6 +92,39 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 
 static inline float deg2rad(float deg) { return deg * (kPi / 180.0f); }
+
+static inline bool env_flag_enabled(const char *name)
+{
+	const char *val = getenv(name);
+	if (!val || val[0] == '\0') {
+		return false;
+	}
+	return !(val[0] == '0' && val[1] == '\0');
+}
+
+static inline void ensure_lockstep_thread_name()
+{
+#ifndef __PX4_QURT
+	static thread_local bool name_checked = false;
+	if (name_checked) {
+		return;
+	}
+	name_checked = true;
+
+	constexpr size_t kNameLen = 32;
+	char name_buf[kNameLen] {};
+	int ret = pthread_getname_np(pthread_self(), name_buf, kNameLen);
+	if (ret == 0 && name_buf[0] != '\0') {
+		return;
+	}
+
+#ifdef __PX4_DARWIN
+	(void)pthread_setname_np("px4_lockstep");
+#else
+	(void)pthread_setname_np(pthread_self(), "px4_lockstep");
+#endif
+#endif
+}
 
 struct StepRateLimiter {
 	uint64_t last_run_us{0};
@@ -183,6 +218,7 @@ struct LockstepRuntime {
 	int32_t last_req_nav_mission{-1};
 	int32_t last_req_nav_rtl{-1};
 	uint64_t last_debug_us{0};
+	bool debug_enabled{false};
 
 	// Last outputs (so callers get stable outputs even when controllers run at lower rates)
 	px4_lockstep_outputs_t last_out{};
@@ -308,6 +344,8 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 	if (cfg) {
 		rt->cfg = *cfg;
 	}
+
+	rt->debug_enabled = env_flag_enabled("PX4_LOCKSTEP_DEBUG");
 
 	rt->cmd_rate.set_hz(rt->cfg.commander_rate_hz);
 	rt->nav_rate.set_hz(rt->cfg.navigator_rate_hz);
@@ -861,6 +899,9 @@ static void read_outputs(LockstepRuntime &rt, px4_lockstep_outputs_t &out)
 
 static void debug_state(LockstepRuntime &rt, uint64_t now_us)
 {
+	if (!rt.debug_enabled) {
+		return;
+	}
 	if (rt.last_debug_us != 0 && (now_us - rt.last_debug_us) < 1000000ULL) {
 		return;
 	}
@@ -920,6 +961,8 @@ int px4_lockstep_step(px4_lockstep_handle_t handle,
 	if (!rt || !in || !out) {
 		return -1;
 	}
+
+	ensure_lockstep_thread_name();
 
 	// Basic monotonic guarantee
 	if (rt->last_time_us != 0 && in->time_us < rt->last_time_us) {

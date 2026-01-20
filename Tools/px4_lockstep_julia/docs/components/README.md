@@ -78,6 +78,9 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 - All time and scheduling decisions are integer microseconds.
 - Inputs are piecewise constant between boundaries.
 
+<img width="1958" height="1760" alt="runtime_flowchart" src="https://github.com/user-attachments/assets/44527cd1-1d53-43a7-b70c-4f738cb028ea" />
+
+
 ## Component Docs Index
 
 - [x] `PX4Lockstep` C ABI wrapper (`src/PX4Lockstep.jl`)

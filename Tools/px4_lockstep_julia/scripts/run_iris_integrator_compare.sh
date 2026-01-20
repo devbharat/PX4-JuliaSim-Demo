@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/../../.." && pwd)
 
-T_END_S=${1:-70}
+T_END_S=${1:-${IRIS_T_END_S:-20}}
 
 OS_NAME=$(uname)
 LIB_EXT="dylib"
@@ -65,4 +65,4 @@ PX4_LOCKSTEP_UORB_HOME_POSITION=${PX4_LOCKSTEP_UORB_HOME_POSITION} \
 PX4_LOCKSTEP_UORB_GEOFENCE_STATUS=${PX4_LOCKSTEP_UORB_GEOFENCE_STATUS} \
 JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} \
 julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" \
-  -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'
+  "${REPO_ROOT}/Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl"

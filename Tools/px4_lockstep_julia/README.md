@@ -109,6 +109,9 @@ julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4L
 
 ## Architecture
 
+<img width="1958" height="1760" alt="runtime_flowchart" src="https://github.com/user-attachments/assets/bdb7eb1c-dfd3-4b9f-9fa3-31c3fbbbd48b" />
+
+
 The simulation framework is organized as composable modules:
 
 * `PX4Lockstep.Sim.Environment`

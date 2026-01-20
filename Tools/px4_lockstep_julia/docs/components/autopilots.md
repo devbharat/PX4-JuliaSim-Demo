@@ -5,6 +5,9 @@
 `src/sim/Autopilots.jl` translates estimated state + battery status into PX4 lockstep
 inputs and provides the interface used by the simulation engines.
 
+The uORB bridge helpers (topic specs, pub/sub wiring, and message builders) live in
+`src/sim/Autopilots/UORBBridge.jl`.
+
 ## Key Decisions and Rationale
 
 - **Microsecond entry point:** `autopilot_step(::UInt64, ...)` avoids float rounding

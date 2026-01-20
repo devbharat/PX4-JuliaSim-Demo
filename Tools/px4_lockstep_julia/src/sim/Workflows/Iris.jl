@@ -339,19 +339,17 @@ function simulate_iris_mission(;
         edge_trigger = false,
     )
     try
-        if ap.uorb_only
-            Autopilots.autopilot_step(
-                ap,
-                UInt64(0),
-                vehicle.state.pos_ned,
-                vehicle.state.vel_ned,
-                vehicle.state.q_bn,
-                vehicle.state.ω_body,
-                Autopilots.AutopilotCommand();
-                landed = true,
-                battery = Powertrain.BatteryStatus(),
-            )
-        end
+        Autopilots.autopilot_step(
+            ap,
+            UInt64(0),
+            vehicle.state.pos_ned,
+            vehicle.state.vel_ned,
+            vehicle.state.q_bn,
+            vehicle.state.ω_body,
+            Autopilots.AutopilotCommand();
+            landed = true,
+            battery = Powertrain.BatteryStatus(),
+        )
         Autopilots.load_mission!(ap, mission_path)
         autopilot_src = Sources.LiveAutopilotSource(ap)
 

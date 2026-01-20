@@ -344,16 +344,11 @@ These are “if violated, stop immediately” invariants.
 - If you do **not** want catch-up, still prefer:
   - `last_run_us = last_run_us + period_us * floor((now-last_run)/period_us)` to keep phase-locked.
 
-#### Refactor 5 (P1): Optional ABI offset handshake
+#### Refactor 5 (P1): Optional uORB offset handshake
 Size checks are good, but offsets are better.
 
-Add C functions:
-
-- `px4_lockstep_get_inputs_offsets(uint32_t *out, size_t n)`
-- `px4_lockstep_get_outputs_offsets(uint32_t *out, size_t n)`
-
-where the array contains `offsetof(px4_lockstep_inputs_t, field)` for each field in a fixed order.
-On Julia side, compute offsets using `fieldoffset` and compare.
+Add a helper to expose uORB field offsets for key topics (home position, global
+position, actuator outputs). Then compare against `fieldoffset` on the Julia side.
 
 This eliminates the “same size, wrong layout” failure mode.
 
@@ -401,7 +396,7 @@ Below are tests I would add (or ensure exist) that are *directly* tied to the co
 - If you can’t guarantee byte-identical across platforms, require exact on the same machine and allow small tolerances cross-platform.
 
 2) **PX4 cadence test**
-- Instrument `PX4LockstepAutopilot` to record every `time_us` passed to `px4_lockstep_step`.
+- Instrument `PX4LockstepAutopilot` to record every `time_us` passed to `px4_lockstep_step_uorb`.
 - **Pass:** `diff(time_us)` is exactly constant and equals `dt_autopilot_us` for the whole run.
 
 3) **Multi-rate alignment test**

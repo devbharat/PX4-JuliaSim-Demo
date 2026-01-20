@@ -13,7 +13,7 @@ using StaticArrays: SVector
 
 import Base.CoreLogging: @warn
 
-using ..Autopilots: autopilot_step, autopilot_output_type, LockstepOutputs, UORBOutputs
+using ..Autopilots: autopilot_step, autopilot_output_type, UORBOutputs
 import ..Runtime: AutopilotTelemetry, autopilot_telemetry
 
 """Base type for autopilot sources."""
@@ -55,21 +55,6 @@ end
 
 @inline _telemetry_from_out(::Any) = AutopilotTelemetry()
 
-@inline function _telemetry_from_out(out::LockstepOutputs)
-    return AutopilotTelemetry(
-        pos_sp = _to_ntuple3_float(out.trajectory_setpoint_position),
-        vel_sp = _to_ntuple3_float(out.trajectory_setpoint_velocity),
-        acc_sp = _to_ntuple3_float(out.trajectory_setpoint_acceleration),
-        yaw_sp = Float64(out.trajectory_setpoint_yaw),
-        yawspeed_sp = Float64(out.trajectory_setpoint_yawspeed),
-        nav_state = Int32(out.nav_state),
-        arming_state = Int32(out.arming_state),
-        mission_seq = Int32(out.mission_seq),
-        mission_count = Int32(out.mission_count),
-        mission_finished = Int32(out.mission_finished),
-    )
-end
-
 @inline function _telemetry_from_out(out::UORBOutputs)
     return AutopilotTelemetry(
         pos_sp = _to_ntuple3_float(out.trajectory_setpoint_position),
@@ -108,7 +93,8 @@ function update!(src::LiveAutopilotSource, bus::SimBus, plant_state, t_us::UInt6
     motors_vals = ntuple(i -> Float64(motors_raw[i]), 12)
     servos_vals = ntuple(i -> Float64(servos_raw[i]), 8)
     if !src.warned_nonfinite && (!all(isfinite, motors_vals) || !all(isfinite, servos_vals))
-        @warn "Lockstep outputs contain non-finite actuator commands; replacing with zeros" time_us = t_us
+        @warn "Lockstep outputs contain non-finite actuator commands; replacing with zeros" time_us =
+            t_us
         src.warned_nonfinite = true
     end
     motors = SVector{12,Float64}(ntuple(i -> _finite_or(motors_vals[i], 0.0), 12))

@@ -27,26 +27,13 @@
 
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_control_mode.h>
-#include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_global_position.h>
-#include <uORB/topics/vehicle_attitude.h>
-#include <uORB/topics/vehicle_angular_velocity.h>
-#include <uORB/topics/vehicle_land_detected.h>
-#include <uORB/topics/home_position.h>
-
-#include <uORB/topics/battery_status.h>
-#include <uORB/topics/vehicle_command.h>
-
 #include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/vehicle_rates_setpoint.h>
-#include <uORB/topics/vehicle_thrust_setpoint.h>
-#include <uORB/topics/actuator_motors.h>
-#include <uORB/topics/actuator_servos.h>
-#include <uORB/topics/actuator_armed.h>
+#include <uORB/topics/home_position.h>
 #include <uORB/topics/mission_result.h>
 #include <uORB/topics/mission.h>
 #include <uORB/topics/geofence_status.h>
-#include <uORB/topics/vehicle_torque_setpoint.h>
 #include <uORB/topics/vehicle_constraints.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/position_setpoint_triplet.h>
@@ -81,10 +68,10 @@ extern "C" PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
 				    uint32_t *cfg_sz)
 {
 	if (in_sz) {
-		*in_sz = static_cast<uint32_t>(sizeof(px4_lockstep_inputs_t));
+		*in_sz = 0u;
 	}
 	if (out_sz) {
-		*out_sz = static_cast<uint32_t>(sizeof(px4_lockstep_outputs_t));
+		*out_sz = 0u;
 	}
 	if (cfg_sz) {
 		*cfg_sz = static_cast<uint32_t>(sizeof(px4_lockstep_config_t));
@@ -159,43 +146,23 @@ struct StepRateLimiter {
 struct LockstepRuntime {
 	px4_lockstep_config_t cfg{};
 
-	// Publishers for the minimum set of topics we inject from Julia.
-	uORB::Publication<vehicle_status_s>           pub_vstatus{ORB_ID(vehicle_status)};
-	uORB::Publication<vehicle_control_mode_s>     pub_vctl_mode{ORB_ID(vehicle_control_mode)};
-	uORB::Publication<actuator_armed_s>           pub_act_armed{ORB_ID(actuator_armed)};
-	uORB::Publication<vehicle_local_position_s>   pub_lpos{ORB_ID(vehicle_local_position)};
-	uORB::Publication<vehicle_global_position_s>  pub_gpos{ORB_ID(vehicle_global_position)};
-	uORB::Publication<vehicle_attitude_s>         pub_att{ORB_ID(vehicle_attitude)};
-	uORB::Publication<vehicle_angular_velocity_s> pub_rates{ORB_ID(vehicle_angular_velocity)};
-	uORB::Publication<vehicle_land_detected_s>    pub_land{ORB_ID(vehicle_land_detected)};
-	uORB::Publication<home_position_s>            pub_home{ORB_ID(home_position)};
-	uORB::Publication<battery_status_s>           pub_battery{ORB_ID(battery_status)};
-	uORB::Publication<vehicle_command_s>          pub_vehicle_command{ORB_ID(vehicle_command)};
-	uORB::Publication<mission_s>                  pub_mission{ORB_ID(mission)};
-	uORB::Publication<geofence_status_s>          pub_geofence_status{ORB_ID(geofence_status)};
+	// Publications owned by the lockstep harness.
+	uORB::Publication<home_position_s>   pub_home{ORB_ID(home_position)};
+	uORB::Publication<mission_s>         pub_mission{ORB_ID(mission)};
+	uORB::Publication<geofence_status_s> pub_geofence_status{ORB_ID(geofence_status)};
 
-	// Output subscriptions
-	uORB::Subscription sub_vehicle_status{ORB_ID(vehicle_status)};
-	uORB::Subscription sub_actuator_armed{ORB_ID(actuator_armed)};
-	uORB::Subscription sub_battery_status{ORB_ID(battery_status)};
-	uORB::Subscription sub_torque_sp{ORB_ID(vehicle_torque_setpoint)};
-	uORB::Subscription sub_act_motors{ORB_ID(actuator_motors)};
-	uORB::Subscription sub_act_servos{ORB_ID(actuator_servos)};
-	uORB::Subscription sub_att_sp{ORB_ID(vehicle_attitude_setpoint)};
-	uORB::Subscription sub_rates_sp{ORB_ID(vehicle_rates_setpoint)};
-	uORB::Subscription sub_thrust_sp{ORB_ID(vehicle_thrust_setpoint)};
-	uORB::Subscription sub_mission_result{ORB_ID(mission_result)};
-	uORB::Subscription sub_home_position{ORB_ID(home_position)};
-	uORB::Subscription sub_global_position{ORB_ID(vehicle_global_position)};
-	uORB::Subscription sub_geofence_status_dbg{ORB_ID(geofence_status)};
-	uORB::Subscription sub_mission_result_dbg{ORB_ID(mission_result)};
-
-	// Debug subscriptions
+	// Debug/inspection subscriptions
 	uORB::Subscription sub_vehicle_status_dbg{ORB_ID(vehicle_status)};
 	uORB::Subscription sub_vehicle_control_mode_dbg{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription sub_pos_sp_triplet{ORB_ID(position_setpoint_triplet)};
 	uORB::Subscription sub_traj_sp{ORB_ID(trajectory_setpoint)};
 	uORB::Subscription sub_vehicle_constraints_dbg{ORB_ID(vehicle_constraints)};
+	uORB::Subscription sub_home_position{ORB_ID(home_position)};
+	uORB::Subscription sub_global_position{ORB_ID(vehicle_global_position)};
+	uORB::Subscription sub_geofence_status_dbg{ORB_ID(geofence_status)};
+	uORB::Subscription sub_mission_result_dbg{ORB_ID(mission_result)};
+	uORB::Subscription sub_att_sp{ORB_ID(vehicle_attitude_setpoint)};
+	uORB::Subscription sub_rates_sp{ORB_ID(vehicle_rates_setpoint)};
 
 	// PX4 modules we step
 	Commander *commander{nullptr};
@@ -221,25 +188,8 @@ struct LockstepRuntime {
 	double home_lon{std::numeric_limits<double>::quiet_NaN()};
 	float home_alt{NAN};
 	uint64_t last_time_us{0};
-	bool last_armed{false};
-	int32_t last_req_armed{-1};
-	int32_t last_req_nav_mission{-1};
-	int32_t last_req_nav_rtl{-1};
 	uint64_t last_debug_us{0};
 	bool debug_enabled{false};
-	bool uorb_inject_battery{false};
-	bool uorb_inject_attitude{false};
-	bool uorb_inject_local_position{false};
-	bool uorb_inject_global_position{false};
-	bool uorb_inject_rates{false};
-	bool uorb_inject_land{false};
-	bool uorb_inject_vehicle_status{false};
-	bool uorb_inject_control_mode{false};
-	bool uorb_inject_actuator_armed{false};
-	bool uorb_inject_home_position{false};
-	bool uorb_inject_geofence_status{false};
-	bool uorb_only{false};
-
 	// ---------------------------------------------------------------------
 	// External (Julia) uORB pub/sub handles
 	// ---------------------------------------------------------------------
@@ -261,9 +211,6 @@ struct LockstepRuntime {
 	std::vector<ExtPublisher> ext_pubs{};
 	std::vector<ExtSubscriber> ext_subs{};
 
-	// Last outputs (so callers get stable outputs even when controllers run at lower rates)
-	px4_lockstep_outputs_t last_out{};
-
 	LockstepRuntime()
 	{
 		cfg = {};
@@ -277,9 +224,6 @@ struct LockstepRuntime {
 		cfg.enable_control_allocator = 1;
 		cfg.control_allocator_rate_hz = 250;
 
-		// Use NaN to indicate "no output" / disarmed for mixed outputs by default.
-		for (float &m : last_out.actuator_motors) { m = NAN; }
-		for (float &s : last_out.actuator_servos) { s = NAN; }
 	}
 
 	~LockstepRuntime()
@@ -393,18 +337,6 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 	}
 
 	rt->debug_enabled = env_flag_enabled("PX4_LOCKSTEP_DEBUG");
-	rt->uorb_inject_battery = env_flag_enabled("PX4_LOCKSTEP_UORB_BATTERY");
-	rt->uorb_inject_attitude = env_flag_enabled("PX4_LOCKSTEP_UORB_ATTITUDE");
-	rt->uorb_inject_local_position = env_flag_enabled("PX4_LOCKSTEP_UORB_LOCAL_POSITION");
-	rt->uorb_inject_global_position = env_flag_enabled("PX4_LOCKSTEP_UORB_GLOBAL_POSITION");
-	rt->uorb_inject_rates = env_flag_enabled("PX4_LOCKSTEP_UORB_RATES");
-	rt->uorb_inject_land = env_flag_enabled("PX4_LOCKSTEP_UORB_LAND_DETECTED");
-	rt->uorb_inject_vehicle_status = env_flag_enabled("PX4_LOCKSTEP_UORB_VEHICLE_STATUS");
-	rt->uorb_inject_control_mode = env_flag_enabled("PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE");
-	rt->uorb_inject_actuator_armed = env_flag_enabled("PX4_LOCKSTEP_UORB_ACTUATOR_ARMED");
-	rt->uorb_inject_home_position = env_flag_enabled("PX4_LOCKSTEP_UORB_HOME_POSITION");
-	rt->uorb_inject_geofence_status = env_flag_enabled("PX4_LOCKSTEP_UORB_GEOFENCE_STATUS");
-	rt->uorb_only = env_flag_enabled("PX4_LOCKSTEP_UORB_ONLY");
 
 	rt->cmd_rate.set_hz(rt->cfg.commander_rate_hz);
 	rt->nav_rate.set_hz(rt->cfg.navigator_rate_hz);
@@ -629,249 +561,9 @@ int px4_lockstep_load_mission_qgc_wpl(px4_lockstep_handle_t handle, const char *
 	return 0;
 }
 
-static void publish_inputs(LockstepRuntime &rt, const px4_lockstep_inputs_t &in)
-{
-	if (!rt.uorb_inject_battery) {
-		battery_status_s bat{};
-		bat.timestamp = in.time_us;
-		bat.connected = (in.battery_connected != 0);
-		bat.voltage_v = in.battery_voltage_v;
-		bat.current_a = in.battery_current_a;
-		bat.remaining = in.battery_remaining;
-		bat.warning = static_cast<uint8_t>(in.battery_warning);
-		rt.pub_battery.publish(bat);
-	}
-
-	// Geofence status: mark as ready so mission feasibility checks can run.
-	if (!rt.uorb_inject_geofence_status) {
-		geofence_status_s geofence_status{};
-		geofence_status.timestamp = in.time_us;
-		geofence_status.geofence_id = 0u;
-		geofence_status.status = geofence_status_s::GF_STATUS_READY;
-		rt.pub_geofence_status.publish(geofence_status);
-	}
-
-	// If Commander is disabled, we publish a minimal replacement set of topics.
-	if (!rt.cfg.enable_commander) {
-		rt.last_armed = (in.armed != 0);
-		const bool auto_mode = (in.nav_auto_mission || in.nav_auto_rtl);
-
-		uint8_t nav_state = vehicle_status_s::NAVIGATION_STATE_MANUAL;
-		if (in.nav_auto_rtl) {
-			nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
-		} else if (in.nav_auto_mission) {
-			nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
-		}
-
-		if (!rt.uorb_inject_vehicle_status) {
-			// Vehicle status
-			vehicle_status_s vstatus{};
-			vstatus.timestamp = in.time_us;
-			vstatus.arming_state = in.armed ? vehicle_status_s::ARMING_STATE_ARMED : vehicle_status_s::ARMING_STATE_DISARMED;
-			vstatus.nav_state = nav_state;
-			vstatus.nav_state_user_intention = nav_state;
-			vstatus.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
-			vstatus.is_vtol = false;
-			rt.pub_vstatus.publish(vstatus);
-		}
-
-		if (!rt.uorb_inject_control_mode) {
-			// Control mode (Commander replacement)
-			vehicle_control_mode_s vcm{};
-			vcm.timestamp = in.time_us;
-			vcm.flag_armed = in.armed;
-			vcm.flag_control_auto_enabled = auto_mode;
-			vcm.flag_multicopter_position_control_enabled = auto_mode;
-			vcm.flag_control_position_enabled = true;
-			vcm.flag_control_velocity_enabled = true;
-			vcm.flag_control_attitude_enabled = true;
-			vcm.flag_control_rates_enabled = true;
-			vcm.flag_control_altitude_enabled = true;
-			vcm.flag_control_climb_rate_enabled = true;
-			vcm.flag_control_manual_enabled = !auto_mode;
-			vcm.flag_control_allocation_enabled = (rt.cfg.enable_control_allocator != 0);
-			vcm.source_id = nav_state;
-			rt.pub_vctl_mode.publish(vcm);
-		}
-
-		if (!rt.uorb_inject_actuator_armed) {
-			// Actuator arming state (used by allocators/output drivers to gate output)
-			actuator_armed_s armed{};
-			armed.timestamp = in.time_us;
-			armed.armed = in.armed;
-			armed.prearmed = in.armed;
-			armed.ready_to_arm = true;
-			armed.lockdown = false;
-			rt.pub_act_armed.publish(armed);
-		}
-	}
-
-	if (!rt.uorb_inject_local_position) {
-		vehicle_local_position_s lpos{};
-		lpos.timestamp = in.time_us;
-		lpos.timestamp_sample = in.time_us;
-		lpos.x = in.x;
-		lpos.y = in.y;
-		lpos.z = in.z;
-		lpos.vx = in.vx;
-		lpos.vy = in.vy;
-		lpos.vz = in.vz;
-		lpos.z_deriv = in.vz;
-		lpos.heading = in.yaw;
-		lpos.xy_valid = true;
-		lpos.z_valid = true;
-		lpos.v_xy_valid = true;
-		lpos.v_z_valid = true;
-		lpos.heading_good_for_control = true;
-		lpos.vxy_max = NAN;
-		lpos.vz_max = NAN;
-		lpos.hagl_min = NAN;
-		lpos.hagl_max_z = NAN;
-		lpos.hagl_max_xy = NAN;
-
-		const double ref_lat = rt.home_set ? rt.home_lat : in.lat_deg;
-		const double ref_lon = rt.home_set ? rt.home_lon : in.lon_deg;
-		const float ref_alt = rt.home_set ? rt.home_alt : in.alt_msl_m;
-		const bool has_ref = PX4_ISFINITE(static_cast<float>(ref_lat))
-				&& PX4_ISFINITE(static_cast<float>(ref_lon))
-				&& PX4_ISFINITE(ref_alt);
-		lpos.xy_global = has_ref;
-		lpos.z_global = has_ref;
-		lpos.ref_timestamp = in.time_us;
-		lpos.ref_lat = ref_lat;
-		lpos.ref_lon = ref_lon;
-		lpos.ref_alt = ref_alt;
-		rt.pub_lpos.publish(lpos);
-	}
-
-	if (!rt.uorb_inject_global_position) {
-		vehicle_global_position_s gpos{};
-		gpos.timestamp = in.time_us;
-		gpos.timestamp_sample = in.time_us;
-		gpos.lat = in.lat_deg;
-		gpos.lon = in.lon_deg;
-		gpos.alt = in.alt_msl_m;
-		gpos.lat_lon_valid = true;
-		gpos.alt_valid = true;
-		gpos.eph = 1.0f;
-		gpos.epv = 1.0f;
-		rt.pub_gpos.publish(gpos);
-	}
-
-	if (!rt.uorb_inject_attitude) {
-		vehicle_attitude_s att{};
-		att.timestamp = in.time_us;
-		att.q[0] = in.q[0];
-		att.q[1] = in.q[1];
-		att.q[2] = in.q[2];
-		att.q[3] = in.q[3];
-		rt.pub_att.publish(att);
-	}
-
-	if (!rt.uorb_inject_rates) {
-		vehicle_angular_velocity_s rates{};
-		rates.timestamp = in.time_us;
-		rates.xyz[0] = in.rates_xyz[0];
-		rates.xyz[1] = in.rates_xyz[1];
-		rates.xyz[2] = in.rates_xyz[2];
-		rt.pub_rates.publish(rates);
-	}
-
-	if (!rt.uorb_inject_land) {
-		vehicle_land_detected_s land{};
-		land.timestamp = in.time_us;
-		land.landed = in.landed;
-		land.ground_contact = in.landed;
-		land.maybe_landed = in.landed;
-		rt.pub_land.publish(land);
-	}
-
-	// Home position: publish every tick in lockstep (Commander disabled).
-	if (!rt.cfg.enable_commander) {
-		if (!rt.home_set && PX4_ISFINITE(static_cast<float>(in.lat_deg)) && PX4_ISFINITE(static_cast<float>(in.lon_deg))) {
-			rt.home_set = true;
-			rt.home_lat = in.lat_deg;
-			rt.home_lon = in.lon_deg;
-			rt.home_alt = in.alt_msl_m;
-		}
-
-		if (rt.home_set && !rt.uorb_inject_home_position) {
-			home_position_s home{};
-			home.timestamp = in.time_us;
-			home.lat = rt.home_lat;
-			home.lon = rt.home_lon;
-			home.alt = rt.home_alt;
-			home.valid_hpos = true;
-			home.valid_lpos = true;
-			home.valid_alt = true;
-			home.update_count = ++rt.home_update_count;
-			rt.pub_home.publish(home);
-		}
-	}
-
-	// When Commander is enabled, translate requested actions into vehicle_command messages.
-	// These are edge-triggered (we only send on change) to avoid fighting Commander failsafe logic.
-	if (rt.cfg.enable_commander) {
-		auto send_vehicle_command = [&](uint16_t command, float p1 = 0.f, float p2 = 0.f, float p3 = 0.f,
-					float p4 = 0.f, double p5 = 0.0, double p6 = 0.0, float p7 = 0.f) {
-			vehicle_command_s cmd{};
-			cmd.timestamp = in.time_us;
-			cmd.param1 = p1;
-			cmd.param2 = p2;
-			cmd.param3 = p3;
-			cmd.param4 = p4;
-			cmd.param5 = p5;
-			cmd.param6 = p6;
-			cmd.param7 = p7;
-			cmd.command = command;
-			cmd.target_system = 1;
-			cmd.target_component = 1;
-			cmd.source_system = 1;
-			cmd.source_component = 1;
-			cmd.confirmation = 0;
-			cmd.from_external = false;
-			rt.pub_vehicle_command.publish(cmd);
-		};
-
-		// Arm/disarm request
-		if (rt.last_req_armed != in.armed) {
-			send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, in.armed ? 1.f : 0.f);
-			rt.last_req_armed = in.armed;
-		}
-
-		// Mode requests: RTL takes priority.
-		// Only send on rising edge to avoid overriding failsafe mode changes (e.g. battery RTL).
-		if (rt.last_req_nav_rtl != in.nav_auto_rtl) {
-			if (in.nav_auto_rtl) {
-				union px4_custom_mode custom{};
-				custom.data = 0;
-				custom.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-				custom.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_RTL;
-				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE,
-					1.f /* MAV_MODE_FLAG_CUSTOM_MODE_ENABLED */,
-					static_cast<float>(custom.data));
-			}
-			rt.last_req_nav_rtl = in.nav_auto_rtl;
-		}
-
-		if (!in.nav_auto_rtl && (rt.last_req_nav_mission != in.nav_auto_mission)) {
-			if (in.nav_auto_mission) {
-				union px4_custom_mode custom{};
-				custom.data = 0;
-				custom.main_mode = PX4_CUSTOM_MAIN_MODE_AUTO;
-				custom.sub_mode = PX4_CUSTOM_SUB_MODE_AUTO_MISSION;
-				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE,
-					1.f /* MAV_MODE_FLAG_CUSTOM_MODE_ENABLED */,
-					static_cast<float>(custom.data));
-			}
-			rt.last_req_nav_mission = in.nav_auto_mission;
-		}
-	}
-}
-
 static void maybe_publish_home_position_fallback(LockstepRuntime &rt, uint64_t time_us)
 {
-	if (rt.cfg.enable_commander || !rt.uorb_inject_home_position) {
+	if (rt.cfg.enable_commander) {
 		return;
 	}
 
@@ -917,7 +609,7 @@ static void maybe_publish_home_position_fallback(LockstepRuntime &rt, uint64_t t
 
 static void maybe_force_geofence_ready(LockstepRuntime &rt, uint64_t time_us)
 {
-	if (!rt.uorb_only || !rt.uorb_inject_geofence_status) {
+	if (rt.cfg.enable_commander) {
 		return;
 	}
 
@@ -987,115 +679,9 @@ static int publish_queued_uorb(LockstepRuntime &rt)
 	return 0;
 }
 
-static void read_outputs(LockstepRuntime &rt, px4_lockstep_outputs_t &out)
-{
-	// Start from the last outputs so callers get stable values even if PX4 modules
-	// run at lower rates than the Julia sim step.
-	out = rt.last_out;
-
-	// Actuator controls (mapped from torque/thrust setpoints in newer PX4)
-	vehicle_torque_setpoint_s torque_sp{};
-	if (rt.sub_torque_sp.update(&torque_sp)) {
-		out.actuator_controls[0] = torque_sp.xyz[0];
-		out.actuator_controls[1] = torque_sp.xyz[1];
-		out.actuator_controls[2] = torque_sp.xyz[2];
-	}
-
-	vehicle_thrust_setpoint_s thrust_sp{};
-	if (rt.sub_thrust_sp.update(&thrust_sp)) {
-		out.actuator_controls[3] = thrust_sp.xyz[2];
-	}
-
-	// Mixed/allocated outputs (from control allocator)
-	actuator_motors_s motors{};
-	if (rt.sub_act_motors.update(&motors)) {
-		for (int i = 0; i < 12; i++) {
-			out.actuator_motors[i] = motors.control[i];
-		}
-	}
-
-	actuator_servos_s servos{};
-	if (rt.sub_act_servos.update(&servos)) {
-		for (int i = 0; i < 8; i++) {
-			out.actuator_servos[i] = servos.control[i];
-		}
-	}
-
-	vehicle_attitude_setpoint_s att_sp{};
-	if (rt.sub_att_sp.update(&att_sp)) {
-		out.attitude_setpoint_q[0] = att_sp.q_d[0];
-		out.attitude_setpoint_q[1] = att_sp.q_d[1];
-		out.attitude_setpoint_q[2] = att_sp.q_d[2];
-		out.attitude_setpoint_q[3] = att_sp.q_d[3];
-		out.thrust_setpoint_body[0] = att_sp.thrust_body[0];
-		out.thrust_setpoint_body[1] = att_sp.thrust_body[1];
-		out.thrust_setpoint_body[2] = att_sp.thrust_body[2];
-	}
-
-	vehicle_rates_setpoint_s rates_sp{};
-	if (rt.sub_rates_sp.update(&rates_sp)) {
-		out.rates_setpoint_xyz[0] = rates_sp.roll;
-		out.rates_setpoint_xyz[1] = rates_sp.pitch;
-		out.rates_setpoint_xyz[2] = rates_sp.yaw;
-	}
-
-	mission_result_s mres{};
-	if (rt.sub_mission_result.update(&mres)) {
-		out.mission_seq = static_cast<int32_t>(mres.seq_current);
-		out.mission_count = static_cast<int32_t>(mres.seq_total);
-		out.mission_finished = mres.finished ? 1 : 0;
-	}
-
-	// Commander / navigation state
-	vehicle_status_s vstatus{};
-	if (rt.sub_vehicle_status.update(&vstatus)) {
-		out.nav_state = static_cast<int32_t>(vstatus.nav_state);
-		out.arming_state = static_cast<int32_t>(vstatus.arming_state);
-	}
-
-	// Battery state
-	battery_status_s bat{};
-	if (rt.sub_battery_status.update(&bat)) {
-		out.battery_warning = static_cast<int32_t>(bat.warning);
-	}
-
-	// Trajectory setpoint (from FlightModeManager)
-	trajectory_setpoint_s traj{};
-	if (rt.sub_traj_sp.update(&traj)) {
-		for (int i = 0; i < 3; i++) {
-			out.trajectory_setpoint_position[i] = traj.position[i];
-			out.trajectory_setpoint_velocity[i] = traj.velocity[i];
-			out.trajectory_setpoint_acceleration[i] = traj.acceleration[i];
-		}
-		out.trajectory_setpoint_yaw = traj.yaw;
-		out.trajectory_setpoint_yawspeed = traj.yawspeed;
-	}
-
-	// Track arming state (for gating outputs)
-	actuator_armed_s armed{};
-	if (rt.sub_actuator_armed.update(&armed)) {
-		rt.last_armed = armed.armed;
-	}
-
-	const bool is_armed = rt.last_armed;
-
-	// Ensure disarmed output is clearly communicated to the sim.
-	if (!is_armed) {
-		for (float &m : out.actuator_motors) { m = NAN; }
-		for (float &s : out.actuator_servos) { s = NAN; }
-	}
-
-	rt.last_out = out;
-}
-
 static void debug_state(LockstepRuntime &rt, uint64_t now_us);
 
-static int step_lockstep_common(
-	LockstepRuntime &rt,
-	uint64_t time_us,
-	const px4_lockstep_inputs_t *in,
-	px4_lockstep_outputs_t *out,
-	bool use_inputs)
+static int step_lockstep_common(LockstepRuntime &rt, uint64_t time_us)
 {
 	// Basic monotonic guarantee
 	if (rt.last_time_us != 0 && time_us < rt.last_time_us) {
@@ -1107,13 +693,6 @@ static int step_lockstep_common(
 
 	// Drive PX4 timebase
 	hrt_lockstep_set_absolute_time(time_us);
-
-	if (use_inputs) {
-		if (!in) {
-			return -1;
-		}
-		publish_inputs(rt, *in);
-	}
 
 	const int uorb_ret = publish_queued_uorb(rt);
 	if (uorb_ret != 0) {
@@ -1156,9 +735,6 @@ static int step_lockstep_common(
 
 	maybe_force_geofence_ready(rt, time_us);
 
-	px4_lockstep_outputs_t tmp{};
-	px4_lockstep_outputs_t *out_ptr = out ? out : &tmp;
-	read_outputs(rt, *out_ptr);
 	debug_state(rt, time_us);
 	return 0;
 }
@@ -1198,6 +774,12 @@ static void debug_state(LockstepRuntime &rt, uint64_t now_us)
 
 	mission_result_s mres{};
 	const bool has_mission_result = rt.sub_mission_result_dbg.copy(&mres);
+
+	vehicle_attitude_setpoint_s att_sp{};
+	const bool has_att_sp = rt.sub_att_sp.copy(&att_sp);
+
+	vehicle_rates_setpoint_s rates_sp{};
+	const bool has_rates_sp = rt.sub_rates_sp.copy(&rates_sp);
 
 	PX4_INFO("lockstep dbg t=%llu status=%d auto=%d armed=%d", (unsigned long long)now_us,
 		int(has_status), int(has_vcm ? vcm.flag_control_auto_enabled : false),
@@ -1254,28 +836,16 @@ static void debug_state(LockstepRuntime &rt, uint64_t now_us)
 		PX4_INFO("lockstep mission none");
 	}
 
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	const double thrust = has_att_sp ? static_cast<double>(att_sp.thrust_body[2]) : nan;
+	const double rate_x = has_rates_sp ? static_cast<double>(rates_sp.roll) : nan;
+	const double rate_y = has_rates_sp ? static_cast<double>(rates_sp.pitch) : nan;
+	const double rate_z = has_rates_sp ? static_cast<double>(rates_sp.yaw) : nan;
 	PX4_INFO("lockstep outputs thrust=%.3f rates=(%.3f,%.3f,%.3f)",
-		(double)rt.last_out.thrust_setpoint_body[2],
-		(double)rt.last_out.rates_setpoint_xyz[0],
-		(double)rt.last_out.rates_setpoint_xyz[1],
-		(double)rt.last_out.rates_setpoint_xyz[2]);
-}
-
-int px4_lockstep_step(px4_lockstep_handle_t handle,
-			 const px4_lockstep_inputs_t *in,
-			 px4_lockstep_outputs_t *out)
-{
-	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
-	if (!rt || !in || !out) {
-		return -1;
-	}
-	if (rt->uorb_only) {
-		PX4_ERR("lockstep: uORB-only mode active; use px4_lockstep_step_uorb");
-		return -4;
-	}
-
-	ensure_lockstep_thread_name();
-	return step_lockstep_common(*rt, in->time_us, in, out, true);
+		thrust,
+		rate_x,
+		rate_y,
+		rate_z);
 }
 
 PX4_LOCKSTEP_EXPORT int px4_lockstep_step_uorb(px4_lockstep_handle_t handle,
@@ -1287,7 +857,7 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_step_uorb(px4_lockstep_handle_t handle,
 	}
 
 	ensure_lockstep_thread_name();
-	return step_lockstep_common(*rt, time_us, nullptr, nullptr, false);
+	return step_lockstep_common(*rt, time_us);
 }
 
 PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t handle,

@@ -13,12 +13,12 @@ compatibility issues are contained and do not leak into the simulation framework
   lockstep is not guaranteed re-entrant.
 - **Library search fallback:** if `PX4_LOCKSTEP_LIB` is unset, the wrapper checks the
   common PX4 build outputs (`px4_sitl_lockstep`, `px4_sitl_default`).
-- **Symbol + output caching:** the wrapper caches resolved symbols and reuses a
-  per-handle output buffer to avoid repeated allocations on every step.
+- **Symbol caching:** the wrapper caches resolved symbols to avoid repeated lookups.
 
 ## Integration Contracts
 
-- `LockstepInputs`, `LockstepOutputs`, and `LockstepConfig` must match the C layout.
+- `LockstepConfig` must match the C layout.
+- uORB message structs generated in `UORBGenerated.jl` must match PX4 headers.
 - `time_us` passed to PX4 is authoritative; upstream code must supply microsecond
   quantized time.
 
@@ -33,5 +33,5 @@ not the ABI boundary.
   is opt-in and unsafe unless PX4 is known to be re-entrant.
 - Library discovery only checks common PX4 build outputs; custom paths should set
   `PX4_LOCKSTEP_LIB` explicitly.
-- The wrapper does not serialize concurrent `step!` calls; callers must avoid parallel
-  access to a single handle.
+- The wrapper does not serialize concurrent `step_uorb!` calls; callers must avoid
+  parallel access to a single handle.

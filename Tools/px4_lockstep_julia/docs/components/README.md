@@ -10,7 +10,7 @@ adds a **system architecture overview** and then links to the deeper component d
 There are two primary layers:
 
 1. **`PX4Lockstep` ABI wrapper** (`src/PX4Lockstep.jl`)
-   - Loads `libpx4_lockstep` and exposes `create`, `step!`, `load_mission`, etc.
+   - Loads `libpx4_lockstep` and exposes `create`, `step_uorb!`, `load_mission`, etc.
    - Ensures ABI compatibility and enforces the single-handle default.
 2. **`PX4Lockstep.Sim` simulation framework** (`src/sim/*`)
    - Owns truth dynamics, environment, powertrain, logging, and scenarios.
@@ -78,34 +78,20 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 - All time and scheduling decisions are integer microseconds.
 - Inputs are piecewise constant between boundaries.
 
-### uORB bridge migration (experimental)
+### uORB bridge (current)
 
-The lockstep ABI now exposes a generic uORB pub/sub bridge. It allows Julia to queue
-uORB messages by topic name and flush them inside `px4_lockstep_step()` after time is
-updated. This keeps determinism while avoiding new fields in `px4_lockstep_inputs_t`.
+The lockstep ABI is **uORB-only**. Julia queues uORB messages by topic name and flushes
+them inside `px4_lockstep_step_uorb()` after time is updated. This keeps determinism
+while avoiding legacy input/output structs.
 
-Current opt-in migration (staged):
+Key notes:
 
-- `battery_status`, `vehicle_attitude`, `vehicle_local_position`,
-  `vehicle_global_position`, `vehicle_angular_velocity`, `vehicle_land_detected`,
-  `vehicle_status`, `vehicle_control_mode`, `actuator_armed`, `home_position`, and
-  `geofence_status` can be published via the uORB bridge from Julia instead of
-  `publish_inputs()`.
-- Enable with `PX4_LOCKSTEP_UORB_BATTERY=1`, `PX4_LOCKSTEP_UORB_ATTITUDE=1`,
-  `PX4_LOCKSTEP_UORB_LOCAL_POSITION=1`, `PX4_LOCKSTEP_UORB_GLOBAL_POSITION=1`,
-  `PX4_LOCKSTEP_UORB_RATES=1`, `PX4_LOCKSTEP_UORB_LAND_DETECTED=1`,
-  `PX4_LOCKSTEP_UORB_VEHICLE_STATUS=1`, `PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE=1`,
-  `PX4_LOCKSTEP_UORB_ACTUATOR_ARMED=1`, `PX4_LOCKSTEP_UORB_HOME_POSITION=1`, and/or
-  `PX4_LOCKSTEP_UORB_GEOFENCE_STATUS=1`. The C++ harness will skip those legacy
-  publishes when the flags are set.
-- Set `PX4_LOCKSTEP_UORB_OUTPUTS=1` to read outputs from uORB subscriptions
-  (`vehicle_torque_setpoint`, `vehicle_thrust_setpoint`, `actuator_motors`,
-  `actuator_servos`, `vehicle_attitude_setpoint`, `vehicle_rates_setpoint`,
-  `mission_result`, `vehicle_status`, `battery_status`, `trajectory_setpoint`).
-- Set `PX4_LOCKSTEP_UORB_ONLY=1` to use the uORB-only ABI entrypoint
-  (`px4_lockstep_step_uorb`) and avoid `px4_lockstep_inputs_t`/`px4_lockstep_outputs_t`.
-- Julia message layouts must match the generated uORB C structs; until autogeneration
-  exists, validate against headers under `build/px4_sitl_lockstep/uORB/topics`.
+- Inputs are published via the uORB bridge (see env flags in
+  `Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh`).
+- Outputs are read via uORB subscriptions (e.g. `actuator_motors`,
+  `vehicle_attitude_setpoint`, `mission_result`).
+- Julia message layouts must match the generated uORB C structs; validate against
+  headers under `build/px4_sitl_lockstep/uORB/topics`.
 
 ## Component Docs Index
 

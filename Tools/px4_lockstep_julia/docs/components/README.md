@@ -80,6 +80,34 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 
 <img width="1958" height="1760" alt="runtime_flowchart" src="https://github.com/user-attachments/assets/44527cd1-1d53-43a7-b70c-4f738cb028ea" />
 
+### uORB bridge
+
+The lockstep ABI now exposes a generic uORB pub/sub bridge. It allows Julia to queue
+uORB messages by topic name and flush them inside `px4_lockstep_step()` after time is
+updated. This keeps determinism while avoiding new fields in `px4_lockstep_inputs_t`.
+
+Current opt-in migration (staged):
+
+- `battery_status`, `vehicle_attitude`, `vehicle_local_position`,
+  `vehicle_global_position`, `vehicle_angular_velocity`, `vehicle_land_detected`,
+  `vehicle_status`, `vehicle_control_mode`, `actuator_armed`, `home_position`, and
+  `geofence_status` can be published via the uORB bridge from Julia instead of
+  `publish_inputs()`.
+- Enable with `PX4_LOCKSTEP_UORB_BATTERY=1`, `PX4_LOCKSTEP_UORB_ATTITUDE=1`,
+  `PX4_LOCKSTEP_UORB_LOCAL_POSITION=1`, `PX4_LOCKSTEP_UORB_GLOBAL_POSITION=1`,
+  `PX4_LOCKSTEP_UORB_RATES=1`, `PX4_LOCKSTEP_UORB_LAND_DETECTED=1`,
+  `PX4_LOCKSTEP_UORB_VEHICLE_STATUS=1`, `PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE=1`,
+  `PX4_LOCKSTEP_UORB_ACTUATOR_ARMED=1`, `PX4_LOCKSTEP_UORB_HOME_POSITION=1`, and/or
+  `PX4_LOCKSTEP_UORB_GEOFENCE_STATUS=1`. The C++ harness will skip those legacy
+  publishes when the flags are set.
+- Set `PX4_LOCKSTEP_UORB_OUTPUTS=1` to read outputs from uORB subscriptions
+  (`vehicle_torque_setpoint`, `vehicle_thrust_setpoint`, `actuator_motors`,
+  `actuator_servos`, `vehicle_attitude_setpoint`, `vehicle_rates_setpoint`,
+  `mission_result`, `vehicle_status`, `battery_status`, `trajectory_setpoint`).
+- Set `PX4_LOCKSTEP_UORB_ONLY=1` to use the uORB-only ABI entrypoint
+  (`px4_lockstep_step_uorb`) and avoid `px4_lockstep_inputs_t`/`px4_lockstep_outputs_t`.
+- Julia message layouts must match the generated uORB C structs; until autogeneration
+  exists, validate against headers under `build/px4_sitl_lockstep/uORB/topics`.
 
 ## Component Docs Index
 

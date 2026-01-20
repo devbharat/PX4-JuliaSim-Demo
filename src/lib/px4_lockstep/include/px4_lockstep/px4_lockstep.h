@@ -21,7 +21,8 @@ typedef struct px4_lockstep_config_t {
 	int32_t dataman_use_ram;
 
 	// If non-zero, step Commander in lockstep.
-	// Commander will own vehicle_status/vehicle_control_mode/actuator_armed/home_position.
+	// Commander-in-loop is not supported right now; creation will fail if enabled.
+	// When disabled, the lockstep harness publishes a minimal replacement set of topics.
 	int32_t enable_commander;          // 0/1
 	int32_t commander_rate_hz;         // <=0 => step every tick
 
@@ -127,7 +128,7 @@ typedef struct px4_lockstep_outputs_t {
 //
 // The Julia wrapper assumes the exact memory layout of the input/output/config structs.
 // These helper functions allow a runtime handshake so mismatches fail fast.
-#define PX4_LOCKSTEP_ABI_VERSION 1u
+#define PX4_LOCKSTEP_ABI_VERSION 2u
 
 PX4_LOCKSTEP_EXPORT uint32_t px4_lockstep_abi_version(void);
 PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
@@ -147,6 +148,83 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_load_mission_qgc_wpl(px4_lockstep_handle_t 
 PX4_LOCKSTEP_EXPORT int px4_lockstep_step(px4_lockstep_handle_t handle,
 					 const px4_lockstep_inputs_t *in,
 					 px4_lockstep_outputs_t *out);
+
+// One lockstep tick (uORB-only input/output).
+//
+// This entrypoint advances the PX4 timebase and runs modules without
+// consuming px4_lockstep_inputs_t / px4_lockstep_outputs_t.
+// Returns 0 on success.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_step_uorb(px4_lockstep_handle_t handle,
+					 uint64_t time_us);
+
+// -----------------------------------------------------------------------------
+// Generic uORB publish/subscribe interface (experimental)
+// -----------------------------------------------------------------------------
+//
+// Motivation:
+// - Avoid growing px4_lockstep_inputs_t for every new sensor/estimator topic.
+// - Enable multi-rate sensor injection (e.g. IMU @ 1kHz, GPS @ 5Hz) from Julia.
+//
+// Design notes:
+// - Publishers are created once (init time). Messages are queued from Julia using
+//   px4_lockstep_orb_queue_publish() and published inside px4_lockstep_step() after
+//   the lockstep time has been updated.
+// - Message memory layout must exactly match PX4's generated uORB C structs.
+//   The intended workflow is to auto-generate Julia structs from PX4's .msg
+//   definitions (or from the generated uORB topic headers).
+
+typedef int32_t px4_lockstep_uorb_pub_t;
+typedef int32_t px4_lockstep_uorb_sub_t;
+
+// Create a uORB publisher (advertisement is deferred until first queued publish).
+//
+// priority: ignored on PX4 builds without uORB priority support; if <=0, defaults to 0.
+// queue_size: ignored on PX4 builds without uORB queue support (will behave as 1).
+//
+// out_instance is -1 until the first publish (uORB assigns instances on advertise).
+// out_msg_size returns the expected sizeof(topic_struct).
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t handle,
+                                                         const char *topic_name,
+                                                         int32_t priority,
+                                                         uint32_t queue_size,
+                                                         px4_lockstep_uorb_pub_t *out_pub_id,
+                                                         int32_t *out_instance,
+                                                         uint32_t *out_msg_size);
+
+// Queue a publish for the next px4_lockstep_step().
+// The message bytes are copied internally.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_queue_publish(px4_lockstep_handle_t handle,
+                                                      px4_lockstep_uorb_pub_t pub_id,
+                                                      const void *msg,
+                                                      uint32_t msg_size);
+
+// Get the uORB instance id associated with a publisher (assigned on advertise).
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_publisher_instance(px4_lockstep_handle_t handle,
+                                                           px4_lockstep_uorb_pub_t pub_id,
+                                                           int32_t *out_instance);
+
+// Create a uORB subscriber.
+// out_msg_size returns the expected sizeof(topic_struct).
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_subscriber(px4_lockstep_handle_t handle,
+                                                          const char *topic_name,
+                                                          uint32_t instance,
+                                                          px4_lockstep_uorb_sub_t *out_sub_id,
+                                                          uint32_t *out_msg_size);
+
+// Check whether a topic has been updated since the last copy.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_check(px4_lockstep_handle_t handle,
+                                              px4_lockstep_uorb_sub_t sub_id,
+                                              int32_t *out_updated);
+
+// Copy the latest topic data into out_msg.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_copy(px4_lockstep_handle_t handle,
+                                             px4_lockstep_uorb_sub_t sub_id,
+                                             void *out_msg,
+                                             uint32_t msg_size);
+
+// Unsubscribe and free the subscription handle.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_unsubscribe(px4_lockstep_handle_t handle,
+                                                    px4_lockstep_uorb_sub_t sub_id);
 
 #ifdef __cplusplus
 }

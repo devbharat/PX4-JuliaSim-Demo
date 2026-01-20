@@ -237,22 +237,22 @@ end
     # Should pass with self-reported expectations.
     PX4Lockstep._check_abi!(
         PX4Lockstep.PX4_LOCKSTEP_ABI_VERSION,
-        UInt32(sizeof(PX4Lockstep.LockstepInputs)),
-        UInt32(sizeof(PX4Lockstep.LockstepOutputs)),
+        UInt32(0),
+        UInt32(0),
         UInt32(sizeof(PX4Lockstep.LockstepConfig)),
     )
 
     @test_throws ErrorException PX4Lockstep._check_abi!(
         PX4Lockstep.PX4_LOCKSTEP_ABI_VERSION + UInt32(1),
-        UInt32(sizeof(PX4Lockstep.LockstepInputs)),
-        UInt32(sizeof(PX4Lockstep.LockstepOutputs)),
+        UInt32(0),
+        UInt32(0),
         UInt32(sizeof(PX4Lockstep.LockstepConfig)),
     )
 
     @test_throws ErrorException PX4Lockstep._check_abi!(
         PX4Lockstep.PX4_LOCKSTEP_ABI_VERSION,
-        UInt32(sizeof(PX4Lockstep.LockstepInputs)) + UInt32(4),
-        UInt32(sizeof(PX4Lockstep.LockstepOutputs)),
+        UInt32(4),
+        UInt32(0),
         UInt32(sizeof(PX4Lockstep.LockstepConfig)),
     )
 end

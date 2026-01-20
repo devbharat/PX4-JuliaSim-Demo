@@ -64,20 +64,13 @@ From Julia, `dlopen` the library and `ccall`:
 
 - `px4_lockstep_create()`
 - `px4_lockstep_load_mission_qgc_wpl()`
-- `px4_lockstep_step()` each sim tick
+- `px4_lockstep_step_uorb()` each sim tick
 
-You must provide:
+Inputs/outputs are exchanged via the generic uORB publish/subscribe API:
 
-- monotonic time_us (non-decreasing)
-- vehicle state (local + global + attitude)
-- command requests (arm + mode) and simulated battery state
-
-Outputs include:
-
-- `actuator_controls_0` (raw roll/pitch/yaw/thrust)
-- `actuator_motors` / `actuator_servos` (mixed/allocated outputs, if control allocator enabled)
-- mission progress
-- `trajectory_setpoint_*` (position/velocity/accel/yaw from FlightModeManager)
+- Queue uORB publishes with `px4_lockstep_orb_queue_publish()` before each step.
+- Read outputs via uORB subscriptions (`actuator_motors`, `vehicle_attitude_setpoint`,
+  `mission_result`, etc.).
 
 ## Julia wrapper
 

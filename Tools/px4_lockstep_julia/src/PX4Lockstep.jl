@@ -3,13 +3,10 @@ module PX4Lockstep
 using Libdl
 
 export LockstepConfig,
-    LockstepInputs,
-    LockstepOutputs,
     LockstepHandle,
     create,
     destroy,
     load_mission,
-    step!,
     step_uorb!,
     UORBPublisher,
     UORBSubscriber,
@@ -27,9 +24,9 @@ export LockstepConfig,
 export Sim
 
 const LIB_ENV = "PX4_LOCKSTEP_LIB"
-const PX4_LOCKSTEP_ABI_VERSION_V1 = UInt32(1)
-const PX4_LOCKSTEP_ABI_VERSION_V2 = UInt32(2)
-const PX4_LOCKSTEP_ABI_VERSIONS = (PX4_LOCKSTEP_ABI_VERSION_V1, PX4_LOCKSTEP_ABI_VERSION_V2)
+const PX4_LOCKSTEP_ABI_VERSION_V3 = UInt32(3)
+const PX4_LOCKSTEP_ABI_VERSION = PX4_LOCKSTEP_ABI_VERSION_V3
+const PX4_LOCKSTEP_ABI_VERSIONS = (PX4_LOCKSTEP_ABI_VERSION_V3,)
 const _LIB_HANDLE = Ref{Ptr{Cvoid}}(C_NULL)
 const _SYMBOL_CACHE = Dict{Tuple{Ptr{Cvoid},Symbol},Ptr{Cvoid}}()
 const _HANDLE_LOCK = ReentrantLock()
@@ -125,56 +122,10 @@ Base.@kwdef struct LockstepConfig
     control_allocator_rate_hz::Int32 = 250
 end
 
-Base.@kwdef struct LockstepInputs
-    time_us::UInt64 = 0
-    armed::Int32 = 0
-    nav_auto_mission::Int32 = 0
-    nav_auto_rtl::Int32 = 0
-    landed::Int32 = 1
-    x::Cfloat = 0.0f0
-    y::Cfloat = 0.0f0
-    z::Cfloat = 0.0f0
-    vx::Cfloat = 0.0f0
-    vy::Cfloat = 0.0f0
-    vz::Cfloat = 0.0f0
-    yaw::Cfloat = 0.0f0
-    lat_deg::Cdouble = 0.0
-    lon_deg::Cdouble = 0.0
-    alt_msl_m::Cfloat = 0.0f0
-    q::NTuple{4,Cfloat} = (1.0f0, 0.0f0, 0.0f0, 0.0f0)
-    rates_xyz::NTuple{3,Cfloat} = (0.0f0, 0.0f0, 0.0f0)
-    battery_connected::Int32 = 1
-    battery_voltage_v::Cfloat = 12.0f0
-    battery_current_a::Cfloat = 0.0f0
-    battery_remaining::Cfloat = 1.0f0
-    battery_warning::Int32 = 0
-end
-
-struct LockstepOutputs
-    actuator_controls::NTuple{8,Cfloat}
-    actuator_motors::NTuple{12,Cfloat}
-    actuator_servos::NTuple{8,Cfloat}
-    attitude_setpoint_q::NTuple{4,Cfloat}
-    rates_setpoint_xyz::NTuple{3,Cfloat}
-    thrust_setpoint_body::NTuple{3,Cfloat}
-    mission_seq::Int32
-    mission_count::Int32
-    mission_finished::Int32
-    nav_state::Int32
-    arming_state::Int32
-    battery_warning::Int32
-    trajectory_setpoint_position::NTuple{3,Cfloat}
-    trajectory_setpoint_velocity::NTuple{3,Cfloat}
-    trajectory_setpoint_acceleration::NTuple{3,Cfloat}
-    trajectory_setpoint_yaw::Cfloat
-    trajectory_setpoint_yawspeed::Cfloat
-end
-
 """Handle for a loaded `libpx4_lockstep` instance."""
 mutable struct LockstepHandle
     ptr::Ptr{Cvoid}
     lib::Ptr{Cvoid}
-    outbuf::Ref{LockstepOutputs}
     config::LockstepConfig
 end
 
@@ -184,21 +135,18 @@ This is intentionally separate from the shared-library queries so it can be unit
 without loading `libpx4_lockstep`.
 """
 function _check_abi!(abi_version::UInt32, in_sz::UInt32, out_sz::UInt32, cfg_sz::UInt32)
-    isbitstype(LockstepInputs) || error("LockstepInputs must be an isbits type")
-    isbitstype(LockstepOutputs) || error("LockstepOutputs must be an isbits type")
     isbitstype(LockstepConfig) || error("LockstepConfig must be an isbits type")
 
     abi_version in PX4_LOCKSTEP_ABI_VERSIONS || error(
         "libpx4_lockstep ABI mismatch: expected ABI versions $(PX4_LOCKSTEP_ABI_VERSIONS), got $abi_version",
     )
 
-    exp_in = UInt32(sizeof(LockstepInputs))
-    exp_out = UInt32(sizeof(LockstepOutputs))
     exp_cfg = UInt32(sizeof(LockstepConfig))
 
-    in_sz == exp_in || error("ABI mismatch: inputs size expected $exp_in bytes, got $in_sz")
-    out_sz == exp_out ||
-        error("ABI mismatch: outputs size expected $exp_out bytes, got $out_sz")
+    (in_sz == 0 && out_sz == 0) || error(
+        "libpx4_lockstep ABI mismatch: legacy inputs/outputs detected (sizes $in_sz/$out_sz). " *
+        "Rebuild libpx4_lockstep for uORB-only ABI v$(PX4_LOCKSTEP_ABI_VERSION_V3).",
+    )
     cfg_sz == exp_cfg ||
         error("ABI mismatch: config size expected $exp_cfg bytes, got $cfg_sz")
 
@@ -236,7 +184,7 @@ function create(
         fn = _resolve_symbol(lib, :px4_lockstep_create)
         handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
         handle == C_NULL && error("px4_lockstep_create returned NULL")
-        lockstep = LockstepHandle(handle, lib, Ref{LockstepOutputs}(), config)
+        lockstep = LockstepHandle(handle, lib, config)
         finalizer(lockstep) do instance
             try
                 destroy(instance)
@@ -264,21 +212,6 @@ function load_mission(handle::LockstepHandle, path::AbstractString)
     return ccall(fn, Cint, (Ptr{Cvoid}, Cstring), handle.ptr, path)
 end
 
-function step!(handle::LockstepHandle, inputs::LockstepInputs)
-    outputs = handle.outbuf
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_step)
-    ret = ccall(
-        fn,
-        Cint,
-        (Ptr{Cvoid}, Ref{LockstepInputs}, Ref{LockstepOutputs}),
-        handle.ptr,
-        inputs,
-        outputs,
-    )
-    ret == 0 || error("px4_lockstep_step failed with code $ret")
-    return outputs[]
-end
-
 function step_uorb!(handle::LockstepHandle, time_us::UInt64)
     fn = try
         _resolve_symbol(handle.lib, :px4_lockstep_step_uorb)
@@ -298,7 +231,7 @@ end
 
 The publisher only identifies the advertised topic and stores the expected message size.
 
-Messages are *queued* and published on the next `step!()` call, after the lockstep time has
+Messages are *queued* and published on the next `step_uorb!()` call, after the lockstep time has
 been advanced on the C side.
 """
 struct UORBPublisher
@@ -356,20 +289,15 @@ function create_uorb_publisher_checked(
     priority::Integer = 0,
     queue_size::Integer = 1,
 ) where {T}
-    pub, instance = create_uorb_publisher(
-        handle,
-        topic;
-        priority = priority,
-        queue_size = queue_size,
-    )
+    pub, instance =
+        create_uorb_publisher(handle, topic; priority = priority, queue_size = queue_size)
     n = UInt32(sizeof(T))
-    n == pub.msg_size || error(
-        "uORB msg size mismatch for $topic: got $n bytes, expected $(pub.msg_size)",
-    )
+    n == pub.msg_size ||
+        error("uORB msg size mismatch for $topic: got $n bytes, expected $(pub.msg_size)")
     return pub, instance
 end
 
-"""Queue a uORB publish for the next `step!()` call.
+"""Queue a uORB publish for the next `step_uorb!()` call.
 
 The message is copied into the C side immediately, so the Julia value does not need to live
 until the next tick.
@@ -383,21 +311,17 @@ function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T)
         "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
     )
     fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
-    ret = ccall(
-        fn,
-        Cint,
-        (Ptr{Cvoid}, Int32, Ref{T}, UInt32),
-        handle.ptr,
-        pub.id,
-        msg,
-        n,
-    )
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, pub.id, msg, n)
     ret == 0 || error("px4_lockstep_orb_queue_publish failed with code $ret")
     return nothing
 end
 
-"""Queue a uORB publish from raw bytes for the next `step!()` call."""
-function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, bytes::Vector{UInt8})
+"""Queue a uORB publish from raw bytes for the next `step_uorb!()` call."""
+function queue_uorb_publish!(
+    handle::LockstepHandle,
+    pub::UORBPublisher,
+    bytes::Vector{UInt8},
+)
     n = UInt32(length(bytes))
     n == pub.msg_size || error(
         "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
@@ -422,14 +346,7 @@ end
 function uorb_publisher_instance(handle::LockstepHandle, pub::UORBPublisher)
     fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_publisher_instance)
     instance = Ref{Int32}(-1)
-    ret = ccall(
-        fn,
-        Cint,
-        (Ptr{Cvoid}, Int32, Ref{Int32}),
-        handle.ptr,
-        pub.id,
-        instance,
-    )
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{Int32}), handle.ptr, pub.id, instance)
     ret == 0 || error("px4_lockstep_orb_publisher_instance failed with code $ret")
     return instance[]
 end

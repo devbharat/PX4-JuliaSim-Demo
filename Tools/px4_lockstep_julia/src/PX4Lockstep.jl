@@ -10,13 +10,26 @@ export LockstepConfig,
     destroy,
     load_mission,
     step!,
+    step_uorb!,
+    UORBPublisher,
+    UORBSubscriber,
+    create_uorb_publisher,
+    queue_uorb_publish!,
+    uorb_publisher_instance,
+    create_uorb_subscriber,
+    uorb_check,
+    uorb_copy!,
+    uorb_copy,
+    uorb_unsubscribe!,
     find_library
 
 # Simulation framework lives in a submodule so the core PX4 lockstep wrapper stays small.
 export Sim
 
 const LIB_ENV = "PX4_LOCKSTEP_LIB"
-const PX4_LOCKSTEP_ABI_VERSION = UInt32(1)
+const PX4_LOCKSTEP_ABI_VERSION_V1 = UInt32(1)
+const PX4_LOCKSTEP_ABI_VERSION_V2 = UInt32(2)
+const PX4_LOCKSTEP_ABI_VERSIONS = (PX4_LOCKSTEP_ABI_VERSION_V1, PX4_LOCKSTEP_ABI_VERSION_V2)
 const _LIB_HANDLE = Ref{Ptr{Cvoid}}(C_NULL)
 const _SYMBOL_CACHE = Dict{Tuple{Ptr{Cvoid},Symbol},Ptr{Cvoid}}()
 const _HANDLE_LOCK = ReentrantLock()
@@ -102,7 +115,7 @@ end
 
 Base.@kwdef struct LockstepConfig
     dataman_use_ram::Int32 = 1
-    enable_commander::Int32 = 1
+    enable_commander::Int32 = 0
     commander_rate_hz::Int32 = 100
     navigator_rate_hz::Int32 = 20
     mc_pos_control_rate_hz::Int32 = 100
@@ -175,8 +188,8 @@ function _check_abi!(abi_version::UInt32, in_sz::UInt32, out_sz::UInt32, cfg_sz:
     isbitstype(LockstepOutputs) || error("LockstepOutputs must be an isbits type")
     isbitstype(LockstepConfig) || error("LockstepConfig must be an isbits type")
 
-    abi_version == PX4_LOCKSTEP_ABI_VERSION || error(
-        "libpx4_lockstep ABI mismatch: expected ABI version $(PX4_LOCKSTEP_ABI_VERSION), got $abi_version",
+    abi_version in PX4_LOCKSTEP_ABI_VERSIONS || error(
+        "libpx4_lockstep ABI mismatch: expected ABI versions $(PX4_LOCKSTEP_ABI_VERSIONS), got $abi_version",
     )
 
     exp_in = UInt32(sizeof(LockstepInputs))
@@ -212,6 +225,9 @@ function create(
     libpath::Union{Nothing,AbstractString} = nothing,
     allow_multiple_handles::Bool = false,
 )
+    if config.enable_commander != 0
+        error("Commander-in-loop lockstep is not supported; set enable_commander=0.")
+    end
     _acquire_handle!(allow_multiple_handles)
     try
         lib = _load_library(libpath)
@@ -263,6 +279,224 @@ function step!(handle::LockstepHandle, inputs::LockstepInputs)
     return outputs[]
 end
 
+function step_uorb!(handle::LockstepHandle, time_us::UInt64)
+    fn = try
+        _resolve_symbol(handle.lib, :px4_lockstep_step_uorb)
+    catch err
+        error("px4_lockstep_step_uorb unavailable; rebuild libpx4_lockstep")
+    end
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, UInt64), handle.ptr, time_us)
+    ret == 0 || error("px4_lockstep_step_uorb failed with code $ret")
+    return nothing
+end
+
+# -----------------------------------------------------------------------------
+# Generic uORB pub/sub (experimental)
+# -----------------------------------------------------------------------------
+
+"""Opaque publisher handle for uORB topics created through `libpx4_lockstep`.
+
+The publisher only identifies the advertised topic and stores the expected message size.
+
+Messages are *queued* and published on the next `step!()` call, after the lockstep time has
+been advanced on the C side.
+"""
+struct UORBPublisher
+    id::Int32
+    msg_size::UInt32
+end
+
+"""Opaque subscription handle for uORB topics created through `libpx4_lockstep`."""
+struct UORBSubscriber
+    id::Int32
+    msg_size::UInt32
+end
+
+"""Create a uORB publisher by topic name.
+
+Returns `(pub, instance)` where `instance == -1` until the first publish (uORB assigns an
+instance on advertise).
+
+`priority` should be one of the ORB_PRIO_* constants (see PX4 uORB API). If `priority <= 0`,
+the C side uses ORB_PRIO_DEFAULT.
+
+`queue_size` controls uORB internal queuing for the topic (1 disables queuing).
+"""
+function create_uorb_publisher(
+    handle::LockstepHandle,
+    topic::AbstractString;
+    priority::Integer = 0,
+    queue_size::Integer = 1,
+)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_create_publisher)
+    pub_id = Ref{Int32}(-1)
+    instance = Ref{Int32}(-1)
+    msg_size = Ref{UInt32}(0)
+    ret = ccall(
+        fn,
+        Cint,
+        (Ptr{Cvoid}, Cstring, Int32, UInt32, Ref{Int32}, Ref{Int32}, Ref{UInt32}),
+        handle.ptr,
+        topic,
+        Int32(priority),
+        UInt32(queue_size),
+        pub_id,
+        instance,
+        msg_size,
+    )
+    ret == 0 || error("px4_lockstep_orb_create_publisher failed for $topic with code $ret")
+    return UORBPublisher(pub_id[], msg_size[]), instance[]
+end
+
+"""Create a uORB publisher and validate the Julia struct size."""
+function create_uorb_publisher_checked(
+    handle::LockstepHandle,
+    topic::AbstractString,
+    ::Type{T};
+    priority::Integer = 0,
+    queue_size::Integer = 1,
+) where {T}
+    pub, instance = create_uorb_publisher(
+        handle,
+        topic;
+        priority = priority,
+        queue_size = queue_size,
+    )
+    n = UInt32(sizeof(T))
+    n == pub.msg_size || error(
+        "uORB msg size mismatch for $topic: got $n bytes, expected $(pub.msg_size)",
+    )
+    return pub, instance
+end
+
+"""Queue a uORB publish for the next `step!()` call.
+
+The message is copied into the C side immediately, so the Julia value does not need to live
+until the next tick.
+
+`msg` must be an `isbits` struct that matches the uORB C layout exactly.
+"""
+function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T) where {T}
+    isbitstype(T) || error("uORB messages must be isbits structs (got $T)")
+    n = UInt32(sizeof(T))
+    n == pub.msg_size || error(
+        "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
+    )
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
+    ret = ccall(
+        fn,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{T}, UInt32),
+        handle.ptr,
+        pub.id,
+        msg,
+        n,
+    )
+    ret == 0 || error("px4_lockstep_orb_queue_publish failed with code $ret")
+    return nothing
+end
+
+"""Queue a uORB publish from raw bytes for the next `step!()` call."""
+function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, bytes::Vector{UInt8})
+    n = UInt32(length(bytes))
+    n == pub.msg_size || error(
+        "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
+    )
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
+    GC.@preserve bytes begin
+        ret = ccall(
+            fn,
+            Cint,
+            (Ptr{Cvoid}, Int32, Ptr{UInt8}, UInt32),
+            handle.ptr,
+            pub.id,
+            pointer(bytes),
+            n,
+        )
+        ret == 0 || error("px4_lockstep_orb_queue_publish(bytes) failed with code $ret")
+    end
+    return nothing
+end
+
+"""Get the uORB instance id assigned to a publisher (assigned on advertise)."""
+function uorb_publisher_instance(handle::LockstepHandle, pub::UORBPublisher)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_publisher_instance)
+    instance = Ref{Int32}(-1)
+    ret = ccall(
+        fn,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{Int32}),
+        handle.ptr,
+        pub.id,
+        instance,
+    )
+    ret == 0 || error("px4_lockstep_orb_publisher_instance failed with code $ret")
+    return instance[]
+end
+
+"""Create a uORB subscriber by topic name and instance."""
+function create_uorb_subscriber(
+    handle::LockstepHandle,
+    topic::AbstractString;
+    instance::Integer = 0,
+)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_create_subscriber)
+    sub_id = Ref{Int32}(-1)
+    msg_size = Ref{UInt32}(0)
+    ret = ccall(
+        fn,
+        Cint,
+        (Ptr{Cvoid}, Cstring, UInt32, Ref{Int32}, Ref{UInt32}),
+        handle.ptr,
+        topic,
+        UInt32(instance),
+        sub_id,
+        msg_size,
+    )
+    ret == 0 || error(
+        "px4_lockstep_orb_create_subscriber failed for $topic[$instance] with code $ret",
+    )
+    return UORBSubscriber(sub_id[], msg_size[])
+end
+
+"""Return whether a subscription has new data."""
+function uorb_check(handle::LockstepHandle, sub::UORBSubscriber)::Bool
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_check)
+    updated = Ref{Int32}(0)
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{Int32}), handle.ptr, sub.id, updated)
+    ret == 0 || error("px4_lockstep_orb_check failed with code $ret")
+    return updated[] != 0
+end
+
+"""Copy the latest topic data into `out` (no allocation)."""
+function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber, out::Ref{T}) where {T}
+    isbitstype(T) || error("uORB messages must be isbits structs (got $T)")
+    n = UInt32(sizeof(T))
+    n == sub.msg_size || error(
+        "uORB msg size mismatch for sub $(sub.id): got $n bytes, expected $(sub.msg_size)",
+    )
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_copy)
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, sub.id, out, n)
+    ret == 0 || error("px4_lockstep_orb_copy failed with code $ret")
+    return nothing
+end
+
+"""Copy the latest topic data and return it (allocates one `Ref`)."""
+function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber, ::Type{T}) where {T}
+    out = Ref{T}()
+    uorb_copy!(handle, sub, out)
+    return out[]
+end
+
+"""Unsubscribe and free the underlying uORB handle."""
+function uorb_unsubscribe!(handle::LockstepHandle, sub::UORBSubscriber)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_unsubscribe)
+    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32), handle.ptr, sub.id)
+    ret == 0 || error("px4_lockstep_orb_unsubscribe failed with code $ret")
+    return nothing
+end
+
+include("UORBGenerated.jl")
 include("sim/Sim.jl")
 
 end

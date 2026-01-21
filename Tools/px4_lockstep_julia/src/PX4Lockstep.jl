@@ -13,14 +13,8 @@ export LockstepConfig,
     create_publisher,
     create_subscriber,
     publish!,
-    publish_unsafe!,
-    create_uorb_publisher,
-    create_uorb_publisher_checked,
-    queue_uorb_publish!,
     uorb_publisher_instance,
     uorb_topic_metadata,
-    create_uorb_subscriber,
-    create_uorb_subscriber_checked,
     uorb_check,
     uorb_copy!,
     uorb_copy,
@@ -499,22 +493,8 @@ struct UORBSubscriber{T<:UORBMsg}
     msg_size::UInt32
 end
 
-"""Create a uORB publisher by topic name.
-
-Returns `(pub, instance)`.
-
-* If `instance == -1` (default), uORB assigns an instance on advertise, so the returned
-  value is `-1` until the first publish/advertise.
-* If `instance >= 0`, the publisher requests that instance deterministically. The request
-  is enforced at advertise time: if uORB assigns a different instance, the next
-  `step_uorb!()` fails fast.
-
-`priority` should be one of the ORB_PRIO_* constants (see PX4 uORB API). If `priority <= 0`,
-the C side uses ORB_PRIO_DEFAULT.
-
-`queue_size` controls uORB internal queuing for the topic (1 disables queuing).
-"""
-function create_uorb_publisher(
+"""Internal: create a uORB publisher by topic name."""
+function _create_uorb_publisher(
     handle::LockstepHandle,
     topic::AbstractString;
     priority::Integer = 0,
@@ -543,8 +523,8 @@ function create_uorb_publisher(
     return UORBPublisher{UORBMsg}(pub_id[], msg_size[]), instance_out[]
 end
 
-"""Create a uORB publisher and validate the Julia struct size."""
-function create_uorb_publisher_checked(
+"""Internal: create a uORB publisher and validate the Julia struct size."""
+function _create_uorb_publisher_checked(
     handle::LockstepHandle,
     topic::AbstractString,
     ::Type{T};
@@ -554,7 +534,7 @@ function create_uorb_publisher_checked(
 ) where {T}
     # Fail fast if the generated Julia type does not match the loaded PX4 binary.
     verify_uorb_type!(handle, topic, T)
-    pub_any, instance_out = create_uorb_publisher(
+    pub_any, instance_out = _create_uorb_publisher(
         handle,
         topic;
         priority = priority,
@@ -584,7 +564,7 @@ function create_publisher(
 ) where {T<:UORBMsg}
     q = isnothing(queue_size) ? Int(uorb_queue_length(T)) : Int(queue_size)
     topic = uorb_topic(T)
-    return create_uorb_publisher_checked(
+    return _create_uorb_publisher_checked(
         handle,
         topic,
         T;
@@ -596,15 +576,14 @@ end
 
 """Queue a uORB publish for the next `step_uorb!()` call.
 
-This enforces that the message type matches the publisher type parameter. For
-untyped publishers, use `publish_unsafe!` (or `queue_uorb_publish!`).
+This enforces that the message type matches the publisher type parameter.
 """
 @inline function publish!(
     handle::LockstepHandle,
     pub::UORBPublisher{T},
     msg::T,
 ) where {T<:UORBMsg}
-    return queue_uorb_publish!(handle, pub, msg)
+    return _queue_uorb_publish!(handle, pub, msg)
 end
 
 @inline function publish!(
@@ -613,21 +592,8 @@ end
     msg::T,
 ) where {T<:UORBMsg}
     error(
-        "publish! requires a typed UORBPublisher{T}. Use create_publisher or call publish_unsafe!/queue_uorb_publish! for raw usage.",
+        "publish! requires a typed UORBPublisher{T}. Use create_publisher to construct one.",
     )
-end
-
-"""Queue a uORB publish for the next `step_uorb!()` call (unsafe).
-
-This bypasses the typed publisher check and should only be used for debugging or
-raw/experimental topics.
-"""
-@inline function publish_unsafe!(
-    handle::LockstepHandle,
-    pub::UORBPublisher,
-    msg::T,
-) where {T}
-    return queue_uorb_publish!(handle, pub, msg)
 end
 
 """Queue a uORB publish for the next `step_uorb!()` call.
@@ -637,7 +603,7 @@ until the next tick.
 
 `msg` must be an `isbits` struct that matches the uORB C layout exactly.
 """
-function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T) where {T}
+function _queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T) where {T}
     isbitstype(T) || error("uORB messages must be isbits structs (got $T)")
     n = UInt32(sizeof(T))
     n == pub.msg_size || error(
@@ -646,32 +612,6 @@ function queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T)
     fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
     ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, pub.id, msg, n)
     ret == 0 || error("px4_lockstep_orb_queue_publish failed with code $ret")
-    return nothing
-end
-
-"""Queue a uORB publish from raw bytes for the next `step_uorb!()` call."""
-function queue_uorb_publish!(
-    handle::LockstepHandle,
-    pub::UORBPublisher,
-    bytes::Vector{UInt8},
-)
-    n = UInt32(length(bytes))
-    n == pub.msg_size || error(
-        "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
-    )
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
-    GC.@preserve bytes begin
-        ret = ccall(
-            fn,
-            Cint,
-            (Ptr{Cvoid}, Int32, Ptr{UInt8}, UInt32),
-            handle.ptr,
-            pub.id,
-            pointer(bytes),
-            n,
-        )
-        ret == 0 || error("px4_lockstep_orb_queue_publish(bytes) failed with code $ret")
-    end
     return nothing
 end
 
@@ -684,8 +624,8 @@ function uorb_publisher_instance(handle::LockstepHandle, pub::UORBPublisher)
     return instance[]
 end
 
-"""Create a uORB subscriber by topic name and instance."""
-function create_uorb_subscriber(
+"""Internal: create a uORB subscriber by topic name and instance."""
+function _create_uorb_subscriber(
     handle::LockstepHandle,
     topic::AbstractString;
     instance::Integer = 0,
@@ -709,18 +649,15 @@ function create_uorb_subscriber(
     return UORBSubscriber{UORBMsg}(sub_id[], msg_size[])
 end
 
-"""Create a uORB subscriber and validate Julia/PX4 layout compatibility.
-
-This is the subscriber analogue of `create_uorb_publisher_checked`.
-"""
-function create_uorb_subscriber_checked(
+"""Internal: create a uORB subscriber and validate Julia/PX4 layout compatibility."""
+function _create_uorb_subscriber_checked(
     handle::LockstepHandle,
     topic::AbstractString,
     ::Type{T};
     instance::Integer = 0,
 ) where {T}
     verify_uorb_type!(handle, topic, T)
-    sub_any = create_uorb_subscriber(handle, topic; instance = instance)
+    sub_any = _create_uorb_subscriber(handle, topic; instance = instance)
     n = UInt32(sizeof(T))
     n == sub_any.msg_size || error(
         "uORB msg size mismatch for $topic[$instance]: got $n bytes, expected $(sub_any.msg_size)",
@@ -739,7 +676,7 @@ function create_subscriber(
     instance::Integer = 0,
 ) where {T<:UORBMsg}
     topic = uorb_topic(T)
-    return create_uorb_subscriber_checked(handle, topic, T; instance = instance)
+    return _create_uorb_subscriber_checked(handle, topic, T; instance = instance)
 end
 
 """Return whether a subscription has new data."""
@@ -752,7 +689,7 @@ function uorb_check(handle::LockstepHandle, sub::UORBSubscriber)::Bool
 end
 
 """Copy the latest topic data into `out` (no allocation)."""
-function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber, out::Ref{T}) where {T}
+function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber{T}, out::Ref{T}) where {T<:UORBMsg}
     isbitstype(T) || error("uORB messages must be isbits structs (got $T)")
     n = UInt32(sizeof(T))
     n == sub.msg_size || error(
@@ -776,15 +713,8 @@ end
 
 function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber{UORBMsg})
     error(
-        "uorb_copy requires a typed UORBSubscriber{T}. Use create_subscriber or call uorb_copy(handle, sub, T).",
+        "uorb_copy requires a typed UORBSubscriber{T}. Use create_subscriber to construct one.",
     )
-end
-
-"""Copy the latest topic data and return it (allocates one `Ref`)."""
-function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber, ::Type{T}) where {T}
-    out = Ref{T}()
-    uorb_copy!(handle, sub, out)
-    return out[]
 end
 
 """Unsubscribe and free the underlying uORB handle."""

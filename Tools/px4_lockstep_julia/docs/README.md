@@ -107,7 +107,7 @@ through the generic pub/sub API exposed by `libpx4_lockstep`.
 ### Data flow
 
 1. **Queue publishes:** Julia builds uORB messages and calls
-   `PX4Lockstep.queue_uorb_publish!(...)`.
+   `PX4Lockstep.publish!(...)` on typed publishers.
 2. **Lockstep step:** `PX4Lockstep.step_uorb!` advances PX4 time; queued messages are
    published on the C side inside `px4_lockstep_step_uorb`.
 3. **Read outputs:** Julia polls uORB subscriptions (e.g. `actuator_motors`,
@@ -122,8 +122,8 @@ without expanding a fixed input struct.
   message builders, and the `UORBBridge` helper used by `PX4LockstepAutopilot`.
 - **Autopilot integration:** `src/sim/Autopilots.jl` uses `UORBBridge` to publish inputs
   and sample outputs on every `autopilot_step`.
-- **Size validation:** `create_uorb_publisher_checked` validates Julia struct sizes
-  against uORB metadata at init time (fail fast on mismatch).
+- **Size validation:** `create_publisher` / `create_subscriber` validate Julia struct
+  sizes against uORB metadata at init time (fail fast on mismatch).
 
 ### Code generation
 

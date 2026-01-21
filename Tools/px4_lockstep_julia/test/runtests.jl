@@ -97,6 +97,90 @@ end
     @test x1 == x2
 end
 
+@testset "Integrators: adaptive RK23 free-fall correctness and determinism" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.RigidBody.RigidBodyState, u)
+        return Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+    end
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    integ1 = Sim.Integrators.RK23Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    @test isapprox(x1.vel_ned[3], g; atol = 5e-4)
+    @test isapprox(x1.pos_ned[3], 0.5 * g; atol = 5e-4)
+
+    st = Sim.Integrators.last_stats(integ1)
+    @test st.nfev > 0
+    @test st.naccept > 0
+
+    integ2 = Sim.Integrators.RK23Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
+@testset "Integrators: RK4 free-fall correctness and determinism" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.RigidBody.RigidBodyState, u)
+        return Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+    end
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    integ1 = Sim.Integrators.RK4Integrator()
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    @test isapprox(x1.vel_ned[3], g; atol = 1e-6)
+    @test isapprox(x1.pos_ned[3], 0.5 * g; atol = 1e-6)
+
+    integ2 = Sim.Integrators.RK4Integrator()
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
 @testset "Integrators: adaptive RK45 supports PlantState" begin
     g = 9.80665
 
@@ -153,6 +237,102 @@ end
         h_min = 1e-6,
         h_max = 0.5,
     )
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
+@testset "Integrators: adaptive RK23 supports PlantState" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+        rḃ = Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.rb.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+    end
+
+    rb0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+
+    integ1 = Sim.Integrators.RK23Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    @test isapprox(x1.rb.vel_ned[3], g; atol = 5e-4)
+    @test isapprox(x1.rb.pos_ned[3], 0.5 * g; atol = 5e-4)
+
+    @test x1.motors_y == x0.motors_y
+    @test x1.servos_y == x0.servos_y
+    @test x1.rotor_ω == x0.rotor_ω
+    @test x1.batt_soc == x0.batt_soc
+    @test x1.batt_v1 == x0.batt_v1
+
+    integ2 = Sim.Integrators.RK23Integrator(
+        rtol_pos = 1e-8,
+        atol_pos = 1e-8,
+        rtol_vel = 1e-8,
+        atol_vel = 1e-8,
+        rtol_ω = 1e-8,
+        atol_ω = 1e-8,
+        atol_att_rad = 1e-8,
+        h_min = 1e-6,
+        h_max = 0.5,
+    )
+    x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
+    @test x1 == x2
+end
+
+@testset "Integrators: RK4 supports PlantState" begin
+    g = 9.80665
+
+    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+        rḃ = Sim.RigidBody.RigidBodyDeriv(
+            pos_dot = x.rb.vel_ned,
+            vel_dot = Sim.Types.vec3(0.0, 0.0, g),
+            q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
+            ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+        )
+        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+    end
+
+    rb0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+
+    integ1 = Sim.Integrators.RK4Integrator()
+    x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
+
+    @test isapprox(x1.rb.vel_ned[3], g; atol = 1e-6)
+    @test isapprox(x1.rb.pos_ned[3], 0.5 * g; atol = 1e-6)
+
+    @test x1.motors_y == x0.motors_y
+    @test x1.servos_y == x0.servos_y
+    @test x1.rotor_ω == x0.rotor_ω
+    @test x1.batt_soc == x0.batt_soc
+    @test x1.batt_v1 == x0.batt_v1
+
+    integ2 = Sim.Integrators.RK4Integrator()
     x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
     @test x1 == x2
 end

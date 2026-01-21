@@ -149,6 +149,32 @@ function _validate_lockstep_rates(autopilot, timeline; strict::Bool)
             @warn msg
         end
     end
+
+    # Phase 7: validate uORB injection schedule vs PX4 step cadence.
+    #
+    # If the simulator publishes certain uORB topics at fixed periods, the PX4
+    # step cadence must be fast enough (and align as an integer divisor) so that
+    # every scheduled publish time is representable on the timeline.
+    req_dt_us = Autopilots.recommended_step_dt_us(ap)
+    if req_dt_us !== nothing && dt_us > req_dt_us
+        msg = "autopilot cadence dt=$(dt_s)s (dt_us=$(dt_us)) is too slow for uORB injection schedule (min period $(req_dt_us)us)"
+        if strict
+            throw(ArgumentError(msg))
+        else
+            @warn msg
+        end
+    end
+
+    for period_us in Autopilots.injection_periods_us(ap)
+        if period_us % dt_us != 0
+            msg = "uORB injection period $(period_us)us is not a multiple of autopilot cadence dt_us=$(dt_us); scheduled publishes will be skipped (effective period becomes lcm)"
+            if strict
+                throw(ArgumentError(msg))
+            else
+                @warn msg
+            end
+        end
+    end
     return nothing
 end
 

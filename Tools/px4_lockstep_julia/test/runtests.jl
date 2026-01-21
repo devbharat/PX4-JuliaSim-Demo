@@ -14,6 +14,9 @@ include("verification_cases.jl")
 # These start as `@test_skip` shells and will be filled in incrementally.
 include("verification_contracts.jl")
 
+# uORB interface + injection scheduling checks (no PX4 binary required).
+include("uorb_injection.jl")
+
 # Record/replay engine (Option A) checks.
 
 # Compare-integrators workflow (record/replay + metrics)

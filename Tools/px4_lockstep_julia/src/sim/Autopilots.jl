@@ -45,6 +45,15 @@ export HomeLocation,
     iris_state_injection_interface,
     minimal_actuator_only_interface,
     PX4LockstepAutopilot,
+    # Phase 7: uORB injection scheduling helpers
+    PX4StepContext,
+    AbstractUORBInjectionSource,
+    PeriodicUORBInjection,
+    HomePositionUORBInjection,
+    PX4UORBInjector,
+    add_injection_source!,
+    injection_periods_us,
+    recommended_step_dt_us,
     autopilot_output_type,
     max_internal_rate_hz,
     init!,
@@ -74,6 +83,7 @@ end
 abstract type AbstractAutopilot end
 
 include("Autopilots/UORBBridge.jl")
+include("Autopilots/UORBInjection.jl")
 
 """Return the fastest internal control/navigation loop rate (Hz) for an autopilot.
 
@@ -100,7 +110,33 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     last_cmd::AutopilotCommand
     uorb::UORBBridge
     uorb_outputs::UORBOutputs
-    home_update_count::UInt32
+    injector::PX4UORBInjector
+end
+
+# -----------------
+# Injection helpers
+# -----------------
+
+"""Return the configured uORB injection periods in microseconds.
+
+For autopilots that do not use uORB injection scheduling, this returns an empty vector.
+"""
+injection_periods_us(::AbstractAutopilot) = UInt64[]
+
+"""Return the recommended PX4 step dt in microseconds from the injection schedule.
+
+If no periodic injection sources are configured (or the autopilot does not expose
+an injection schedule), returns `nothing`.
+"""
+recommended_step_dt_us(::AbstractAutopilot) = nothing
+
+injection_periods_us(ap::PX4LockstepAutopilot) = injection_periods_us(ap.injector)
+recommended_step_dt_us(ap::PX4LockstepAutopilot) = recommended_step_dt_us(ap.injector)
+
+"""Add an injection source to a running PX4 lockstep autopilot."""
+function add_injection_source!(ap::PX4LockstepAutopilot, src::AbstractUORBInjectionSource)
+    add_source!(ap.injector, src)
+    return ap
 end
 
 autopilot_output_type(::PX4LockstepAutopilot) = UORBOutputs
@@ -152,6 +188,11 @@ function init!(;
         create(config; libpath = libpath, allow_multiple_handles = allow_multiple_handles)
     uorb = _init_uorb_bridge(h, uorb_cfg)
     uorb_outputs = UORBOutputs()
+
+    # Default injector publishes the state-injection topics that are configured
+    # as publishers in `uorb_cfg`.
+    injector = build_state_injection_injector(uorb, home)
+
     return PX4LockstepAutopilot(
         h,
         home,
@@ -159,7 +200,7 @@ function init!(;
         AutopilotCommand(),
         uorb,
         uorb_outputs,
-        UInt32(0),
+        injector,
     )
 end
 
@@ -223,112 +264,42 @@ function autopilot_step(
         cmd.request_mission
     req_rtl =
         ap.edge_trigger ? (cmd.request_rtl && !ap.last_cmd.request_rtl) : cmd.request_rtl
+
     auto_mode = req_mission || req_rtl
     nav_state =
         req_rtl ? NAV_STATE_AUTO_RTL :
         req_mission ? NAV_STATE_AUTO_MISSION : NAV_STATE_MANUAL
-    bridge = ap.uorb
     arming_state = cmd.armed ? ARMING_STATE_ARMED : ARMING_STATE_DISARMED
+
     use_home = ap.handle.config.enable_commander == 0
     ref_lat = use_home ? ap.home.lat_deg : lat
     ref_lon = use_home ? ap.home.lon_deg : lon
     ref_alt = use_home ? ap.home.alt_msl_m : alt
 
-    if haskey(bridge.pubs, :battery_status)
-        _publish_uorb!(bridge, :battery_status, _battery_status_msg(time_us, battery))
-    end
+    ctx = PX4StepContext(
+        time_us = time_us,
+        pos_ned = state_pos_ned,
+        vel_ned = state_vel_ned,
+        q_bn = q_bn,
+        ω_body = ω_body,
+        cmd = cmd,
+        landed = landed,
+        battery = battery,
+        yaw_rad = yaw,
+        lat_deg = lat,
+        lon_deg = lon,
+        alt_msl_m = alt,
+        ref_lat_deg = ref_lat,
+        ref_lon_deg = ref_lon,
+        ref_alt_m = ref_alt,
+        auto_mode = auto_mode,
+        nav_state = nav_state,
+        arming_state = arming_state,
+        control_allocator_enabled = ap.handle.config.enable_control_allocator != 0,
+    )
 
-    if haskey(bridge.pubs, :vehicle_attitude)
-        _publish_uorb!(bridge, :vehicle_attitude, _vehicle_attitude_msg(time_us, q_bn))
-    end
-
-    if haskey(bridge.pubs, :vehicle_local_position)
-        msg = _vehicle_local_position_msg(
-            time_us,
-            state_pos_ned,
-            state_vel_ned,
-            yaw,
-            ref_lat,
-            ref_lon,
-            ref_alt,
-        )
-        _publish_uorb!(bridge, :vehicle_local_position, msg)
-    end
-
-    if haskey(bridge.pubs, :vehicle_global_position)
-        _publish_uorb!(
-            bridge,
-            :vehicle_global_position,
-            _vehicle_global_position_msg(time_us, lat, lon, alt),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_angular_velocity)
-        _publish_uorb!(
-            bridge,
-            :vehicle_angular_velocity,
-            _vehicle_angular_velocity_msg(time_us, ω_body),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_land_detected)
-        _publish_uorb!(
-            bridge,
-            :vehicle_land_detected,
-            _vehicle_land_detected_msg(time_us, landed),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_status)
-        _publish_uorb!(
-            bridge,
-            :vehicle_status,
-            _vehicle_status_msg(time_us, nav_state, arming_state),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_control_mode)
-        _publish_uorb!(
-            bridge,
-            :vehicle_control_mode,
-            _vehicle_control_mode_msg(
-                time_us,
-                cmd,
-                auto_mode,
-                nav_state,
-                ap.handle.config.enable_control_allocator != 0,
-            ),
-        )
-    end
-
-    if haskey(bridge.pubs, :actuator_armed)
-        _publish_uorb!(bridge, :actuator_armed, _actuator_armed_msg(time_us, cmd))
-    end
-
-    if haskey(bridge.pubs, :geofence_status)
-        _publish_uorb!(bridge, :geofence_status, _geofence_status_msg(time_us))
-    end
-
-    if haskey(bridge.pubs, :home_position)
-        has_home =
-            isfinite(ap.home.lat_deg) &&
-            isfinite(ap.home.lon_deg) &&
-            isfinite(ap.home.alt_msl_m)
-        if has_home
-            ap.home_update_count += UInt32(1)
-            _publish_uorb!(
-                bridge,
-                :home_position,
-                _home_position_msg(
-                    time_us,
-                    ap.home.lat_deg,
-                    ap.home.lon_deg,
-                    ap.home.alt_msl_m,
-                    ap.home_update_count,
-                ),
-            )
-        end
-    end
+    # Queue any uORB publishes that are due at this time.
+    inject_due!(ap.injector, ap.handle, ctx)
 
     step_uorb!(ap.handle, time_us)
     ap.last_cmd = cmd

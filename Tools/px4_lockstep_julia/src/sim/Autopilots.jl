@@ -21,9 +21,9 @@ using ..Powertrain: BatteryStatus
 # C ABI wrapper lives in the top-level `PX4Lockstep` module.
 using PX4Lockstep: LockstepHandle
 using PX4Lockstep: create, destroy, load_mission, step_uorb!
-using PX4Lockstep: UORBPublisher, UORBSubscriber
-using PX4Lockstep: create_uorb_publisher_checked, create_uorb_subscriber
-using PX4Lockstep: queue_uorb_publish!, uorb_check, uorb_copy!, uorb_unsubscribe!
+using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
+using PX4Lockstep: create_publisher, create_subscriber, publish!
+using PX4Lockstep: uorb_check, uorb_copy, uorb_unsubscribe!
 using PX4Lockstep: BatteryStatusMsg, VehicleAttitudeMsg, VehicleLocalPositionMsg
 using PX4Lockstep:
     VehicleGlobalPositionMsg, VehicleAngularVelocityMsg, VehicleLandDetectedMsg
@@ -39,6 +39,11 @@ export HomeLocation,
     AutopilotCommand,
     AbstractAutopilot,
     UORBOutputs,
+    PX4UORBInterfaceConfig,
+    UORBPubSpec,
+    UORBSubSpec,
+    iris_state_injection_interface,
+    minimal_actuator_only_interface,
     PX4LockstepAutopilot,
     autopilot_output_type,
     max_internal_rate_hz,
@@ -139,12 +144,13 @@ function init!(;
     home::HomeLocation = HomeLocation(),
     edge_trigger::Bool = false,
     allow_multiple_handles::Bool = false,
+    uorb_cfg::PX4UORBInterfaceConfig = iris_state_injection_interface(),
 )
     h =
         isnothing(config) ?
         create(; libpath = libpath, allow_multiple_handles = allow_multiple_handles) :
         create(config; libpath = libpath, allow_multiple_handles = allow_multiple_handles)
-    uorb = _init_uorb_bridge(h)
+    uorb = _init_uorb_bridge(h, uorb_cfg)
     uorb_outputs = UORBOutputs()
     return PX4LockstepAutopilot(
         h,
@@ -305,7 +311,8 @@ function autopilot_step(
 
     if haskey(bridge.pubs, :home_position)
         has_home =
-            isfinite(ap.home.lat_deg) && isfinite(ap.home.lon_deg) &&
+            isfinite(ap.home.lat_deg) &&
+            isfinite(ap.home.lon_deg) &&
             isfinite(ap.home.alt_msl_m)
         if has_home
             ap.home_update_count += UInt32(1)

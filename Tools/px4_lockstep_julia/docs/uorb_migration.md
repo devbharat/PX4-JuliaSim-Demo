@@ -20,8 +20,8 @@ Key points:
 - `PX4Lockstep.Sim.Autopilots.PX4LockstepAutopilot` always uses uORB outputs.
 - `step_uorb!` is the only step call in the wrapper.
 
-## Environment flags
+## Interface configuration
 
-Input topic publishers are enabled by default. Set env flags to `0` to disable
-specific publishers (e.g. `PX4_LOCKSTEP_UORB_LOCAL_POSITION=0`). The defaults in
-`Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh` keep everything enabled.
+The uORB boundary is configured explicitly via `PX4UORBInterfaceConfig` presets in
+`PX4Lockstep.Sim.Autopilots` (for example, `iris_state_injection_interface`). Use these
+configs to select which topics are published/subscribed instead of env flags.

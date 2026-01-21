@@ -52,4 +52,4 @@ Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 ```
 
 Override paths/flags by exporting `PX4_LOCKSTEP_LIB`, `PX4_LOCKSTEP_MISSION`,
-`JULIA_DEPOT_PATH`, or any of the `PX4_LOCKSTEP_UORB_*` env vars.
+or `JULIA_DEPOT_PATH`.

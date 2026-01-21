@@ -10,14 +10,23 @@ export LockstepConfig,
     step_uorb!,
     UORBPublisher,
     UORBSubscriber,
+    create_publisher,
+    create_subscriber,
+    publish!,
+    publish_unsafe!,
     create_uorb_publisher,
+    create_uorb_publisher_checked,
     queue_uorb_publish!,
     uorb_publisher_instance,
+    uorb_topic_metadata,
     create_uorb_subscriber,
+    create_uorb_subscriber_checked,
     uorb_check,
     uorb_copy!,
     uorb_copy,
     uorb_unsubscribe!,
+    verify_uorb_type!,
+    verify_uorb_contract!,
     find_library
 
 # Simulation framework lives in a submodule so the core PX4 lockstep wrapper stays small.
@@ -227,6 +236,251 @@ end
 # Generic uORB pub/sub (experimental)
 # -----------------------------------------------------------------------------
 
+"""Query uORB topic metadata from the loaded PX4 binary.
+
+Returns `(fields, size_bytes, size_no_padding_bytes, message_hash, queue_size)`.
+
+`fields` is the uORB canonical fields description string (`orb_metadata.o_fields`).
+The returned string is copied into Julia memory.
+
+This is intended for *init-time* contract validation so Julia message structs
+cannot silently drift away from the PX4 build they are interacting with.
+"""
+function uorb_topic_metadata(handle::LockstepHandle, topic::AbstractString)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_topic_metadata)
+    fields_ptr = Ref{Cstring}(C_NULL)
+    size = Ref{UInt32}(0)
+    size_no_padding = Ref{UInt32}(0)
+    message_hash = Ref{UInt32}(0)
+    queue_size = Ref{UInt8}(0)
+    ret = ccall(
+        fn,
+        Cint,
+        (
+            Ptr{Cvoid},
+            Cstring,
+            Ref{Cstring},
+            Ref{UInt32},
+            Ref{UInt32},
+            Ref{UInt32},
+            Ref{UInt8},
+        ),
+        handle.ptr,
+        topic,
+        fields_ptr,
+        size,
+        size_no_padding,
+        message_hash,
+        queue_size,
+    )
+
+    ret == 0 ||
+        ret == -3 ||
+        error("px4_lockstep_orb_topic_metadata failed for $topic with code $ret")
+
+    fields = fields_ptr[] == C_NULL ? "" : unsafe_string(fields_ptr[])
+    return (fields, size[], size_no_padding[], message_hash[], queue_size[])
+end
+
+# -----------------------------------------------------------------------------
+# uORB contract verification ("no drift")
+# -----------------------------------------------------------------------------
+
+"""Canonicalize a uORB fields string for stable hashing.
+
+This *must* match the canonicalization used by `scripts/uorb_codegen.jl`.
+
+We remove all whitespace and any trailing semicolons. This makes the hash robust
+to formatting differences between generated headers and PX4 runtime metadata.
+"""
+function canonicalize_uorb_fields(s::AbstractString)
+    t = replace(s, r"\s+" => "")
+    t = replace(t, r";+$" => "")
+    return t
+end
+
+const _FNV1A_64_OFFSET_BASIS = UInt64(0xcbf29ce484222325)
+const _FNV1A_64_PRIME = UInt64(0x100000001b3)
+
+"""Compute a stable FNV-1a 64-bit hash of a string.
+
+This *must* match the hashing used by `scripts/uorb_codegen.jl`.
+"""
+function fnv1a64(s::AbstractString)
+    h = _FNV1A_64_OFFSET_BASIS
+    for b in codeunits(s)
+        h = (h ⊻ UInt64(b)) * _FNV1A_64_PRIME
+    end
+    return h
+end
+
+"""Compute the uORB contract hash from a PX4 `orb_metadata.o_fields` string."""
+uorb_fields_hash_runtime(fields::AbstractString) = fnv1a64(canonicalize_uorb_fields(fields))
+
+# Cache of verified (topic,type) pairs.
+const _UORB_CONTRACT_CACHE = Dict{Tuple{String,DataType},Bool}()
+
+"""Verify that a Julia uORB message type matches the loaded PX4 binary.
+
+This enforces:
+
+* `sizeof(T)` == `orb_metadata.o_size`
+* `uorb_fields_hash(T)` == `hash(orb_metadata.o_fields)`
+
+If PX4 does not provide an `o_fields` string for the topic, this throws.
+
+This is intended for init-time checks (publisher/subscriber creation). It is not
+performance-critical.
+"""
+function verify_uorb_type!(
+    handle::LockstepHandle,
+    topic::AbstractString,
+    ::Type{T},
+) where {T}
+    key = (String(topic), T)
+    get(_UORB_CONTRACT_CACHE, key, false) && return nothing
+
+    # If the generator emitted a topic mapping, ensure the caller is not
+    # accidentally pairing the wrong type with a topic.
+    if @isdefined(uorb_topic)
+        try
+            exp_topic = uorb_topic(T)
+            exp_topic == String(topic) || error(
+                "uORB topic/type mismatch: requested topic '$(topic)' for type $(T), " *
+                "but generated trait says topic '$(exp_topic)'.",
+            )
+        catch
+            # If `uorb_topic(T)` isn't defined (stale generated file), we'll
+            # fail below when checking for missing traits.
+        end
+    end
+
+    # Require generator-provided traits.
+    if !(@isdefined(uorb_fields_hash) && @isdefined(uorb_fields))
+        error(
+            "uORB contract traits are missing (uorb_fields_hash/uorb_fields not defined). " *
+            "Regenerate Tools/px4_lockstep_julia/src/UORBGenerated.jl via scripts/uorb_codegen.jl.",
+        )
+    end
+
+    exp_hash = try
+        UInt64(uorb_fields_hash(T))
+    catch err
+        error(
+            "uORB contract trait uorb_fields_hash(::Type{$(T)}) is missing. " *
+            "Regenerate UORBGenerated.jl. (inner error: $(err))",
+        )
+    end
+    exp_fields = try
+        String(uorb_fields(T))
+    catch err
+        error(
+            "uORB contract trait uorb_fields(::Type{$(T)}) is missing. " *
+            "Regenerate UORBGenerated.jl. (inner error: $(err))",
+        )
+    end
+
+    if isempty(exp_fields) || exp_hash == 0x0000000000000000
+        error(
+            "uORB contract traits for $(T) appear uninitialized (empty fields or zero hash). " *
+            "This usually means UORBGenerated.jl is stale; regenerate it from your PX4 build.",
+        )
+    end
+
+    px4_fields, px4_size, px4_size_no_padding, px4_message_hash, px4_queue_size =
+        uorb_topic_metadata(handle, topic)
+
+    julia_size = UInt32(sizeof(T))
+    julia_size == px4_size || error(
+        "uORB size mismatch for topic '$(topic)': Julia sizeof($(T)) = $(julia_size) bytes, " *
+        "PX4 metadata size = $(px4_size) bytes (size_no_padding=$(px4_size_no_padding)).\n" *
+        "Julia fields: $(exp_fields)\n" *
+        "PX4 fields:   $(px4_fields)\n" *
+        "Fix: re-run uorb_codegen against your PX4 build output.",
+    )
+
+    if !isempty(px4_fields)
+        px4_hash = uorb_fields_hash_runtime(px4_fields)
+        exp_hash == px4_hash || error(
+            "uORB fields hash mismatch for topic '$(topic)' / type $(T).\n" *
+            "Julia hash: 0x$(string(exp_hash, base=16, pad=16))\n" *
+            "PX4  hash: 0x$(string(px4_hash, base=16, pad=16))\n" *
+            "Julia fields: $(exp_fields)\n" *
+            "PX4 fields:   $(px4_fields)\n" *
+            "Fix: regenerate UORBGenerated.jl from the exact PX4 binary you are loading.",
+        )
+    else
+        if !(@isdefined(uorb_message_hash))
+            error(
+                "PX4 uORB metadata does not expose field descriptions, and uorb_message_hash is not defined. " *
+                "Regenerate UORBGenerated.jl with message hashes enabled.",
+            )
+        end
+
+        exp_message_hash = try
+            UInt32(uorb_message_hash(T))
+        catch err
+            error(
+                "uORB contract trait uorb_message_hash(::Type{$(T)}) is missing. " *
+                "Regenerate UORBGenerated.jl. (inner error: $(err))",
+            )
+        end
+        exp_message_hash != 0 || error(
+            "uORB message_hash for $(T) is zero; regenerate UORBGenerated.jl to include message hashes.",
+        )
+        px4_message_hash != 0 || error(
+            "PX4 metadata returned message_hash=0 for topic '$(topic)'; cannot enforce layout compatibility.",
+        )
+        exp_message_hash == px4_message_hash || error(
+            "uORB message_hash mismatch for topic '$(topic)' / type $(T).\n" *
+            "Julia hash: 0x$(string(exp_message_hash, base=16, pad=8))\n" *
+            "PX4  hash: 0x$(string(px4_message_hash, base=16, pad=8))\n" *
+            "Fix: regenerate UORBGenerated.jl from the exact PX4 binary you are loading.",
+        )
+    end
+
+    _UORB_CONTRACT_CACHE[key] = true
+    return nothing
+end
+
+"""Verify a uORB type using its generated topic mapping.
+
+This is a convenience wrapper around `verify_uorb_type!(handle, topic, T)`.
+"""
+function verify_uorb_type!(handle::LockstepHandle, ::Type{T}) where {T}
+    @isdefined(uorb_topic) || error(
+        "uorb_topic is not defined; regenerate UORBGenerated.jl via scripts/uorb_codegen.jl.",
+    )
+    topic = uorb_topic(T)
+    return verify_uorb_type!(handle, topic, T)
+end
+
+"""Verify a set of uORB message types against the loaded PX4 binary.
+
+By default, validates `UORB_ALL_TYPES` generated by `uorb_codegen.jl`.
+"""
+function verify_uorb_contract!(handle::LockstepHandle; types = nothing)
+    if types === nothing
+        @isdefined(UORB_ALL_TYPES) || error(
+            "UORB_ALL_TYPES is not defined. Regenerate UORBGenerated.jl via uorb_codegen.jl.",
+        )
+        types = UORB_ALL_TYPES
+    end
+
+    for T in types
+        # Derive the topic name from traits if available.
+        if !(@isdefined(uorb_topic))
+            error("uorb_topic is not defined; cannot derive topic names for verification")
+        end
+        topic = uorb_topic(T)
+        verify_uorb_type!(handle, topic, T)
+    end
+    return nothing
+end
+
+# Generated uORB message types + traits
+include("UORBGenerated.jl")
+
 """Opaque publisher handle for uORB topics created through `libpx4_lockstep`.
 
 The publisher only identifies the advertised topic and stores the expected message size.
@@ -234,21 +488,26 @@ The publisher only identifies the advertised topic and stores the expected messa
 Messages are *queued* and published on the next `step_uorb!()` call, after the lockstep time has
 been advanced on the C side.
 """
-struct UORBPublisher
+struct UORBPublisher{T<:UORBMsg}
     id::Int32
     msg_size::UInt32
 end
 
 """Opaque subscription handle for uORB topics created through `libpx4_lockstep`."""
-struct UORBSubscriber
+struct UORBSubscriber{T<:UORBMsg}
     id::Int32
     msg_size::UInt32
 end
 
 """Create a uORB publisher by topic name.
 
-Returns `(pub, instance)` where `instance == -1` until the first publish (uORB assigns an
-instance on advertise).
+Returns `(pub, instance)`.
+
+* If `instance == -1` (default), uORB assigns an instance on advertise, so the returned
+  value is `-1` until the first publish/advertise.
+* If `instance >= 0`, the publisher requests that instance deterministically. The request
+  is enforced at advertise time: if uORB assigns a different instance, the next
+  `step_uorb!()` fails fast.
 
 `priority` should be one of the ORB_PRIO_* constants (see PX4 uORB API). If `priority <= 0`,
 the C side uses ORB_PRIO_DEFAULT.
@@ -260,25 +519,28 @@ function create_uorb_publisher(
     topic::AbstractString;
     priority::Integer = 0,
     queue_size::Integer = 1,
+    instance::Integer = -1,
 )
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_create_publisher)
+    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_create_publisher_ex)
     pub_id = Ref{Int32}(-1)
-    instance = Ref{Int32}(-1)
+    instance_out = Ref{Int32}(-1)
     msg_size = Ref{UInt32}(0)
     ret = ccall(
         fn,
         Cint,
-        (Ptr{Cvoid}, Cstring, Int32, UInt32, Ref{Int32}, Ref{Int32}, Ref{UInt32}),
+        (Ptr{Cvoid}, Cstring, Int32, UInt32, Int32, Ref{Int32}, Ref{Int32}, Ref{UInt32}),
         handle.ptr,
         topic,
         Int32(priority),
         UInt32(queue_size),
+        Int32(instance),
         pub_id,
-        instance,
+        instance_out,
         msg_size,
     )
-    ret == 0 || error("px4_lockstep_orb_create_publisher failed for $topic with code $ret")
-    return UORBPublisher(pub_id[], msg_size[]), instance[]
+    ret == 0 ||
+        error("px4_lockstep_orb_create_publisher_ex failed for $topic with code $ret")
+    return UORBPublisher{UORBMsg}(pub_id[], msg_size[]), instance_out[]
 end
 
 """Create a uORB publisher and validate the Julia struct size."""
@@ -288,13 +550,84 @@ function create_uorb_publisher_checked(
     ::Type{T};
     priority::Integer = 0,
     queue_size::Integer = 1,
+    instance::Integer = -1,
 ) where {T}
-    pub, instance =
-        create_uorb_publisher(handle, topic; priority = priority, queue_size = queue_size)
+    # Fail fast if the generated Julia type does not match the loaded PX4 binary.
+    verify_uorb_type!(handle, topic, T)
+    pub_any, instance_out = create_uorb_publisher(
+        handle,
+        topic;
+        priority = priority,
+        queue_size = queue_size,
+        instance = instance,
+    )
     n = UInt32(sizeof(T))
-    n == pub.msg_size ||
-        error("uORB msg size mismatch for $topic: got $n bytes, expected $(pub.msg_size)")
-    return pub, instance
+    n == pub_any.msg_size || error(
+        "uORB msg size mismatch for $topic: got $n bytes, expected $(pub_any.msg_size)",
+    )
+    return UORBPublisher{T}(pub_any.id, pub_any.msg_size), instance_out
+end
+
+"""Create a uORB publisher using the generated topic traits.
+
+This is the preferred, type-driven API. The topic name is obtained from
+`uorb_topic(T)` and the default queue length comes from `uorb_queue_length(T)`.
+
+Returns `(pub, instance)`.
+"""
+function create_publisher(
+    handle::LockstepHandle,
+    ::Type{T};
+    priority::Integer = 0,
+    queue_size::Union{Nothing,Integer} = nothing,
+    instance::Integer = -1,
+) where {T<:UORBMsg}
+    q = isnothing(queue_size) ? Int(uorb_queue_length(T)) : Int(queue_size)
+    topic = uorb_topic(T)
+    return create_uorb_publisher_checked(
+        handle,
+        topic,
+        T;
+        priority = priority,
+        queue_size = q,
+        instance = instance,
+    )
+end
+
+"""Queue a uORB publish for the next `step_uorb!()` call.
+
+This enforces that the message type matches the publisher type parameter. For
+untyped publishers, use `publish_unsafe!` (or `queue_uorb_publish!`).
+"""
+@inline function publish!(
+    handle::LockstepHandle,
+    pub::UORBPublisher{T},
+    msg::T,
+) where {T<:UORBMsg}
+    return queue_uorb_publish!(handle, pub, msg)
+end
+
+@inline function publish!(
+    handle::LockstepHandle,
+    pub::UORBPublisher{UORBMsg},
+    msg::T,
+) where {T<:UORBMsg}
+    error(
+        "publish! requires a typed UORBPublisher{T}. Use create_publisher or call publish_unsafe!/queue_uorb_publish! for raw usage.",
+    )
+end
+
+"""Queue a uORB publish for the next `step_uorb!()` call (unsafe).
+
+This bypasses the typed publisher check and should only be used for debugging or
+raw/experimental topics.
+"""
+@inline function publish_unsafe!(
+    handle::LockstepHandle,
+    pub::UORBPublisher,
+    msg::T,
+) where {T}
+    return queue_uorb_publish!(handle, pub, msg)
 end
 
 """Queue a uORB publish for the next `step_uorb!()` call.
@@ -373,7 +706,40 @@ function create_uorb_subscriber(
     ret == 0 || error(
         "px4_lockstep_orb_create_subscriber failed for $topic[$instance] with code $ret",
     )
-    return UORBSubscriber(sub_id[], msg_size[])
+    return UORBSubscriber{UORBMsg}(sub_id[], msg_size[])
+end
+
+"""Create a uORB subscriber and validate Julia/PX4 layout compatibility.
+
+This is the subscriber analogue of `create_uorb_publisher_checked`.
+"""
+function create_uorb_subscriber_checked(
+    handle::LockstepHandle,
+    topic::AbstractString,
+    ::Type{T};
+    instance::Integer = 0,
+) where {T}
+    verify_uorb_type!(handle, topic, T)
+    sub_any = create_uorb_subscriber(handle, topic; instance = instance)
+    n = UInt32(sizeof(T))
+    n == sub_any.msg_size || error(
+        "uORB msg size mismatch for $topic[$instance]: got $n bytes, expected $(sub_any.msg_size)",
+    )
+    return UORBSubscriber{T}(sub_any.id, sub_any.msg_size)
+end
+
+"""Create a uORB subscriber using the generated topic traits.
+
+This is the preferred, type-driven API. The topic name is obtained from
+`uorb_topic(T)`.
+"""
+function create_subscriber(
+    handle::LockstepHandle,
+    ::Type{T};
+    instance::Integer = 0,
+) where {T<:UORBMsg}
+    topic = uorb_topic(T)
+    return create_uorb_subscriber_checked(handle, topic, T; instance = instance)
 end
 
 """Return whether a subscription has new data."""
@@ -398,6 +764,22 @@ function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber, out::Ref{T}) wh
     return nothing
 end
 
+"""Copy the latest topic data and return it (allocates one `Ref`).
+
+This method infers the uORB message type from the subscriber handle.
+"""
+function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber{T}) where {T<:UORBMsg}
+    out = Ref{T}()
+    uorb_copy!(handle, sub, out)
+    return out[]
+end
+
+function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber{UORBMsg})
+    error(
+        "uorb_copy requires a typed UORBSubscriber{T}. Use create_subscriber or call uorb_copy(handle, sub, T).",
+    )
+end
+
 """Copy the latest topic data and return it (allocates one `Ref`)."""
 function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber, ::Type{T}) where {T}
     out = Ref{T}()
@@ -413,7 +795,6 @@ function uorb_unsubscribe!(handle::LockstepHandle, sub::UORBSubscriber)
     return nothing
 end
 
-include("UORBGenerated.jl")
 include("sim/Sim.jl")
 
 end

@@ -17,33 +17,23 @@ MISSION_DEFAULT="${REPO_ROOT}/Tools/px4_lockstep_julia/examples/simple_mission.w
 DEPOT_DEFAULT="${REPO_ROOT}/Tools/px4_lockstep_julia/.julia_depot"
 UORB_HEADERS_DEFAULT="${REPO_ROOT}/build/px4_sitl_lockstep/uORB/topics"
 UORB_OUT_DEFAULT="${REPO_ROOT}/Tools/px4_lockstep_julia/src/UORBGenerated.jl"
+UORB_CODEGEN_SCRIPT_DEFAULT="${REPO_ROOT}/Tools/px4_lockstep_julia/scripts/uorb_codegen.jl"
 
 PX4_LOCKSTEP_LIB=${PX4_LOCKSTEP_LIB:-${LIB_PATH_DEFAULT}}
 PX4_LOCKSTEP_MISSION=${PX4_LOCKSTEP_MISSION:-${MISSION_DEFAULT}}
 JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH:-${DEPOT_DEFAULT}}
 UORB_HEADERS_DIR=${UORB_HEADERS_DIR:-${UORB_HEADERS_DEFAULT}}
 UORB_OUT=${UORB_OUT:-${UORB_OUT_DEFAULT}}
+UORB_CODEGEN_SCRIPT=${UORB_CODEGEN_SCRIPT:-${UORB_CODEGEN_SCRIPT_DEFAULT}}
 UORB_TOPICS=${UORB_TOPICS:-"battery_status,vehicle_attitude,vehicle_local_position,vehicle_global_position,vehicle_angular_velocity,vehicle_land_detected,vehicle_status,vehicle_control_mode,actuator_armed,home_position,geofence_status,vehicle_torque_setpoint,vehicle_thrust_setpoint,actuator_motors,actuator_servos,vehicle_attitude_setpoint,vehicle_rates_setpoint,mission_result,trajectory_setpoint"}
-
-: "${PX4_LOCKSTEP_UORB_BATTERY:=1}"
-: "${PX4_LOCKSTEP_UORB_ATTITUDE:=1}"
-: "${PX4_LOCKSTEP_UORB_LOCAL_POSITION:=1}"
-: "${PX4_LOCKSTEP_UORB_GLOBAL_POSITION:=1}"
-: "${PX4_LOCKSTEP_UORB_RATES:=1}"
-: "${PX4_LOCKSTEP_UORB_LAND_DETECTED:=1}"
-: "${PX4_LOCKSTEP_UORB_VEHICLE_STATUS:=1}"
-: "${PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE:=1}"
-: "${PX4_LOCKSTEP_UORB_ACTUATOR_ARMED:=1}"
-: "${PX4_LOCKSTEP_UORB_HOME_POSITION:=1}"
-: "${PX4_LOCKSTEP_UORB_GEOFENCE_STATUS:=1}"
 
 if [[ ! -d "${UORB_HEADERS_DIR}" ]]; then
   echo "uORB headers not found at ${UORB_HEADERS_DIR}; skipping codegen" >&2
-elif [[ ! -f "${UORB_OUT}" ]] || find "${UORB_HEADERS_DIR}" -type f -name '*.h' -newer "${UORB_OUT}" -print -quit | grep -q .; then
+elif [[ ! -f "${UORB_OUT}" ]] || [[ "${UORB_CODEGEN_SCRIPT}" -nt "${UORB_OUT}" ]] || find "${UORB_HEADERS_DIR}" -type f -name '*.h' -newer "${UORB_OUT}" -print -quit | grep -q .; then
   echo "Generating UORBGenerated.jl from ${UORB_HEADERS_DIR}" >&2
   JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} \
     julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" \
-      "${REPO_ROOT}/Tools/px4_lockstep_julia/scripts/uorb_codegen.jl" \
+      "${UORB_CODEGEN_SCRIPT}" \
       --headers "${UORB_HEADERS_DIR}" \
       --topics "${UORB_TOPICS}" \
       --out "${UORB_OUT}"
@@ -52,17 +42,6 @@ fi
 IRIS_T_END_S=${T_END_S} \
 PX4_LOCKSTEP_LIB=${PX4_LOCKSTEP_LIB} \
 PX4_LOCKSTEP_MISSION=${PX4_LOCKSTEP_MISSION} \
-PX4_LOCKSTEP_UORB_BATTERY=${PX4_LOCKSTEP_UORB_BATTERY} \
-PX4_LOCKSTEP_UORB_ATTITUDE=${PX4_LOCKSTEP_UORB_ATTITUDE} \
-PX4_LOCKSTEP_UORB_LOCAL_POSITION=${PX4_LOCKSTEP_UORB_LOCAL_POSITION} \
-PX4_LOCKSTEP_UORB_GLOBAL_POSITION=${PX4_LOCKSTEP_UORB_GLOBAL_POSITION} \
-PX4_LOCKSTEP_UORB_RATES=${PX4_LOCKSTEP_UORB_RATES} \
-PX4_LOCKSTEP_UORB_LAND_DETECTED=${PX4_LOCKSTEP_UORB_LAND_DETECTED} \
-PX4_LOCKSTEP_UORB_VEHICLE_STATUS=${PX4_LOCKSTEP_UORB_VEHICLE_STATUS} \
-PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE=${PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE} \
-PX4_LOCKSTEP_UORB_ACTUATOR_ARMED=${PX4_LOCKSTEP_UORB_ACTUATOR_ARMED} \
-PX4_LOCKSTEP_UORB_HOME_POSITION=${PX4_LOCKSTEP_UORB_HOME_POSITION} \
-PX4_LOCKSTEP_UORB_GEOFENCE_STATUS=${PX4_LOCKSTEP_UORB_GEOFENCE_STATUS} \
 JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} \
 julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" \
   -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'

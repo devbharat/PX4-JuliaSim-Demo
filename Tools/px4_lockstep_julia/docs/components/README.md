@@ -78,7 +78,7 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 - All time and scheduling decisions are integer microseconds.
 - Inputs are piecewise constant between boundaries.
 
-### uORB bridge (current)
+### uORB bridge
 
 The lockstep ABI is **uORB-only**. Julia queues uORB messages by topic name and flushes
 them inside `px4_lockstep_step_uorb()` after time is updated. This keeps determinism
@@ -92,6 +92,8 @@ Key notes:
   `vehicle_attitude_setpoint`, `mission_result`).
 - Julia message layouts must match the generated uORB C structs; validate against
   headers under `build/px4_sitl_lockstep/uORB/topics`.
+
+<img width="1958" height="1760" alt="runtime_flowchart" src="https://github.com/user-attachments/assets/44527cd1-1d53-43a7-b70c-4f738cb028ea" />
 
 ## Component Docs Index
 

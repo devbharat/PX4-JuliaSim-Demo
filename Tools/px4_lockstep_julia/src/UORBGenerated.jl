@@ -329,4 +329,3 @@ struct TrajectorySetpointMsg
     yaw::Float32
     yawspeed::Float32
 end
-

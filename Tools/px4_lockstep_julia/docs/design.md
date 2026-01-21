@@ -22,6 +22,54 @@ framework under `Tools/px4_lockstep_julia`.
 The wrapper remains intentionally small; modeling and scheduling live in the simulation
 layer so they can evolve without ABI risk.
 
+## uORB Bridge (Julia ⇄ PX4)
+
+The lockstep ABI is **uORB-only**. Julia publishes uORB inputs and reads uORB outputs
+through the generic pub/sub API exposed by `libpx4_lockstep`.
+
+### Data flow
+
+1. **Queue publishes:** Julia builds uORB messages and calls
+   `PX4Lockstep.queue_uorb_publish!(...)`.
+2. **Lockstep step:** `PX4Lockstep.step_uorb!` advances PX4 time; queued messages are
+   published on the C side inside `px4_lockstep_step_uorb`.
+3. **Read outputs:** Julia polls uORB subscriptions (e.g. `actuator_motors`,
+   `vehicle_attitude_setpoint`, `mission_result`) and updates `UORBOutputs`.
+
+This keeps PX4 time injection deterministic while allowing multi-rate sensor injection
+without expanding a fixed input struct.
+
+### Julia implementation
+
+- **Bridge helpers:** `src/sim/Autopilots/UORBBridge.jl` defines the topic registry,
+  message builders, and the `UORBBridge` helper used by `PX4LockstepAutopilot`.
+- **Autopilot integration:** `src/sim/Autopilots.jl` uses `UORBBridge` to publish inputs
+  and sample outputs on every `autopilot_step`.
+- **Size validation:** `create_uorb_publisher_checked` validates Julia struct sizes
+  against uORB metadata at init time (fail fast on mismatch).
+
+### Code generation
+
+Julia uORB struct definitions are generated from the PX4 uORB headers using:
+
+```
+Tools/px4_lockstep_julia/scripts/uorb_codegen.jl
+```
+
+This produces `src/UORBGenerated.jl`, which must match the active PX4 build
+(`build/px4_sitl_lockstep/uORB/topics`). The run scripts automatically regenerate the
+file when headers are newer:
+
+- `Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh`
+- `Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh`
+
+### Environment controls
+
+Input topic publishers are **enabled by default**. Set any of the `PX4_LOCKSTEP_UORB_*`
+flags to `0` to disable a specific publisher (e.g.
+`PX4_LOCKSTEP_UORB_LOCAL_POSITION=0`). Output subscriptions are always created so PX4
+outputs remain available to the simulator.
+
 ## Data Ownership and Frames
 
 - **Truth state** is owned by the simulator; **estimated state** is produced by

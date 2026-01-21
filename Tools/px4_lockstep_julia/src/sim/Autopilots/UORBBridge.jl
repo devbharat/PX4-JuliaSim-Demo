@@ -1,15 +1,3 @@
-const UORB_BATTERY_ENV = "PX4_LOCKSTEP_UORB_BATTERY"
-const UORB_ATTITUDE_ENV = "PX4_LOCKSTEP_UORB_ATTITUDE"
-const UORB_LOCAL_POSITION_ENV = "PX4_LOCKSTEP_UORB_LOCAL_POSITION"
-const UORB_GLOBAL_POSITION_ENV = "PX4_LOCKSTEP_UORB_GLOBAL_POSITION"
-const UORB_RATES_ENV = "PX4_LOCKSTEP_UORB_RATES"
-const UORB_LAND_ENV = "PX4_LOCKSTEP_UORB_LAND_DETECTED"
-const UORB_VEHICLE_STATUS_ENV = "PX4_LOCKSTEP_UORB_VEHICLE_STATUS"
-const UORB_CONTROL_MODE_ENV = "PX4_LOCKSTEP_UORB_VEHICLE_CONTROL_MODE"
-const UORB_ACTUATOR_ARMED_ENV = "PX4_LOCKSTEP_UORB_ACTUATOR_ARMED"
-const UORB_HOME_POSITION_ENV = "PX4_LOCKSTEP_UORB_HOME_POSITION"
-const UORB_GEOFENCE_STATUS_ENV = "PX4_LOCKSTEP_UORB_GEOFENCE_STATUS"
-
 const ZERO_VEC3_F32 = (0.0f0, 0.0f0, 0.0f0)
 const ZERO_VEC2_F32 = (0.0f0, 0.0f0)
 const ZERO_Q_F32 = (0.0f0, 0.0f0, 0.0f0, 0.0f0)
@@ -48,93 +36,94 @@ const NAV_STATE_AUTO_MISSION = UInt8(3)
 const NAV_STATE_AUTO_RTL = UInt8(5)
 const VEHICLE_TYPE_ROTARY_WING = UInt8(1)
 
-const UORB_INPUT_SPECS = (
-    (key = :battery_status, topic = "battery_status", env = UORB_BATTERY_ENV, type = BatteryStatusMsg),
-    (key = :vehicle_attitude, topic = "vehicle_attitude", env = UORB_ATTITUDE_ENV, type = VehicleAttitudeMsg),
-    (
-        key = :vehicle_local_position,
-        topic = "vehicle_local_position",
-        env = UORB_LOCAL_POSITION_ENV,
-        type = VehicleLocalPositionMsg,
-    ),
-    (
-        key = :vehicle_global_position,
-        topic = "vehicle_global_position",
-        env = UORB_GLOBAL_POSITION_ENV,
-        type = VehicleGlobalPositionMsg,
-    ),
-    (
-        key = :vehicle_angular_velocity,
-        topic = "vehicle_angular_velocity",
-        env = UORB_RATES_ENV,
-        type = VehicleAngularVelocityMsg,
-    ),
-    (
-        key = :vehicle_land_detected,
-        topic = "vehicle_land_detected",
-        env = UORB_LAND_ENV,
-        type = VehicleLandDetectedMsg,
-    ),
-    (
-        key = :vehicle_status,
-        topic = "vehicle_status",
-        env = UORB_VEHICLE_STATUS_ENV,
-        type = VehicleStatusMsg,
-    ),
-    (
-        key = :vehicle_control_mode,
-        topic = "vehicle_control_mode",
-        env = UORB_CONTROL_MODE_ENV,
-        type = VehicleControlModeMsg,
-    ),
-    (
-        key = :actuator_armed,
-        topic = "actuator_armed",
-        env = UORB_ACTUATOR_ARMED_ENV,
-        type = ActuatorArmedMsg,
-    ),
-    (
-        key = :home_position,
-        topic = "home_position",
-        env = UORB_HOME_POSITION_ENV,
-        type = HomePositionMsg,
-    ),
-    (
-        key = :geofence_status,
-        topic = "geofence_status",
-        env = UORB_GEOFENCE_STATUS_ENV,
-        type = GeofenceStatusMsg,
-    ),
-)
+# -----------------------------------------------------------------------------
+# uORB interface configuration
+# -----------------------------------------------------------------------------
 
-const UORB_OUTPUT_SPECS = (
-    (
-        key = :torque_sp,
-        topic = "vehicle_torque_setpoint",
-        type = VehicleTorqueSetpointMsg,
-    ),
-    (
-        key = :thrust_sp,
-        topic = "vehicle_thrust_setpoint",
-        type = VehicleThrustSetpointMsg,
-    ),
-    (key = :actuator_motors, topic = "actuator_motors", type = ActuatorMotorsMsg),
-    (key = :actuator_servos, topic = "actuator_servos", type = ActuatorServosMsg),
-    (
-        key = :attitude_sp,
-        topic = "vehicle_attitude_setpoint",
-        type = VehicleAttitudeSetpointMsg,
-    ),
-    (key = :rates_sp, topic = "vehicle_rates_setpoint", type = VehicleRatesSetpointMsg),
-    (key = :mission_result, topic = "mission_result", type = MissionResultMsg),
-    (key = :vehicle_status, topic = "vehicle_status", type = VehicleStatusMsg),
-    (key = :battery_status, topic = "battery_status", type = BatteryStatusMsg),
-    (
-        key = :trajectory_setpoint,
-        topic = "trajectory_setpoint",
-        type = TrajectorySetpointMsg,
-    ),
-)
+"""Spec for a uORB publisher created by the Julia simulator.
+
+Fields
+------
+- `key`       : Symbol used internally by the bridge (not a uORB topic name).
+- `type`      : Generated uORB message type (subtype of `PX4Lockstep.UORBMsg`).
+- `instance`  : uORB instance (-1 = auto).
+- `priority`  : publisher priority passed to PX4 (uORB advertise).
+- `queue_size`: uORB queue length (nothing -> use `uorb_queue_length(type)`).
+"""
+Base.@kwdef struct UORBPubSpec
+    key::Symbol
+    type::DataType
+    instance::Int32 = -1
+    priority::Int32 = 0
+    queue_size::Union{Nothing,Int32} = nothing
+end
+
+"""Spec for a uORB subscriber created by the Julia simulator."""
+Base.@kwdef struct UORBSubSpec
+    key::Symbol
+    type::DataType
+    instance::UInt32 = UInt32(0)
+end
+
+"""Explicit uORB boundary contract between Julia and PX4."""
+Base.@kwdef struct PX4UORBInterfaceConfig
+    # publishers: what Julia will inject into PX4
+    pubs::Vector{UORBPubSpec} = UORBPubSpec[]
+    # subscribers: what Julia will read from PX4
+    subs::Vector{UORBSubSpec} = UORBSubSpec[]
+end
+
+"""Default uORB interface for the Iris workflow.
+
+Injects estimated state + a few status topics into PX4, and subscribes to actuator and
+setpoint outputs.
+
+This mirrors the previous `UORB_INPUT_SPECS` / `UORB_OUTPUT_SPECS` default behavior,
+but is now explicit and reproducible.
+"""
+function iris_state_injection_interface()
+    pubs = UORBPubSpec[
+        UORBPubSpec(key = :battery_status, type = BatteryStatusMsg),
+        UORBPubSpec(key = :vehicle_attitude, type = VehicleAttitudeMsg),
+        UORBPubSpec(key = :vehicle_local_position, type = VehicleLocalPositionMsg),
+        UORBPubSpec(key = :vehicle_global_position, type = VehicleGlobalPositionMsg),
+        UORBPubSpec(key = :vehicle_angular_velocity, type = VehicleAngularVelocityMsg),
+        UORBPubSpec(key = :vehicle_land_detected, type = VehicleLandDetectedMsg),
+        UORBPubSpec(key = :vehicle_status, type = VehicleStatusMsg),
+        UORBPubSpec(key = :vehicle_control_mode, type = VehicleControlModeMsg),
+        UORBPubSpec(key = :actuator_armed, type = ActuatorArmedMsg),
+        UORBPubSpec(key = :home_position, type = HomePositionMsg),
+        UORBPubSpec(key = :geofence_status, type = GeofenceStatusMsg),
+    ]
+
+    subs = UORBSubSpec[
+        UORBSubSpec(key = :torque_sp, type = VehicleTorqueSetpointMsg),
+        UORBSubSpec(key = :thrust_sp, type = VehicleThrustSetpointMsg),
+        UORBSubSpec(key = :actuator_motors, type = ActuatorMotorsMsg),
+        UORBSubSpec(key = :actuator_servos, type = ActuatorServosMsg),
+        UORBSubSpec(key = :attitude_sp, type = VehicleAttitudeSetpointMsg),
+        UORBSubSpec(key = :rates_sp, type = VehicleRatesSetpointMsg),
+        UORBSubSpec(key = :mission_result, type = MissionResultMsg),
+        UORBSubSpec(key = :vehicle_status, type = VehicleStatusMsg),
+        UORBSubSpec(key = :battery_status, type = BatteryStatusMsg),
+        UORBSubSpec(key = :trajectory_setpoint, type = TrajectorySetpointMsg),
+    ]
+
+    return PX4UORBInterfaceConfig(pubs = pubs, subs = subs)
+end
+
+"""Minimal uORB interface used by unit tests or debugging.
+
+This does **not** inject state into PX4, so it is not suitable for live mission runs.
+"""
+function minimal_actuator_only_interface()
+    subs = UORBSubSpec[
+        UORBSubSpec(key = :actuator_motors, type = ActuatorMotorsMsg),
+        UORBSubSpec(key = :actuator_servos, type = ActuatorServosMsg),
+    ]
+    return PX4UORBInterfaceConfig(pubs = UORBPubSpec[], subs = subs)
+end
+
 
 Base.@kwdef mutable struct UORBOutputs
     actuator_controls::NTuple{8,Float32} = ZERO_CONTROLS_8
@@ -162,20 +151,35 @@ mutable struct UORBBridge
     subs::Dict{Symbol,UORBSubscriber}
 end
 
-function _init_uorb_bridge(handle::LockstepHandle)
+function _init_uorb_bridge(handle::LockstepHandle, cfg::PX4UORBInterfaceConfig)
     pubs = Dict{Symbol,UORBPublisher}()
-    for spec in UORB_INPUT_SPECS
-        if _env_flag_enabled(spec.env)
-            pub, _ = create_uorb_publisher_checked(handle, spec.topic, spec.type)
-            pubs[spec.key] = pub
-        end
+    for spec in cfg.pubs
+        spec.type <: UORBMsg ||
+            error("UORBPubSpec type must be a uORB message type (got $(spec.type))")
+        pub, _ = create_publisher(
+            handle,
+            spec.type;
+            priority = spec.priority,
+            queue_size = spec.queue_size,
+            instance = spec.instance,
+        )
+        pubs[spec.key] = pub
     end
+
     subs = Dict{Symbol,UORBSubscriber}()
-    for spec in UORB_OUTPUT_SPECS
-        subs[spec.key] = create_uorb_subscriber(handle, spec.topic)
+    for spec in cfg.subs
+        spec.type <: UORBMsg ||
+            error("UORBSubSpec type must be a uORB message type (got $(spec.type))")
+        sub = create_subscriber(handle, spec.type; instance = spec.instance)
+        subs[spec.key] = sub
     end
+
     return UORBBridge(handle, pubs, subs)
 end
+
+# Convenience: build the default Iris interface.
+_init_uorb_bridge(handle::LockstepHandle) =
+    _init_uorb_bridge(handle, iris_state_injection_interface())
 
 function _close_uorb_bridge!(bridge::UORBBridge)
     for sub in values(bridge.subs)
@@ -187,17 +191,15 @@ end
 function _publish_uorb!(bridge::UORBBridge, key::Symbol, msg)
     pub = get(bridge.pubs, key, nothing)
     pub === nothing && return nothing
-    queue_uorb_publish!(bridge.handle, pub, msg)
+    publish!(bridge.handle, pub, msg)
     return nothing
 end
 
-function _read_uorb(bridge::UORBBridge, key::Symbol, ::Type{T}) where {T}
+function _read_uorb(bridge::UORBBridge, key::Symbol)
     sub = get(bridge.subs, key, nothing)
     sub === nothing && return nothing
     uorb_check(bridge.handle, sub) || return nothing
-    msg = Ref{T}()
-    uorb_copy!(bridge.handle, sub, msg)
-    return msg[]
+    return uorb_copy(bridge.handle, sub)
 end
 
 @inline function _update_controls_torque(
@@ -234,56 +236,56 @@ end
 
 function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
     controls = out.actuator_controls
-    torque_msg = _read_uorb(bridge, :torque_sp, VehicleTorqueSetpointMsg)
+    torque_msg = _read_uorb(bridge, :torque_sp)
     if torque_msg !== nothing
         controls = _update_controls_torque(controls, torque_msg)
     end
-    thrust_msg = _read_uorb(bridge, :thrust_sp, VehicleThrustSetpointMsg)
+    thrust_msg = _read_uorb(bridge, :thrust_sp)
     if thrust_msg !== nothing
         controls = _update_controls_thrust(controls, thrust_msg)
     end
     out.actuator_controls = controls
 
-    motors_msg = _read_uorb(bridge, :actuator_motors, ActuatorMotorsMsg)
+    motors_msg = _read_uorb(bridge, :actuator_motors)
     if motors_msg !== nothing
         out.actuator_motors = motors_msg.control
     end
 
-    servos_msg = _read_uorb(bridge, :actuator_servos, ActuatorServosMsg)
+    servos_msg = _read_uorb(bridge, :actuator_servos)
     if servos_msg !== nothing
         out.actuator_servos = servos_msg.control
     end
 
-    att_msg = _read_uorb(bridge, :attitude_sp, VehicleAttitudeSetpointMsg)
+    att_msg = _read_uorb(bridge, :attitude_sp)
     if att_msg !== nothing
         out.attitude_setpoint_q = att_msg.q_d
         out.thrust_setpoint_body = att_msg.thrust_body
     end
 
-    rates_msg = _read_uorb(bridge, :rates_sp, VehicleRatesSetpointMsg)
+    rates_msg = _read_uorb(bridge, :rates_sp)
     if rates_msg !== nothing
         out.rates_setpoint_xyz = (rates_msg.roll, rates_msg.pitch, rates_msg.yaw)
     end
 
-    mission_msg = _read_uorb(bridge, :mission_result, MissionResultMsg)
+    mission_msg = _read_uorb(bridge, :mission_result)
     if mission_msg !== nothing
         out.mission_seq = Int32(mission_msg.seq_current)
         out.mission_count = Int32(mission_msg.seq_total)
         out.mission_finished = mission_msg.finished ? Int32(1) : Int32(0)
     end
 
-    vstatus_msg = _read_uorb(bridge, :vehicle_status, VehicleStatusMsg)
+    vstatus_msg = _read_uorb(bridge, :vehicle_status)
     if vstatus_msg !== nothing
         out.nav_state = Int32(vstatus_msg.nav_state)
         out.arming_state = Int32(vstatus_msg.arming_state)
     end
 
-    battery_msg = _read_uorb(bridge, :battery_status, BatteryStatusMsg)
+    battery_msg = _read_uorb(bridge, :battery_status)
     if battery_msg !== nothing
         out.battery_warning = Int32(battery_msg.warning)
     end
 
-    traj_msg = _read_uorb(bridge, :trajectory_setpoint, TrajectorySetpointMsg)
+    traj_msg = _read_uorb(bridge, :trajectory_setpoint)
     if traj_msg !== nothing
         out.trajectory_setpoint_position = traj_msg.position
         out.trajectory_setpoint_velocity = traj_msg.velocity
@@ -474,11 +476,7 @@ end
     )
 end
 
-@inline function _vehicle_status_msg(
-    time_us::UInt64,
-    nav_state::UInt8,
-    arming_state::UInt8,
-)
+@inline function _vehicle_status_msg(time_us::UInt64, nav_state::UInt8, arming_state::UInt8)
     return VehicleStatusMsg(
         time_us,
         UInt64(0),
@@ -594,9 +592,4 @@ end
         false,
         ZERO_PAD_U8,
     )
-end
-
-function _env_flag_enabled(name::AbstractString)
-    val = get(ENV, name, "1")
-    return !(isempty(val) || val == "0")
 end

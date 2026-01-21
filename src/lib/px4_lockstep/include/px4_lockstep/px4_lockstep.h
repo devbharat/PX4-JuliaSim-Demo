@@ -66,9 +66,42 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_load_mission_qgc_wpl(px4_lockstep_handle_t 
 //
 // This entrypoint advances the PX4 timebase and runs modules. Inputs/outputs
 // are supplied via the generic uORB publish/subscribe API.
-// Returns 0 on success.
+//
+// Returns 0 on success, <0 on error:
+//  -1: queued buffer size mismatch
+//  -2: uORB advertise failed
+//  -3: uORB publish failed
+//  -4: requested publisher instance mismatch
 PX4_LOCKSTEP_EXPORT int px4_lockstep_step_uorb(px4_lockstep_handle_t handle,
 					 uint64_t time_us);
+
+// -----------------------------------------------------------------------------
+// uORB metadata queries
+// -----------------------------------------------------------------------------
+//
+// Expose uORB compile-time topic metadata to the Julia side so message layout
+// compatibility can be validated against the *loaded* PX4 binary at runtime.
+//
+// out_fields points to a static string owned by PX4/uORB metadata. Callers must
+// copy it if they need to retain it. If the PX4 build does not expose field
+// metadata, out_fields is set to NULL and the function returns -3.
+// out_size returns the expected sizeof(<topic>_s) for the topic.
+// out_size_no_padding is 0 if the PX4 version does not expose a
+// "size without padding" field in the uORB metadata.
+// out_message_hash returns PX4's 32-bit message hash (0 if unavailable).
+// out_queue_size returns the topic queue size (0 if unavailable).
+//
+// Returns 0 on success, <0 on error:
+//  -1: invalid arguments
+//  -2: unknown topic
+//  -3: topic has no field description string
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_topic_metadata(px4_lockstep_handle_t handle,
+                                                       const char *topic_name,
+                                                       const char **out_fields,
+                                                       uint32_t *out_size,
+                                                       uint32_t *out_size_no_padding,
+                                                       uint32_t *out_message_hash,
+                                                       uint8_t *out_queue_size);
 
 // -----------------------------------------------------------------------------
 // Generic uORB publish/subscribe interface (experimental)
@@ -102,6 +135,23 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t 
                                                          px4_lockstep_uorb_pub_t *out_pub_id,
                                                          int32_t *out_instance,
                                                          uint32_t *out_msg_size);
+
+// Create a uORB publisher with a deterministic requested instance.
+//
+// requested_instance: -1 for auto (default uORB behavior), otherwise the desired instance.
+//
+// Note: advertisement is still deferred until the first queued publish (the first
+// px4_lockstep_step_uorb() that processes a pending publish). The requested instance is
+// enforced at advertise time: if uORB assigns a different instance, the lockstep step
+// call fails with -4.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher_ex(px4_lockstep_handle_t handle,
+                                                            const char *topic_name,
+                                                            int32_t priority,
+                                                            uint32_t queue_size,
+                                                            int32_t requested_instance,
+                                                            px4_lockstep_uorb_pub_t *out_pub_id,
+                                                            int32_t *out_instance,
+                                                            uint32_t *out_msg_size);
 
 // Queue a publish for the next px4_lockstep_step_uorb().
 // The message bytes are copied internally.

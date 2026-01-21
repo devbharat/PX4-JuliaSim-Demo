@@ -247,6 +247,7 @@ function simulate_iris_mission(;
     mission_path::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_MISSION", nothing),
     libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
     lockstep_config = iris_default_lockstep_config(),
+    uorb_cfg::Autopilots.PX4UORBInterfaceConfig = Autopilots.iris_state_injection_interface(),
     recording_in::Union{Nothing,AbstractString} = nothing,
     recording_out::Union{Nothing,AbstractString} = nothing,
     t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
@@ -337,6 +338,7 @@ function simulate_iris_mission(;
         libpath = libpath,
         home = home,
         edge_trigger = false,
+        uorb_cfg = uorb_cfg,
     )
     try
         Autopilots.autopilot_step(

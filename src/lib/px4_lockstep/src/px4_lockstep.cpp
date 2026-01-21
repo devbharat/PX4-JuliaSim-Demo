@@ -11,6 +11,9 @@
 #include <string>
 #include <vector>
 
+#include <type_traits>
+#include <utility>
+
 #include <new>
 #include <pthread.h>
 
@@ -196,6 +199,9 @@ struct LockstepRuntime {
 	struct ExtPublisher {
 		const struct orb_metadata *meta{nullptr};
 		orb_advert_t handle{nullptr};
+		// If >= 0, the publisher must advertise on this uORB instance.
+		// If -1, uORB assigns an instance automatically on advertise.
+		int requested_instance{-1};
 		int instance{-1};
 		int priority{0};
 		unsigned queue_size{1};
@@ -305,6 +311,98 @@ static void wpl_to_mission_item(const WplLine &wpl, mission_item_s &mi)
 	if (!PX4_ISFINITE(mi.acceptance_radius) || mi.acceptance_radius <= 0.f) {
 		mi.acceptance_radius = 1.0f;
 	}
+}
+
+} // namespace
+
+namespace {
+
+static const struct orb_metadata *orb_meta_from_name(const char *topic_name)
+{
+	if (topic_name == nullptr) {
+		return nullptr;
+	}
+	const struct orb_metadata *const *topics = orb_get_topics();
+	const size_t n = orb_topics_count();
+	for (size_t i = 0; i < n; i++) {
+		const struct orb_metadata *m = topics[i];
+		if (m && m->o_name && (std::strcmp(m->o_name, topic_name) == 0)) {
+			return m;
+		}
+	}
+	return nullptr;
+}
+
+// Some PX4 versions include additional metadata like "size without padding".
+// Detect it at compile time without hard-depending on a specific PX4 uORB.h.
+template <typename T>
+static inline auto get_o_size_no_padding_impl(const T *m, int)
+	-> decltype(m->o_size_no_padding, uint32_t{})
+{
+	return static_cast<uint32_t>(m->o_size_no_padding);
+}
+
+template <typename T>
+static inline uint32_t get_o_size_no_padding_impl(const T *, ...)
+{
+	return 0u;
+}
+
+static inline uint32_t get_o_size_no_padding(const struct orb_metadata *m)
+{
+	return get_o_size_no_padding_impl(m, 0);
+}
+
+template <typename T>
+static inline auto get_o_fields_impl(const T *m, int) -> decltype(m->o_fields)
+{
+	return m->o_fields;
+}
+
+template <typename T>
+static inline const char *get_o_fields_impl(const T *, ...)
+{
+	return nullptr;
+}
+
+static inline const char *get_o_fields(const struct orb_metadata *m)
+{
+	return get_o_fields_impl(m, 0);
+}
+
+template <typename T>
+static inline auto get_message_hash_impl(const T *m, int)
+	-> decltype(m->message_hash, uint32_t{})
+{
+	return static_cast<uint32_t>(m->message_hash);
+}
+
+template <typename T>
+static inline uint32_t get_message_hash_impl(const T *, ...)
+{
+	return 0u;
+}
+
+static inline uint32_t get_message_hash(const struct orb_metadata *m)
+{
+	return get_message_hash_impl(m, 0);
+}
+
+template <typename T>
+static inline auto get_queue_size_impl(const T *m, int) -> decltype(m->o_queue, uint8_t{})
+{
+	return static_cast<uint8_t>(m->o_queue);
+}
+
+template <typename T>
+static inline uint8_t get_queue_size_impl(const T *, ...)
+{
+	return 0u;
+}
+
+static inline uint8_t get_queue_size(const struct orb_metadata *m)
+{
+	return get_queue_size_impl(m, 0);
 }
 
 } // namespace
@@ -630,22 +728,6 @@ static void maybe_force_geofence_ready(LockstepRuntime &rt, uint64_t time_us)
 // Generic uORB helper (topic lookup + queued publish)
 // -----------------------------------------------------------------------------
 
-static const struct orb_metadata *orb_meta_from_name(const char *topic_name)
-{
-	if (topic_name == nullptr) {
-		return nullptr;
-	}
-	const struct orb_metadata *const *topics = orb_get_topics();
-	const size_t n = orb_topics_count();
-	for (size_t i = 0; i < n; i++) {
-		const struct orb_metadata *m = topics[i];
-		if (m && m->o_name && (std::strcmp(m->o_name, topic_name) == 0)) {
-			return m;
-		}
-	}
-	return nullptr;
-}
-
 static int publish_queued_uorb(LockstepRuntime &rt)
 {
 	for (auto &p : rt.ext_pubs) {
@@ -666,6 +748,15 @@ static int publish_queued_uorb(LockstepRuntime &rt)
 				PX4_ERR("orb_advertise failed for %s", p.meta->o_name);
 				p.pending = false;
 				return -2;
+			}
+
+			if (p.requested_instance >= 0 && p.instance != p.requested_instance) {
+				PX4_ERR("orb_advertise_multi assigned instance %d but requested %d for %s",
+					p.instance,
+					p.requested_instance,
+					p.meta->o_name);
+				p.pending = false;
+				return -4;
 			}
 		} else {
 			if (orb_publish(p.meta, p.handle, p.buffer.data()) != 0) {
@@ -860,6 +951,47 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_step_uorb(px4_lockstep_handle_t handle,
 	return step_lockstep_common(*rt, time_us);
 }
 
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_topic_metadata(px4_lockstep_handle_t handle,
+                                                       const char *topic_name,
+                                                       const char **out_fields,
+                                                       uint32_t *out_size,
+                                                       uint32_t *out_size_no_padding,
+                                                       uint32_t *out_message_hash,
+                                                       uint8_t *out_queue_size)
+{
+	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
+	(void)rt;
+	if (!rt || (topic_name == nullptr) || (out_fields == nullptr) || (out_size == nullptr)
+	    || (out_size_no_padding == nullptr)) {
+		return -1;
+	}
+
+	const struct orb_metadata *meta = orb_meta_from_name(topic_name);
+	if (meta == nullptr) {
+		return -2;
+	}
+
+	if (out_message_hash) {
+		*out_message_hash = get_message_hash(meta);
+	}
+	if (out_queue_size) {
+		*out_queue_size = get_queue_size(meta);
+	}
+
+	const char *fields = get_o_fields(meta);
+	if (fields == nullptr) {
+		*out_fields = nullptr;
+		*out_size = static_cast<uint32_t>(meta->o_size);
+		*out_size_no_padding = get_o_size_no_padding(meta);
+		return -3;
+	}
+
+	*out_fields = fields;
+	*out_size = static_cast<uint32_t>(meta->o_size);
+	*out_size_no_padding = get_o_size_no_padding(meta);
+	return 0;
+}
+
 PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t handle,
 					 const char *topic_name,
 					 int32_t priority,
@@ -867,6 +999,26 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t 
 					 px4_lockstep_uorb_pub_t *out_pub_id,
 					 int32_t *out_instance,
 					 uint32_t *out_msg_size)
+{
+	return px4_lockstep_orb_create_publisher_ex(
+		handle,
+		topic_name,
+		priority,
+		queue_size,
+		-1, /* requested_instance */
+		out_pub_id,
+		out_instance,
+		out_msg_size);
+}
+
+PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher_ex(px4_lockstep_handle_t handle,
+					    const char *topic_name,
+					    int32_t priority,
+					    uint32_t queue_size,
+					    int32_t requested_instance,
+					    px4_lockstep_uorb_pub_t *out_pub_id,
+					    int32_t *out_instance,
+					    uint32_t *out_msg_size)
 {
 	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
 	if (!rt || (topic_name == nullptr) || (out_pub_id == nullptr)) {
@@ -883,7 +1035,8 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher(px4_lockstep_handle_t 
 	pub.meta = meta;
 	pub.priority = (priority > 0) ? priority : 0;
 	pub.queue_size = (queue_size > 0) ? queue_size : 1u;
-	pub.instance = -1;
+	pub.requested_instance = requested_instance;
+	pub.instance = (requested_instance >= 0) ? requested_instance : -1;
 	pub.handle = nullptr;
 	pub.pending = false;
 	pub.buffer.resize(meta->o_size);

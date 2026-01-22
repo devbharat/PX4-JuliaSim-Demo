@@ -111,6 +111,12 @@ bool ControlAllocator::init_lockstep()
 	return true;
 }
 
+void ControlAllocator::lockstep_update_params()
+{
+	updateParams();
+	parameters_updated();
+}
+
 void ControlAllocator::run_once()
 {
 	const bool prev = _lockstep;

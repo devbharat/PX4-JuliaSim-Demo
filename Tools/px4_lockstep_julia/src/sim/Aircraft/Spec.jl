@@ -202,6 +202,17 @@ Base.@kwdef struct RangefinderSpec <: AbstractSensorSpec
     uorb_instance::Int = 0
 end
 
+Base.@kwdef struct PX4ParamSpec
+    name::String
+    value::Union{Int32,Float32}
+end
+
+PX4ParamSpec(name::Symbol, value::Integer) = PX4ParamSpec(String(name), Int32(value))
+PX4ParamSpec(name::Symbol, value::AbstractFloat) = PX4ParamSpec(String(name), Float32(value))
+PX4ParamSpec(name::AbstractString, value::Integer) = PX4ParamSpec(String(name), Int32(value))
+PX4ParamSpec(name::AbstractString, value::AbstractFloat) = PX4ParamSpec(String(name), Float32(value))
+
+
 Base.@kwdef struct RadarSpec <: AbstractSensorSpec
     id::RadarId
     uorb_instance::Int = 0
@@ -224,6 +235,12 @@ Base.@kwdef struct PX4Spec
 
     """uORB pub/sub contract used by the PX4 bridge."""
     uorb_cfg::Autopilots.PX4UORBInterfaceConfig = Autopilots.iris_state_injection_interface()
+
+    """Optional PX4 parameter overrides applied at init-time."""
+    params::Vector{PX4ParamSpec} = PX4ParamSpec[]
+
+    """Derive and apply control allocator (CA_*) parameters from the aircraft spec."""
+    derive_ca_params::Bool = true
 
     """Edge-triggered actuator command semantics (PX4 internal detail)."""
     edge_trigger::Bool = false

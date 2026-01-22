@@ -34,12 +34,67 @@ typedef struct px4_lockstep_config_t {
 
 	// Enable and step the PX4 control allocator (mixing).
 	//
-	// If enabled, the lockstep harness will also configure a minimal
-	// multicopter actuator geometry (quad-X) via CA_* parameters at startup
-	// unless you already configured geometry via an airframe config/params.
+	// NOTE: The lockstep harness does **not** configure actuator geometry.
+	// Callers are expected to set CA_* parameters (rotor count/positions/KM, etc.)
+	// before stepping the lockstep runtime.
 	int32_t enable_control_allocator;      // 0/1
 	int32_t control_allocator_rate_hz;     // <=0 => step every tick
 } px4_lockstep_config_t;
+
+// -----------------------------------------------------------------------------
+// PX4 parameter set/get helpers
+// -----------------------------------------------------------------------------
+//
+// These are intentionally small wrappers over the PX4 parameter system so the
+// Julia-side simulator can configure PX4 deterministically from an aircraft spec.
+//
+// Returns 0 on success, <0 on error:
+//  -1: invalid arguments
+//  -2: unknown parameter
+//  -3: type mismatch
+//  -4: set/get failed
+
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_set_i32(px4_lockstep_handle_t handle,
+                                                  const char *name,
+                                                  int32_t value);
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_set_f32(px4_lockstep_handle_t handle,
+                                                  const char *name,
+                                                  float value);
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_get_i32(px4_lockstep_handle_t handle,
+                                                  const char *name,
+                                                  int32_t *out_value);
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_get_f32(px4_lockstep_handle_t handle,
+                                                  const char *name,
+                                                  float *out_value);
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_notify(px4_lockstep_handle_t handle);
+
+// -----------------------------------------------------------------------------
+// Pre-init parameter staging
+// -----------------------------------------------------------------------------
+//
+// These functions enqueue parameter changes that will be applied inside
+// px4_lockstep_create() *before* PX4 modules are initialized. This is useful
+// for deterministic startup configuration (e.g., CA_* geometry).
+//
+// Returns 0 on success, <0 on error:
+//  -1: invalid arguments
+//  -4: set failed
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_preinit_set_i32(const char *name,
+                                                          int32_t value);
+PX4_LOCKSTEP_EXPORT int px4_lockstep_param_preinit_set_f32(const char *name,
+                                                          float value);
+
+// -----------------------------------------------------------------------------
+// Control allocator param refresh (lockstep helper)
+// -----------------------------------------------------------------------------
+//
+// Force the control allocator to re-read its parameters immediately.
+// This avoids a global param_notify broadcast when only CA_* geometry changed.
+//
+// Returns 0 on success, <0 on error:
+//  -1: invalid arguments
+//  -2: control allocator not enabled
+PX4_LOCKSTEP_EXPORT int px4_lockstep_control_alloc_update_params(px4_lockstep_handle_t handle);
 
 // ABI compatibility
 //

@@ -407,7 +407,162 @@ static inline uint8_t get_queue_size(const struct orb_metadata *m)
 
 } // namespace
 
+namespace {
+
+struct PendingParam {
+	std::string name;
+	bool is_int;
+	int32_t i32;
+	float f32;
+};
+
+std::vector<PendingParam> g_preinit_params;
+
+int apply_param_i32(const char *name, int32_t value)
+{
+	if (!name) {
+		return -1;
+	}
+	param_t h = param_find(name);
+	if (h == PARAM_INVALID) {
+		PX4_WARN("param not found: %s", name);
+		return -2;
+	}
+	if (param_type(h) != PARAM_TYPE_INT32) {
+		return -3;
+	}
+	return (param_set(h, &value) == 0) ? 0 : -4;
+}
+
+int apply_param_f32(const char *name, float value)
+{
+	if (!name) {
+		return -1;
+	}
+	param_t h = param_find(name);
+	if (h == PARAM_INVALID) {
+		PX4_WARN("param not found: %s", name);
+		return -2;
+	}
+	if (param_type(h) != PARAM_TYPE_FLOAT) {
+		return -3;
+	}
+	return (param_set(h, &value) == 0) ? 0 : -4;
+}
+
+void apply_preinit_params()
+{
+	for (const auto &p : g_preinit_params) {
+		if (p.is_int) {
+			(void)apply_param_i32(p.name.c_str(), p.i32);
+		} else {
+			(void)apply_param_f32(p.name.c_str(), p.f32);
+		}
+	}
+	g_preinit_params.clear();
+}
+
+} // namespace
+
 extern "C" {
+
+// -----------------------------------------------------------------------------
+// PX4 parameter set/get helpers
+// -----------------------------------------------------------------------------
+
+int px4_lockstep_param_set_i32(px4_lockstep_handle_t handle, const char *name, int32_t value)
+{
+	if (!handle || !name) {
+		return -1;
+	}
+	return apply_param_i32(name, value);
+}
+
+int px4_lockstep_param_set_f32(px4_lockstep_handle_t handle, const char *name, float value)
+{
+	if (!handle || !name) {
+		return -1;
+	}
+	return apply_param_f32(name, value);
+}
+
+int px4_lockstep_param_get_i32(px4_lockstep_handle_t handle, const char *name, int32_t *out_value)
+{
+	if (!handle || !name || !out_value) {
+		return -1;
+	}
+	param_t h = param_find(name);
+	if (h == PARAM_INVALID) {
+		return -2;
+	}
+	if (param_type(h) != PARAM_TYPE_INT32) {
+		return -3;
+	}
+	return (param_get(h, out_value) == 0) ? 0 : -4;
+}
+
+int px4_lockstep_param_get_f32(px4_lockstep_handle_t handle, const char *name, float *out_value)
+{
+	if (!handle || !name || !out_value) {
+		return -1;
+	}
+	param_t h = param_find(name);
+	if (h == PARAM_INVALID) {
+		return -2;
+	}
+	if (param_type(h) != PARAM_TYPE_FLOAT) {
+		return -3;
+	}
+	return (param_get(h, out_value) == 0) ? 0 : -4;
+}
+
+int px4_lockstep_param_notify(px4_lockstep_handle_t handle)
+{
+	if (!handle) {
+		return -1;
+	}
+	param_notify_changes();
+	return 0;
+}
+
+int px4_lockstep_param_preinit_set_i32(const char *name, int32_t value)
+{
+	if (!name) {
+		return -1;
+	}
+	PendingParam p{};
+	p.name = name;
+	p.is_int = true;
+	p.i32 = value;
+	g_preinit_params.push_back(p);
+	return 0;
+}
+
+int px4_lockstep_param_preinit_set_f32(const char *name, float value)
+{
+	if (!name) {
+		return -1;
+	}
+	PendingParam p{};
+	p.name = name;
+	p.is_int = false;
+	p.f32 = value;
+	g_preinit_params.push_back(p);
+	return 0;
+}
+
+int px4_lockstep_control_alloc_update_params(px4_lockstep_handle_t handle)
+{
+	if (!handle) {
+		return -1;
+	}
+	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
+	if (!rt->control_alloc) {
+		return -2;
+	}
+	rt->control_alloc->lockstep_update_params();
+	return 0;
+}
 
 px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 {
@@ -458,25 +613,12 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	// Parameters: we keep things minimal, but control allocation needs some CA_* parameters.
 	// In normal PX4 these come from the airframe config file + Actuators setup.
-	// In lockstep we default to a simple quad-X geometry unless you already set these elsewhere.
+	// In lockstep the simulator is expected to configure CA_* parameters deterministically
+	// from the aircraft spec (via the exported px4_lockstep_param_set_* API).
 	(void)param_init();
 
 	auto set_param_i32 = [](const char *name, int32_t v) {
-		param_t h = param_find(name);
-		if (h == PARAM_INVALID) {
-			PX4_WARN("param not found: %s", name);
-			return;
-		}
-		(void)param_set(h, &v);
-	};
-
-	auto set_param_f32 = [](const char *name, float v) {
-		param_t h = param_find(name);
-		if (h == PARAM_INVALID) {
-			PX4_WARN("param not found: %s", name);
-			return;
-		}
-		(void)param_set(h, &v);
+		(void)apply_param_i32(name, v);
 	};
 
 	// Commander-related defaults for lockstep simulation.
@@ -494,21 +636,10 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 	if (rt->cfg.enable_control_allocator) {
 		// Enable dynamic control allocation.
 		set_param_i32("SYS_CTRL_ALLOC", 1);
-
-		// Minimal multicopter (CA_AIRFRAME=0) quad-X geometry.
-		// NOTE: these should eventually come from your sim/vehicle config.
-		set_param_i32("CA_AIRFRAME", 0);
-		set_param_i32("CA_ROTOR_COUNT", 4);
-
-		const float km_ccw = +0.05f;
-		const float km_cw  = -0.05f;
-
-		// Rotor order/geometry matching the Iris defaults (see 10016_none_iris).
-		set_param_f32("CA_ROTOR0_PX", +0.1515f); set_param_f32("CA_ROTOR0_PY", +0.2450f); set_param_f32("CA_ROTOR0_PZ", 0.f); set_param_f32("CA_ROTOR0_KM", km_ccw);
-		set_param_f32("CA_ROTOR1_PX", -0.1515f); set_param_f32("CA_ROTOR1_PY", -0.1875f); set_param_f32("CA_ROTOR1_PZ", 0.f); set_param_f32("CA_ROTOR1_KM", km_ccw);
-		set_param_f32("CA_ROTOR2_PX", +0.1515f); set_param_f32("CA_ROTOR2_PY", -0.2450f); set_param_f32("CA_ROTOR2_PZ", 0.f); set_param_f32("CA_ROTOR2_KM", km_cw);
-		set_param_f32("CA_ROTOR3_PX", -0.1515f); set_param_f32("CA_ROTOR3_PY", +0.1875f); set_param_f32("CA_ROTOR3_PZ", 0.f); set_param_f32("CA_ROTOR3_KM", km_cw);
 	}
+
+	// Apply any pre-init parameters queued by the host (e.g. CA_* geometry).
+	apply_preinit_params();
 
 	// Create PX4 modules (do NOT start their tasks).
 	if (rt->cfg.enable_commander) {

@@ -2,15 +2,15 @@
 
 Aircraft composition / build layer.
 
-Phase 1 intent
+Phase 3 intent
 --------------
 This module introduces a thin *spec -> engine* builder so that:
 - the canonical engine (`Sim.Runtime.Engine`) remains the single run loop
 - aircraft configuration can become declarative and instance-based in later phases
 
-In Phase 1, the builder still targets the Iris workflow, but the spec contains
-explicit component instances (motors, batteries, sensors) and simple connection
-metadata (power buses), setting the stage for multi-aircraft composition.
+In Phase 3, the builder targets the Iris workflow and generic multirotors, with
+spec-driven PX4 parameter injection (allocator geometry) layered on top of the
+Phase 1 instance + wiring model.
 """
 module Aircraft
 
@@ -18,7 +18,7 @@ include("Spec.jl")
 include("Validate.jl")
 include("Build.jl")
 
-export PX4Spec, TimelineSpec, PlantSpec, AircraftSpec
+export PX4Spec, PX4ParamSpec, TimelineSpec, PlantSpec, AircraftSpec
 
 # Composition specs (Phase 1)
 export AirframeSpec, PropulsionSpec

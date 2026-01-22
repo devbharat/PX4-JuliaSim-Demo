@@ -125,6 +125,20 @@ function validate_spec(
             throw(ArgumentError("build_engine(mode=:replay) requires recording_in"))
     end
 
+    # -----------------------------
+    # PX4 params (Phase 3)
+    # -----------------------------
+    if !isempty(spec.px4.params)
+        names = String[]
+        for p in spec.px4.params
+            nm = strip(p.name)
+            isempty(nm) && throw(ArgumentError("px4.params contains an empty parameter name"))
+            push!(names, nm)
+        end
+        length(unique(names)) == length(names) ||
+            throw(ArgumentError("Duplicate PX4 parameter names in px4.params"))
+    end
+
     # Live / record require a mission file for the Iris workflow.
     if mode !== :replay && spec.name === :iris
         if spec.px4.mission_path === nothing

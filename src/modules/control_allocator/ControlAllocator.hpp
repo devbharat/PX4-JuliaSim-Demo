@@ -113,6 +113,7 @@ public:
 	void enable_lockstep(bool enable) { _lockstep = enable; }
 	bool init_lockstep();
 	void run_once();
+	void lockstep_update_params();
 
 private:
 

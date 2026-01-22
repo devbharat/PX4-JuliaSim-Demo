@@ -24,6 +24,8 @@ using LinearAlgebra
 using StaticArrays
 
 export AbstractVehicleModel,
+    MotorMap,
+    ServoMap,
     AbstractActuatorModel,
     DirectActuators,
     FirstOrderActuators,
@@ -31,7 +33,10 @@ export AbstractVehicleModel,
     ActuatorCommand,
     VehicleInstance,
     QuadrotorParams,
+    GenericMultirotor,
     IrisQuadrotor,
+    map_motors,
+    map_servos,
     step_actuators!,
     mass,
     inertia_diag,
@@ -48,6 +53,44 @@ support multiple airframes without changing the sim engine.
 Base.@kwdef struct ActuatorCommand
     motors::SVector{12,Float64} = zero(SVector{12,Float64})
     servos::SVector{8,Float64} = zero(SVector{8,Float64})
+end
+
+############################
+# Actuator channel mapping
+############################
+
+"""Mapping from PX4 motor output channels (1..12) to physical propulsors.
+
+The plant state stores actuator outputs in fixed-size ABI arrays (`motors_y::SVector{12}`),
+but the physical vehicle may have:
+
+- fewer propulsors than channels (e.g., 4 motors)
+- non-trivial wiring (e.g., motor #1 driven by channel 5)
+
+`MotorMap{N}` defines how to read the duty signal for each of the `N` physical propulsors.
+
+Important
+---------
+`FaultState.motor_disable_mask` is defined over **physical propulsors** (1..N), not over
+PX4 output channels. The mapping only affects which actuator channel drives each propulsor.
+"""
+struct MotorMap{N}
+    motor_channel::SVector{N,Int}
+end
+
+"""Mapping from PX4 servo output channels (1..8) to physical control surfaces."""
+struct ServoMap{M}
+    servo_channel::SVector{M,Int}
+end
+
+"""Map ABI motor array -> physical motor duties (size N)."""
+@inline function map_motors(mm::MotorMap{N}, motors::SVector{12,Float64}) where {N}
+    return SVector{N,Float64}(ntuple(i -> motors[mm.motor_channel[i]], N))
+end
+
+"""Map ABI servo array -> physical servo commands (size M)."""
+@inline function map_servos(sm::ServoMap{M}, servos::SVector{8,Float64}) where {M}
+    return SVector{M,Float64}(ntuple(i -> servos[sm.servo_channel[i]], M))
 end
 
 @inline function _finite_or(x::Float64, fallback::Float64)
@@ -264,7 +307,7 @@ end
 end
 
 ############################
-# Quadrotor baseline model
+# Multirotor baseline model
 ############################
 
 """Quadrotor physical parameters.
@@ -285,22 +328,37 @@ Base.@kwdef struct QuadrotorParams{N}
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
 end
 
-"""A minimal Iris quadrotor dynamics model.
+"""A minimal N-propulsor multirotor rigid-body model.
 
-This is intentionally low-fidelity (rigid-body + simple drag + rotor thrust moments) but
-it is stable and high-signal for closing the loop with PX4. It is meant to be replaced
-by higher-fidelity aero/powertrain models without changing the sim engine.
+This is intentionally low-fidelity (rigid-body + simple drag + thrust moments) but it is:
+- stable and high-signal for closed-loop PX4 testing
+- allocation-free in the hot path
+
+Phase 2 generalizes the Iris-only model to arbitrary propulsor counts `N`.
+
+Notes
+-----
+* Thrust is assumed along **-body Z** for all propulsors (classic multirotor). Later phases
+  generalize this to arbitrary axes for VTOL/twin-prop layouts.
 """
+struct GenericMultirotor{N} <: AbstractVehicleModel
+    params::QuadrotorParams{N}
+end
+
+"""Convenience alias: Iris is a 4-propulsor multirotor."""
 struct IrisQuadrotor <: AbstractVehicleModel
     params::QuadrotorParams{4}
 end
 
 """Vehicle mass (kg)."""
+mass(m::GenericMultirotor) = m.params.mass
 mass(m::IrisQuadrotor) = m.params.mass
 
 """Vehicle inertia diagonal (kg*m^2) in body axes."""
+inertia_diag(m::GenericMultirotor) = m.params.inertia_diag
 inertia_diag(m::IrisQuadrotor) = m.params.inertia_diag
 
+"""Default Iris constructor (kept for backwards compatibility)."""
 function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
     if params === nothing
         rotor_pos = SVector(
@@ -314,26 +372,16 @@ function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
     return IrisQuadrotor(params)
 end
 
-"""Rigid-body dynamics for the quadrotor.
-
-Inputs:
-* `u::Propulsion.RotorOutput{4}`: per-rotor thrust/shaft torque
-"""
-function dynamics(
-    model::IrisQuadrotor,
+@inline function _multirotor_dynamics(
+    p::QuadrotorParams{N},
     env::EnvironmentModel,
     t::Float64,
     x::RigidBodyState,
-    u,
+    u::RotorOutput{N},
     wind_ned::Vec3,
-)
-    p = model.params
+) where {N}
     m = p.mass
     I = p.inertia_diag
-
-    if !(u isa RotorOutput{4})
-        error("IrisQuadrotor expects RotorOutput{4}; attach a propulsion model.")
-    end
 
     thrusts = u.thrust_n
     shaft_torques = u.shaft_torque_nm
@@ -357,7 +405,7 @@ function dynamics(
 
     # Moments from rotors (lever arm cross thrust + yaw reaction torque).
     τ = vec3(0.0, 0.0, 0.0)
-    for i = 1:4
+    @inbounds for i = 1:N
         r = p.rotor_pos_body[i]
         Ti = thrusts[i]
         # Force vector for each rotor in body.
@@ -369,7 +417,7 @@ function dynamics(
 
     # Angular dynamics with simple damping.
     ω = x.ω_body
-    Iω = vec3(I[1]*ω[1], I[2]*ω[2], I[3]*ω[3])
+    Iω = vec3(I[1] * ω[1], I[2] * ω[2], I[3] * ω[3])
     ω_cross_Iω = cross(ω, Iω)
     τ_damped = τ - p.angular_damping .* ω
     ω_dot = vec3(
@@ -384,6 +432,30 @@ function dynamics(
         q_dot = quat_deriv(x.q_bn, ω),
         ω_dot = ω_dot,
     )
+end
+
+"""Rigid-body dynamics for the generic multirotor."""
+function dynamics(
+    model::GenericMultirotor{N},
+    env::EnvironmentModel,
+    t::Float64,
+    x::RigidBodyState,
+    u::RotorOutput{N},
+    wind_ned::Vec3,
+) where {N}
+    return _multirotor_dynamics(model.params, env, t, x, u, wind_ned)
+end
+
+"""Rigid-body dynamics for Iris (backwards compatible wrapper)."""
+function dynamics(
+    model::IrisQuadrotor,
+    env::EnvironmentModel,
+    t::Float64,
+    x::RigidBodyState,
+    u::RotorOutput{4},
+    wind_ned::Vec3,
+)
+    return _multirotor_dynamics(model.params, env, t, x, u, wind_ned)
 end
 
 end # module Vehicles

@@ -262,167 +262,33 @@ function simulate_iris_mission(;
     telemetry = Runtime.NullTelemetry(),
     log_sinks = nothing,
 )
-    integ = integrator isa Symbol ? iris_integrator(integrator) : integrator
-
-    if mode === :replay
-        recording_in === nothing &&
-            error("simulate_iris_mission(mode=:replay) requires recording_in")
-        rec = Recording.read_recording(recording_in)
-
-        # Replay sources
-        traces = Recording.tier0_traces(rec)
-        scn_tr = try
-            Recording.scenario_traces(rec)
-        catch e
-            error(
-                "Recording is missing scenario streams needed for replay (faults/ap_cmd/landed). " *
-                "Re-record with record_faults_evt=true.\n\nOriginal error: $e",
-            )
-        end
-
-        wind_dist = hasproperty(scn_tr, :wind_dist) ? scn_tr.wind_dist : nothing
-        scenario = Sources.ReplayScenarioSource(
-            scn_tr.ap_cmd,
-            scn_tr.landed,
-            scn_tr.faults;
-            wind_dist = wind_dist,
-        )
-        wind = Sources.ReplayWindSource(traces.wind_ned)
-        autopilot = Sources.ReplayAutopilotSource(traces.cmd)
-
-        env = iris_default_env_replay(home = home)
-        vehicle = iris_default_vehicle(; x0 = rec.plant0.rb)  # keep params; state comes from recording
-        battery = iris_default_battery()
-        dynfun = iris_dynfun(env, vehicle, battery; contact = contact)
-
-        # Plant initial state comes from recording.
-        plant0 = rec.plant0
-
-        eng = simulate(
-            mode = :replay,
-            timeline = rec.timeline,
-            plant0 = plant0,
-            dynfun = dynfun,
-            integrator = integ,
-            autopilot = autopilot,
-            wind = wind,
-            scenario = scenario,
-            estimator = Sources.NullEstimatorSource(),
-            telemetry = telemetry,
-            recorder = Recording.NullRecorder(),
-            log_sinks = log_sinks,
-        )
-        return eng
-    end
-
-    # Live or record uses PX4.
-    mission_path === nothing &&
-        error("No mission file provided (set mission_path or PX4_LOCKSTEP_MISSION)")
-
-    # Build environment, vehicle, components.
-    env = iris_default_env_live(home = home)
-    vehicle = iris_default_vehicle()
-    battery = iris_default_battery()
-    scenario_obj = iris_default_scenario()
-    estimator_obj = iris_default_estimator(dt_autopilot_s)
-    dynfun = iris_dynfun(env, vehicle, battery; contact = contact)
-
-    scenario_src = Sources.LiveScenarioSource(scenario_obj)
-    wind_src = Sources.LiveWindSource(env.wind, Random.Xoshiro(seed), dt_wind_s)
-    est_src =
-        Sources.LiveEstimatorSource(estimator_obj, Random.Xoshiro(seed + 1), dt_autopilot_s)
-
-    # Autopilot (PX4) initialization.
-    ap = Autopilots.init!(;
-        config = lockstep_config,
+    # Phase 0: route the existing Iris workflow through the new spec-based builder.
+    spec = Aircraft.iris_spec(;
+        mission_path = mission_path,
         libpath = libpath,
-        home = home,
-        edge_trigger = false,
+        lockstep_config = lockstep_config,
         uorb_cfg = uorb_cfg,
+        t_end_s = t_end_s,
+        dt_autopilot_s = dt_autopilot_s,
+        dt_wind_s = dt_wind_s,
+        dt_log_s = dt_log_s,
+        dt_phys_s = dt_phys_s,
+        seed = seed,
+        integrator = integrator,
+        home = home,
+        contact = contact,
+        telemetry = telemetry,
+        log_sinks = log_sinks,
     )
-    try
-        Autopilots.autopilot_step(
-            ap,
-            UInt64(0),
-            vehicle.state.pos_ned,
-            vehicle.state.vel_ned,
-            vehicle.state.q_bn,
-            vehicle.state.ω_body,
-            Autopilots.AutopilotCommand();
-            landed = true,
-            battery = Powertrain.BatteryStatus(),
-        )
-        Autopilots.load_mission!(ap, mission_path)
-        autopilot_src = Sources.LiveAutopilotSource(ap)
 
-        # Timeline includes scenario AtTime events as boundaries.
-        timeline = iris_timeline(
-            t_end_s = t_end_s,
-            dt_autopilot_s = dt_autopilot_s,
-            dt_wind_s = dt_wind_s,
-            dt_log_s = dt_log_s,
-            dt_phys_s = dt_phys_s,
-            scenario_source = scenario_src,
-        )
-
-        plant0 = Plant.init_plant_state(
-            vehicle.state,
-            vehicle.motor_actuators,
-            vehicle.servo_actuators,
-            vehicle.propulsion,
-            battery,
-        )
-
-        if mode === :record
-            rec_sink = Recording.InMemoryRecorder()
-            eng = simulate(
-                mode = :record,
-                timeline = timeline,
-                plant0 = plant0,
-                dynfun = dynfun,
-                integrator = integ,
-                autopilot = autopilot_src,
-                wind = wind_src,
-                scenario = scenario_src,
-                estimator = est_src,
-                telemetry = telemetry,
-                recorder = rec_sink,
-                log_sinks = log_sinks,
-            )
-
-
-            rec = Recording.Tier0Recording(
-                timeline = timeline,
-                plant0 = plant0,
-                recorder = rec_sink,
-                meta = Dict{Symbol,Any}(:home => home, :mission => mission_path),
-            )
-
-            if recording_out !== nothing
-                Recording.write_recording(recording_out, rec)
-            end
-            return rec
-        end
-
-        # Live (no recording)
-        eng = simulate(
-            mode = :live,
-            timeline = timeline,
-            plant0 = plant0,
-            dynfun = dynfun,
-            integrator = integ,
-            autopilot = autopilot_src,
-            wind = wind_src,
-            scenario = scenario_src,
-            estimator = est_src,
-            telemetry = telemetry,
-            recorder = Recording.NullRecorder(),
-            log_sinks = log_sinks,
-        )
-        return eng
-    finally
-        Autopilots.close!(ap)
-    end
+    return Aircraft.build_engine(
+        spec;
+        mode = mode,
+        recording_in = recording_in,
+        recording_out = recording_out,
+        telemetry = telemetry,
+        log_sinks = log_sinks,
+    )
 end
 
 export iris_default_home,

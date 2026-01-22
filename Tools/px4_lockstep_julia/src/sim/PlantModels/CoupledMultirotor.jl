@@ -55,7 +55,7 @@ component objects used elsewhere in the codebase (actuators, propulsion, battery
 The canonical truth during integration is the `PlantState` passed to the RHS; the
 mutable component objects are treated as *parameters*.
 """
-struct CoupledMultirotorModel{M,E,C,AM,AS,P,B}
+struct CoupledMultirotorModel{M,E,C,AM,AS,P,B,MM,SM}
     model::M
     env::E
     contact::C
@@ -63,6 +63,42 @@ struct CoupledMultirotorModel{M,E,C,AM,AS,P,B}
     servo_actuators::AS
     propulsion::P
     battery::B
+    motor_map::MM
+    servo_map::SM
+end
+
+"""Convenience constructor with default identity motor mapping.
+
+This preserves backwards compatibility with the Phase 0/1 call sites where the
+physical propulsor index `i` corresponded to PX4 motor output channel `i`.
+
+For configurable airframes, prefer passing an explicit `motor_map` derived from the
+aircraft spec.
+"""
+function CoupledMultirotorModel(
+    model,
+    env,
+    contact,
+    motor_actuators,
+    servo_actuators,
+    propulsion::Propulsion.QuadRotorSet{N},
+    battery;
+    motor_map::Vehicles.MotorMap{N} = Vehicles.MotorMap{N}(
+        SVector{N,Int}(ntuple(i -> i, N)),
+    ),
+    servo_map = nothing,
+) where {N}
+    return CoupledMultirotorModel(
+        model,
+        env,
+        contact,
+        motor_actuators,
+        servo_actuators,
+        propulsion,
+        battery,
+        motor_map,
+        servo_map,
+    )
 end
 
 """Legacy name retained for incremental migration.
@@ -602,6 +638,7 @@ function _eval_propulsion_and_bus(
     t::Float64,
     x::PlantState{N},
     u::PlantInput,
+    motor_map::Vehicles.MotorMap{N},
 ) where {N}
     # Atmosphere expects MSL altitude.
     alt_msl_m = env.origin.alt_msl_m - x.rb.pos_ned[3]
@@ -613,12 +650,13 @@ function _eval_propulsion_and_bus(
     Vax = -Float64(v_air_body[3])
 
     # Apply sample-and-hold motor disable faults by forcing duty to 0.
+    #
+    # Important: motor channel mapping is explicit so that "motor #i" is a physical
+    # propulsor index (1..N), not a PX4 output channel.
     fstate = u.faults
+    duties_cmd = Vehicles.map_motors(motor_map, x.motors_y)
     duties = SVector{N,Float64}(
-        ntuple(
-            i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(x.motors_y[i], 0.0, 1.0)),
-            N,
-        ),
+        ntuple(i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(duties_cmd[i], 0.0, 1.0)), N),
     )
 
     soc = x.batt_soc
@@ -695,7 +733,7 @@ function plant_outputs(
         error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
 
     rot_out, _ωdot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map)
     batt = _battery_status_from_state(
         f.battery,
         x.batt_soc,
@@ -734,7 +772,7 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput
         error("CoupledMultirotorModel currently supports QuadRotorSet{$N} propulsion")
 
     rot_out, ω_dot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u)
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map)
 
     # Rigid-body dynamics.
     d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out, u.wind_ned)

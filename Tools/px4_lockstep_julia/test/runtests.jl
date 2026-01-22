@@ -23,6 +23,12 @@ include("uorb_injection.jl")
 include("compare_integrators.jl")
 include("record_replay_engine.jl")
 
+# AircraftSpec scaffolding (Phase 0) checks.
+include("aircraft_spec_iris_parity.jl")
+
+# Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
+include("multirotor_motor_map.jl")
+
 """Return the geodesic rotation error (rad) between two quaternions.
 
 Quaternions are treated as equivalent up to sign (q == -q).

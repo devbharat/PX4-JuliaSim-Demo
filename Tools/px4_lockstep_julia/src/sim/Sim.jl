@@ -59,6 +59,10 @@ include("Recording/Recording.jl")
 include("Sources/Sources.jl")
 
 
+# Aircraft composition layer (Phase 0 scaffolding)
+include("Aircraft/Aircraft.jl")
+
+
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")
 

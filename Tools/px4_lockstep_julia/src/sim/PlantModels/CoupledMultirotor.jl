@@ -639,6 +639,7 @@ function _eval_propulsion_and_bus(
     x::PlantState{N},
     u::PlantInput,
     motor_map::Vehicles.MotorMap{N},
+    axis_b::SVector{N,Vec3},
 ) where {N}
     # Atmosphere expects MSL altitude.
     alt_msl_m = env.origin.alt_msl_m - x.rb.pos_ned[3]
@@ -647,7 +648,6 @@ function _eval_propulsion_and_bus(
     # Air-relative velocity in body frame.
     v_air_ned = u.wind_ned - x.rb.vel_ned
     v_air_body = quat_rotate_inv(x.rb.q_bn, v_air_ned)
-    Vax = -Float64(v_air_body[3])
 
     # Apply sample-and-hold motor disable faults by forcing duty to 0.
     #
@@ -686,8 +686,12 @@ function _eval_propulsion_and_bus(
     I_bus_total = 0.0
 
     @inbounds for i = 1:N
+        # Axial inflow component along the propulsor thrust direction (Phase 4).
+        # Convention: axis_b points along the propulsor axis such that F = -T * axis_b.
+        ai = axis_b[i]
+        Vax_i = -Float64(v_air_body[1] * ai[1] + v_air_body[2] * ai[2] + v_air_body[3] * ai[3])
         Ti, Qi, ωdot_i, Ii, Ibus_i =
-            _motorprop_unit_eval(p.units[i], x.rotor_ω[i], duties[i], V_bus, ρ, Vax)
+            _motorprop_unit_eval(p.units[i], x.rotor_ω[i], duties[i], V_bus, ρ, Vax_i)
         thrust[i] = Ti
         # Own yaw reaction sign here (single source of truth).
         torque[i] = p.rotor_dir[i] * Qi
@@ -733,7 +737,7 @@ function plant_outputs(
         error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
 
     rot_out, _ωdot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map)
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map, f.model.params.rotor_axis_body)
     batt = _battery_status_from_state(
         f.battery,
         x.batt_soc,
@@ -772,7 +776,7 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput
         error("CoupledMultirotorModel currently supports QuadRotorSet{$N} propulsion")
 
     rot_out, ω_dot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map)
+        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map, f.model.params.rotor_axis_body)
 
     # Rigid-body dynamics.
     d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out, u.wind_ned)

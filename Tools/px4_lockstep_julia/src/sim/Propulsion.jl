@@ -29,8 +29,7 @@ export ESCParams,
     MotorPropUnit,
     RotorOutput,
     QuadRotorSet,
-    default_iris_quadrotor_set,
-    step_propulsion!
+    default_iris_quadrotor_set
 
 ############################
 # Type hierarchy
@@ -356,59 +355,6 @@ Returns (thrust_N, shaft_torque_Nm, ω_rad_s, motor_current_A, bus_current_A).
 
     I_bus = (d * I_m) / max(1e-6, esc.η)
     return T, Q, ω_new, I_m, I_bus
-end
-
-"""Step a multirotor propulsion set.
-
-
-Inputs:
-* `ω_rad_s` : current rotor speeds (rad/s) per rotor (SVector length N)
-* `duties`  : normalized [0..1] per rotor (SVector length N)
-* `V_bus`   : battery bus voltage (V)
-* `ρ`       : air density at vehicle location (kg/m^3)
-* `v_air_body` : relative air velocity in body frame (m/s)
-* `dt`      : integration step (s)
-
-Returns a `RotorOutput{N}` with the updated `ω_rad_s`.
-"""
-function step_propulsion!(
-    p::QuadRotorSet{N},
-    ω_rad_s::SVector{N,Float64},
-    duties::SVector{N,Float64},
-    V_bus::Float64,
-    ρ::Float64,
-    v_air_body::Vec3,
-    dt::Float64,
-) where {N}
-    # Avoid per-tick heap allocations: use stack-friendly static buffers.
-    thrust = MVector{N,Float64}(undef)
-    torque = MVector{N,Float64}(undef)
-    omega = MVector{N,Float64}(undef)
-    imotor = MVector{N,Float64}(undef)
-    Ibus_total = 0.0
-
-    # Axial inflow along rotor thrust direction (body -Z).
-    # Body axes are X fwd, Y right, Z down, so thrust is along -Z and Vax = -v_air_body.z.
-    Vax = -Float64(v_air_body[3])
-
-    @inbounds for i = 1:N
-        Ti, Qi, ωi, Ii, Ibus =
-            _step_unit(p.units[i], ω_rad_s[i], duties[i], V_bus, ρ, Vax, dt)
-        thrust[i] = Ti
-        # Own yaw reaction torque sign here (single source of truth).
-        torque[i] = p.rotor_dir[i] * Qi
-        omega[i] = ωi
-        imotor[i] = Ii
-        Ibus_total += Ibus
-    end
-
-    return RotorOutput{N}(
-        thrust_n = SVector{N,Float64}(thrust),
-        shaft_torque_nm = SVector{N,Float64}(torque),
-        ω_rad_s = SVector{N,Float64}(omega),
-        motor_current_a = SVector{N,Float64}(imotor),
-        bus_current_a = Ibus_total,
-    )
 end
 
 end # module Propulsion

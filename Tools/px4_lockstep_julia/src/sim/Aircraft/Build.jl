@@ -140,10 +140,28 @@ function _build_vehicle(spec::AircraftSpec; x0_override::Union{Nothing,RigidBody
     length(a.rotor_pos_body_m) == N ||
         error("airframe.rotor_pos_body_m length=$(length(a.rotor_pos_body_m)) must match actuation.motors length=$(N)")
     rotor_pos = SVector{N,Vec3}(ntuple(i -> a.rotor_pos_body_m[i], N))
+
+    # Propulsor axes (Phase 4): optional spec field, normalized here.
+    axis_src = a.rotor_axis_body_m
+    length(axis_src) == N ||
+        error("airframe.rotor_axis_body_m length=$(length(axis_src)) must match actuation.motors length=$(N)")
+    rotor_axis = SVector{N,Vec3}(
+        ntuple(
+            i -> begin
+                v = axis_src[i]
+                n2 = v[1] * v[1] + v[2] * v[2] + v[3] * v[3]
+                n2 > 1e-12 || error("airframe.rotor_axis_body_m[$i] is near-zero: $v")
+                invn = inv(sqrt(n2))
+                v .* invn
+            end,
+            N,
+        ),
+    )
     params = Vehicles.QuadrotorParams{N}(
         mass = a.mass_kg,
         inertia_diag = a.inertia_diag_kgm2,
         rotor_pos_body = rotor_pos,
+        rotor_axis_body = rotor_axis,
         linear_drag = a.linear_drag,
         angular_damping = a.angular_damping,
     )
@@ -195,6 +213,11 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
     pos = spec.airframe.rotor_pos_body_m
     length(pos) == N || error("Cannot derive CA params: rotor_pos_body_m length != motor count")
 
+    # Optional rotor/propulsor axes (Phase 4). Defaults to classic multirotor axis_b=(0,0,1)
+    # so the thrust vector (force) points along -Z.
+    axis_src = spec.airframe.rotor_axis_body_m
+    length(axis_src) == N || error("Cannot derive CA params: rotor_axis_body_m length != motor count")
+
     km_mag = spec.airframe.propulsion.km_m
     rotor_dir = vehicle.propulsion.rotor_dir
 
@@ -205,10 +228,21 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
 
     for i in 1:N
         p = pos[i]
+        a = axis_src[i]
+        n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
+        n2 > 1e-12 || error("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a")
+        invn = inv(sqrt(n2))
+        axis_b = a .* invn
+        # PX4 CA_ROTOR*_A* expects the *thrust vector direction* in body frame.
+        # Our convention stores propulsor axis such that F = -T * axis_b.
+        axis_thrust = -axis_b
         push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_PX", Float32(p[1])))
         push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_PY", Float32(p[2])))
         push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_PZ", Float32(p[3])))
         push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_KM", Float32(km_mag * rotor_dir[i])))
+        push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_AX", Float32(axis_thrust[1])))
+        push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_AY", Float32(axis_thrust[2])))
+        push!(params, PX4ParamSpec("CA_ROTOR$(i-1)_AZ", Float32(axis_thrust[3])))
     end
 
     return params
@@ -243,6 +277,12 @@ function _debug_px4_params!(ap::Autopilots.PX4LockstepAutopilot, params::Vector{
         println("  ", p.name, " = ", value)
     end
     return nothing
+end
+
+
+@inline function _is_ca_axis_param(name::AbstractString)::Bool
+    # PX4 CA rotor axis params: CA_ROTOR<i>_AX / _AY / _AZ
+    return startswith(name, "CA_ROTOR") && (endswith(name, "_AX") || endswith(name, "_AY") || endswith(name, "_AZ"))
 end
 
 function _spec_summary(spec::AircraftSpec)::String
@@ -429,8 +469,15 @@ function build_aircraft_instance(
     # Explicit overrides win.
     append!(px4_params, spec.px4.params)
 
+    # Some PX4 branches do not expose CA_ROTOR*_A* parameters (tilt/axis support). We
+    # therefore stage those as *optional* and apply them after PX4 init if they exist.
+    axis_params = PX4ParamSpec[]
     for p in px4_params
-        param_preinit_set!(p.name, p.value)
+        if _is_ca_axis_param(p.name)
+            push!(axis_params, p)
+        else
+            param_preinit_set!(p.name, p.value)
+        end
     end
 
     # PX4 autopilot (lockstep) init.
@@ -441,6 +488,27 @@ function build_aircraft_instance(
         uorb_cfg = spec.px4.uorb_cfg,
         edge_trigger = spec.px4.edge_trigger,
     )
+
+    # Apply optional CA_ROTOR*_A* params if the PX4 build supports them (Phase 4.3).
+    axis_applied = false
+    if !isempty(axis_params)
+        for p in axis_params
+            # param_get throws if param doesn't exist; treat that as "not supported".
+            supported = try
+                _ = param_get(ap.handle, p.name)
+                true
+            catch
+                false
+            end
+            if supported
+                param_set!(ap.handle, p.name, p.value)
+                axis_applied = true
+            end
+        end
+        # Reload CA params without a global param_notify.
+        (axis_applied && spec.px4.lockstep_config.enable_control_allocator != 0) &&
+            control_alloc_update_params!(ap.handle)
+    end
 
     # Only broadcast a parameter update if explicit overrides were provided.
     isempty(spec.px4.params) || param_notify!(ap.handle)

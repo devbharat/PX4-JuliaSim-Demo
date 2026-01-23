@@ -53,3 +53,45 @@ Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 
 Override paths/flags by exporting `PX4_LOCKSTEP_LIB`, `PX4_LOCKSTEP_MISSION`,
 or `JULIA_DEPOT_PATH`.
+
+## Iris multi-altitude sweep helper
+
+Run multiple missions at increasing home altitude offsets and write a CSV per run:
+
+```bash
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh 70 1000 4 .
+```
+
+Args: `T_END_S`, `ALT_STEP_M`, `COUNT`, `OUT_DIR`, `PARALLEL`, `PLOT`
+(defaults: `70`, `1000`, `4`, repo root, `0`, `0`).
+
+To generate overlay plots automatically, pass a nonzero `PLOT` arg:
+
+```bash
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh 70 1000 4 . 1 1
+```
+
+## Overlay plot helper
+
+Overlay multiple logs (e.g. from the sweep) to visualize trends:
+
+```bash
+python Tools/px4_lockstep_julia/scripts/plot_sim_log_overlay.py \
+  --log sim_log_alt_488m.csv \
+  --log sim_log_alt_1488m.csv \
+  --log sim_log_alt_2488m.csv \
+  --log sim_log_alt_3488m.csv \
+  --output sim_plot_overlay.png
+```
+
+Add `--traj-output` to also generate a trajectory/altitude overlay plot:
+
+```bash
+python Tools/px4_lockstep_julia/scripts/plot_sim_log_overlay.py \
+  --log sim_log_alt_488m.csv \
+  --log sim_log_alt_1488m.csv \
+  --log sim_log_alt_2488m.csv \
+  --log sim_log_alt_3488m.csv \
+  --output sim_plot_overlay.png \
+  --traj-output sim_plot_trajectory_overlay.png
+```

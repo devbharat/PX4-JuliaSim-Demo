@@ -26,6 +26,7 @@ using StaticArrays
 export AbstractVehicleModel,
     MotorMap,
     ServoMap,
+    PropulsorLayout,
     AbstractActuatorModel,
     DirectActuators,
     FirstOrderActuators,
@@ -41,6 +42,34 @@ export AbstractVehicleModel,
     mass,
     inertia_diag,
     dynamics
+
+"""Propulsor layout geometry (Phase 4).
+
+This is the geometric definition of how propulsors are mounted on the vehicle.
+
+Fields
+------
+* `pos_b[i]`  : propulsor position in body frame (meters)
+* `axis_b[i]` : unit propulsor axis in body frame
+* `spin_dir[i]`: reaction torque sign (+1/-1); included for completeness
+
+Conventions
+-----------
+Body axes are **FRD**: X forward, Y right, Z down.
+
+`axis_b[i]` is defined such that the thrust force applied to the vehicle is:
+
+```
+F_i = -T_i * axis_b[i]
+```
+
+For a classic multirotor with thrust along **-body Z**, `axis_b = (0,0,1)`.
+"""
+struct PropulsorLayout{N}
+    pos_b::SVector{N,Vec3}
+    axis_b::SVector{N,Vec3}
+    spin_dir::SVector{N,Float64}
+end
 
 """Actuator command packet.
 
@@ -313,7 +342,9 @@ end
 """Quadrotor physical parameters.
 
 Conventions:
-* Rotor thrust acts along **-body Z** (upwards in NED).
+* Rotor `i` produces thrust magnitude `T_i >= 0`.
+* The thrust force applied to the vehicle is `F_i = -T_i * rotor_axis_body[i]`.
+  - Classic multirotor: `rotor_axis_body[i] = (0,0,1)` so thrust is along **-body Z**.
 * Rotor positions are in body coordinates, meters.
 
 Notes:
@@ -324,6 +355,7 @@ Base.@kwdef struct QuadrotorParams{N}
     mass::Float64 = 1.5
     inertia_diag::Vec3 = vec3(0.029125, 0.029125, 0.055225)
     rotor_pos_body::SVector{N,Vec3}
+    rotor_axis_body::SVector{N,Vec3}
     linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
 end
@@ -338,8 +370,7 @@ Phase 2 generalizes the Iris-only model to arbitrary propulsor counts `N`.
 
 Notes
 -----
-* Thrust is assumed along **-body Z** for all propulsors (classic multirotor). Later phases
-  generalize this to arbitrary axes for VTOL/twin-prop layouts.
+* Phase 4 generalizes thrust direction to arbitrary per-propulsor body-frame axes.
 """
 struct GenericMultirotor{N} <: AbstractVehicleModel
     params::QuadrotorParams{N}
@@ -367,7 +398,8 @@ function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
             vec3(0.1515, -0.2450, 0.0),
             vec3(-0.1515, 0.1875, 0.0),
         )
-        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos)
+        rotor_axis = SVector{4,Vec3}(ntuple(_ -> vec3(0.0, 0.0, 1.0), 4))
+        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_axis_body = rotor_axis)
     end
     return IrisQuadrotor(params)
 end
@@ -386,8 +418,12 @@ end
     thrusts = u.thrust_n
     shaft_torques = u.shaft_torque_nm
 
-    # Total force in body (rotor thrust along -Z).
-    F_body = vec3(0.0, 0.0, -sum(thrusts))
+    # Total force in body (sum of per-propulsor thrust vectors).
+    # Convention: F_i = -T_i * axis_b[i].
+    F_body = vec3(0.0, 0.0, 0.0)
+    @inbounds for i = 1:N
+        F_body += -thrusts[i] .* p.rotor_axis_body[i]
+    end
     R_bn = quat_to_dcm(x.q_bn)
     F_ned = R_bn * F_body
 
@@ -403,16 +439,18 @@ end
     # Translational dynamics.
     vel_dot = (F_ned + F_drag) / m + g_ned
 
-    # Moments from rotors (lever arm cross thrust + yaw reaction torque).
+    # Moments from propulsors (lever arm cross thrust + reaction torque about propulsor axis).
     τ = vec3(0.0, 0.0, 0.0)
     @inbounds for i = 1:N
         r = p.rotor_pos_body[i]
         Ti = thrusts[i]
+        axis_b = p.rotor_axis_body[i]
         # Force vector for each rotor in body.
-        Fi = vec3(0.0, 0.0, -Ti)
+        Fi = -Ti .* axis_b
         τ += cross(r, Fi)
-        # Signed yaw reaction torque comes from propulsion output.
-        τ += vec3(0.0, 0.0, shaft_torques[i])
+        # Signed reaction torque comes from propulsion output.
+        # Direction is along the propulsor axis.
+        τ += axis_b .* shaft_torques[i]
     end
 
     # Angular dynamics with simple damping.

@@ -70,6 +70,10 @@ function validate_spec(
         length(motors) == 4 || throw(ArgumentError("Iris spec requires exactly 4 motors"))
         length(spec.airframe.rotor_pos_body_m) == 4 ||
             throw(ArgumentError("Iris spec requires 4 rotor_pos_body_m entries"))
+
+        # Per-rotor axes (Phase 4)
+        length(spec.airframe.rotor_axis_body_m) == 4 ||
+            throw(ArgumentError("Iris spec requires 4 rotor_axis_body_m entries"))
     else
         spec.airframe.kind === :multirotor ||
             throw(ArgumentError("Non-Iris specs require airframe.kind=:multirotor (Phase 2 supports multirotor only)"))
@@ -79,6 +83,23 @@ function validate_spec(
                     "airframe.rotor_pos_body_m length=$(length(spec.airframe.rotor_pos_body_m)) must match actuation.motors length=$(length(motors))",
                 ),
             )
+
+        # Per-rotor axes (Phase 4)
+        length(spec.airframe.rotor_axis_body_m) == length(motors) ||
+            throw(
+                ArgumentError(
+                    "airframe.rotor_axis_body_m length=$(length(spec.airframe.rotor_axis_body_m)) must match actuation.motors length=$(length(motors))",
+                ),
+            )
+    end
+
+    # Axis sanity (Phase 4): if provided, must be non-zero and finite.
+    for (i, a) in enumerate(spec.airframe.rotor_axis_body_m)
+        (isfinite(a[1]) && isfinite(a[2]) && isfinite(a[3])) ||
+            throw(ArgumentError("airframe.rotor_axis_body_m[$i] contains non-finite values: $a"))
+        n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
+        n2 > 1e-12 ||
+            throw(ArgumentError("airframe.rotor_axis_body_m[$i] is near-zero: $a"))
     end
 
     # Power system (single battery Phase 1)

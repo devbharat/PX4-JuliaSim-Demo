@@ -119,6 +119,20 @@ Base.@kwdef struct AirframeSpec
         vec3(0.1515, -0.2450, 0.0),
         vec3(-0.1515, 0.1875, 0.0),
     ]
+
+    """Per-rotor axis vectors in body frame (unit).
+
+    Conventions
+    -----------
+    Body axes are **FRD**: X forward, Y right, Z down.
+
+    The rigid-body dynamics interpret this as the *propulsor axis* `axis_b` such that the
+    thrust force applied to the vehicle is `F_i = -T_i * axis_b[i]`.
+
+    This must be provided explicitly (one axis per rotor). For a classic multirotor,
+    use `(0,0,1)` for all rotors (thrust along **-body Z**).
+    """
+    rotor_axis_body_m::Vector{Vec3} = Vec3[]
     linear_drag::Float64 = 0.05
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
 
@@ -394,6 +408,12 @@ function iris_spec(;
             vec3(0.1515, -0.2450, 0.0),
             vec3(-0.1515, 0.1875, 0.0),
         ],
+        rotor_axis_body_m = Vec3[
+            vec3(0.0, 0.0, 1.0),
+            vec3(0.0, 0.0, 1.0),
+            vec3(0.0, 0.0, 1.0),
+            vec3(0.0, 0.0, 1.0),
+        ],
         linear_drag = 0.05,
         angular_damping = vec3(0.02, 0.02, 0.01),
         x0 = RigidBodyState(),
@@ -525,6 +545,7 @@ function octa_spec(;
         mass_kg = mass_kg,
         inertia_diag_kgm2 = inertia_diag_kgm2,
         rotor_pos_body_m = rotor_pos_body_m,
+        rotor_axis_body_m = Vec3[vec3(0.0, 0.0, 1.0) for _ = 1:8],
     )
 
     return AircraftSpec(

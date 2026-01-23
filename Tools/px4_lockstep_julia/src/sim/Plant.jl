@@ -190,7 +190,7 @@ end
 Includes rotor outputs (thrust/torque/current), bus voltage/current, and battery-status
 data. Fields may be `nothing` if not populated by the caller.
 """
-Base.@kwdef struct PlantOutputs{N}
+Base.@kwdef struct PlantOutputs{N,B}
     rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
 
     # Electrical bus (positive current = discharge).
@@ -202,8 +202,13 @@ Base.@kwdef struct PlantOutputs{N}
     temp_k::Float64 = NaN
     air_vel_body::Vec3 = Vec3(NaN, NaN, NaN)
 
+    # Legacy single-battery output (primary battery only).
     battery_status::Union{Nothing,Powertrain.BatteryStatus} = nothing
+
+    # Phase 5.3: per-battery telemetry (deterministic order, length = B).
+    battery_statuses::Union{Nothing,SVector{B,Powertrain.BatteryStatus}} = nothing
 end
+
 
 ############################
 # State math (used by integrators)
@@ -388,9 +393,9 @@ end
 
 """Initialize a `PlantState{N,B}` for `B` batteries.
 
-This is a Phase 5.1 building block for multi-battery power networks. The current
-canonical coupled multirotor plant model still uses a *single* battery for the bus
-solve; multi-battery coupling is implemented in Phase 5.2+.
+Phase 5.1 introduced vectorized battery state (`B` batteries). Phase 5.2 wires this
+into the canonical coupled multirotor plant model via a simple algebraic
+`PowerNetwork` (multi-bus + multi-battery).
 """
 function init_plant_state(
     rb::RigidBodyState,

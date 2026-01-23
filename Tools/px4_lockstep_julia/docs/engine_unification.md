@@ -56,13 +56,13 @@ At each event boundary time `t_k` (microseconds):
 
 1. Scenario updates the bus (`faults`, `ap_cmd`, `landed`)
 2. Wind updates the bus (`wind_ned`)
-3. Plant-derived telemetry updates the bus (`battery`, optional env sample, etc)
+3. Plant-derived telemetry updates the bus (`battery` + `batteries`, optional env sample, etc)
 4. Estimator updates the bus (`est`)
 5. Telemetry hooks run (optional, read-only)
 6. Autopilot updates the bus (`cmd`)
 7. Boundary-time plant discontinuities run (e.g. direct actuator snaps)
 8. Sampling hooks run:
-   - **Tier-0 recorder** samples record/replay streams (cmd/wind/scenario in *record* mode; plant/battery on the log axis)
+   - **Tier-0 recorder** samples record/replay streams (cmd/wind/scenario in *record* mode; plant/battery telemetry on the log axis)
    - **Log sinks** emit structured logs (CSV sink, etc) when configured
 9. Plant integrates over `[t_k, t_{k+1})` with held `PlantInput`
 

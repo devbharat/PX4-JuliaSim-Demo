@@ -180,7 +180,8 @@ Record the minimum required to replay the plant deterministically:
 - `cmd` on `T_ap_us`
 - `wind_ned` on `T_wind_us`
 - `PlantState` (or selected outputs) on `T_log_us`
-- `battery` on `T_log_us` (telemetry snapshot)
+- `battery` on `T_log_us` (battery 1 telemetry snapshot)
+- `batteries` on `T_log_us` (vector of all battery telemetry)
 
 Optional (for estimator replay):
 
@@ -195,7 +196,8 @@ This enables:
 Record component inputs/outputs required to replay each component in isolation:
 
 - propulsion: duty, rho, wind/air-relative quantities, bus voltage/current, ω
-- battery: bus current/voltage, SOC/V1
+- battery: bus current/voltage, SOC/V1 (battery 1)
+- batteries: per-battery telemetry snapshots (vector)
 - estimator output: `est` on `T_ap_us` when `record_estimator=true`
 - estimator/noise: injected sensor streams
 
@@ -277,7 +279,8 @@ One file per run.
   /cmd/ motors[12, N_ap], servos[8, N_ap]
   /wind/ wind_ned[3, N_wind]
   /plant/ pos_ned[3, N_log], vel_ned[3, N_log], q_bn[4, N_log], ...
-  /battery/ bus_v[N_log], bus_i[N_log], soc[N_log], v1[N_log]
+  /battery/ bus_v[N_log], bus_i[N_log], soc[N_log], v1[N_log] (battery 1)
+  /batteries/ vector of BatteryStatus snapshots on `T_log_us`
   /scenario/ event_type[N_scn], payload[...]
 
 (optional)

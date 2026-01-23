@@ -97,7 +97,23 @@ function simulate(;
 
     _validate_lockstep_rates(autopilot, timeline; strict = strict_lockstep_rates)
 
-    bus = Runtime.SimBus(time_us = timeline.t0_us)
+    # Phase 5.3: size the bus battery vector from the plant initial state when possible.
+    n_batteries = 1
+    try
+        if hasproperty(plant0, :power)
+            p = getproperty(plant0, :power)
+            if hasproperty(p, :soc)
+                n_batteries = length(getproperty(p, :soc))
+            end
+        end
+    catch
+        n_batteries = 1
+    end
+
+    bus = Runtime.SimBus(
+        time_us = timeline.t0_us,
+        n_batteries = n_batteries,
+    )
 
     eng = Runtime.Engine(
         cfg;

@@ -18,7 +18,7 @@ publish bus fields.
 - **Timeline as the authority:** `Timeline` aggregates periodic axes and scenario
   `AtTime` events into a single boundary axis used for integration.
 - **Record tiers:** Tier‑0 recordings capture only what is needed for deterministic
-  plant replay (commands, wind, plant, battery), keeping files small.
+  plant replay (commands, wind, plant, battery telemetry), keeping files small.
 - **Optional estimator stream:** enable `record_estimator=true` to capture `est` on
   the autopilot axis for estimator replay.
 - **Deterministic ordering:** sources update in a fixed order and record

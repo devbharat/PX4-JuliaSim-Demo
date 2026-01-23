@@ -55,14 +55,15 @@ component objects used elsewhere in the codebase (actuators, propulsion, battery
 The canonical truth during integration is the `PlantState` passed to the RHS; the
 mutable component objects are treated as *parameters*.
 """
-struct CoupledMultirotorModel{M,E,C,AM,AS,P,B,MM,SM}
+struct CoupledMultirotorModel{M,E,C,AM,AS,P,BAT,NET,MM,SM}
     model::M
     env::E
     contact::C
     motor_actuators::AM
     servo_actuators::AS
     propulsion::P
-    battery::B
+    batteries::BAT
+    power_net::NET
     motor_map::MM
     servo_map::SM
 end
@@ -88,6 +89,18 @@ function CoupledMultirotorModel(
     ),
     servo_map = nothing,
 ) where {N}
+    # Phase 5.2: preserve the legacy single-battery call sites by implicitly
+    # constructing a trivial one-bus power network.
+    batteries = (battery,)
+    net = PowerNetwork{N,1,1}(
+        bus_for_motor = SVector{N,Int}(ntuple(_ -> 1, N)),
+        bus_for_battery = SVector{1,Int}(1),
+        avionics_load_w = SVector{1,Float64}(0.0),
+        share_mode = :inv_r0,
+        primary_bus = 1,
+        primary_battery = 1,
+    )
+
     return CoupledMultirotorModel(
         model,
         env,
@@ -95,7 +108,41 @@ function CoupledMultirotorModel(
         motor_actuators,
         servo_actuators,
         propulsion,
-        battery,
+        batteries,
+        net,
+        motor_map,
+        servo_map,
+    )
+end
+
+"""Power-network constructor (Phase 5.2).
+
+Prefer using this constructor for multi-battery / multi-bus aircraft. The
+single-battery constructor remains for backwards compatibility.
+"""
+function CoupledMultirotorModel(
+    model,
+    env,
+    contact,
+    motor_actuators,
+    servo_actuators,
+    propulsion::Propulsion.QuadRotorSet{N},
+    batteries::NTuple{B,<:Powertrain.AbstractBatteryModel},
+    power_net::PowerNetwork{N,B,K};
+    motor_map::Vehicles.MotorMap{N} = Vehicles.MotorMap{N}(
+        SVector{N,Int}(ntuple(i -> i, N)),
+    ),
+    servo_map = nothing,
+) where {N,B,K}
+    return CoupledMultirotorModel(
+        model,
+        env,
+        contact,
+        motor_actuators,
+        servo_actuators,
+        propulsion,
+        batteries,
+        power_net,
         motor_map,
         servo_map,
     )
@@ -631,16 +678,17 @@ function _solve_bus_voltage(
 end
 
 
-function _eval_propulsion_and_bus(
+function _eval_propulsion_and_power_network(
     p::Propulsion.QuadRotorSet{N},
-    b::Powertrain.AbstractBatteryModel,
+    batteries::NTuple{B,<:Powertrain.AbstractBatteryModel},
+    net::PowerNetwork{N,B,K},
     env::EnvironmentModel,
     t::Float64,
     x::PlantState{N,B},
     u::PlantInput,
     motor_map::Vehicles.MotorMap{N},
     axis_b::SVector{N,Vec3},
-) where {N,B}
+) where {N,B,K}
     # Atmosphere expects MSL altitude.
     alt_msl_m = env.origin.alt_msl_m - x.rb.pos_ned[3]
     ρ = air_density(env.atmosphere, alt_msl_m)
@@ -659,54 +707,113 @@ function _eval_propulsion_and_bus(
         ntuple(i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(duties_cmd[i], 0.0, 1.0)), N),
     )
 
-    # Phase 5.1: Plant state is vectorized for B batteries, but the coupled bus solve
-    # still assumes a single battery (Phase 5.2 implements the power network).
-    B == 1 || error("CoupledMultirotorModel currently supports B=1; multi-battery power networks are implemented in Phase 5.2+")
+    # Phase 5.2: multi-bus, multi-battery algebraic power network.
+    #
+    # Strategy:
+    # 1) Solve one bus voltage per bus using an equivalent Thevenin source
+    #    (parallel R0 combination + conductance-weighted average of (OCV - V1)).
+    # 2) Evaluate motors at their respective bus voltages to get per-bus load currents.
+    # 3) Add per-bus avionics constant-power load current (P/V) and share across
+    #    batteries on that bus (simple rule: :inv_r0 or :equal).
+    #
+    # Note: `avionics_load_w` is treated as constant power for SOC integration.
+    # To keep the bus solve monotone/deterministic, we approximate its effect during
+    # the solve as a constant current computed at V0 (first-order approximation).
 
-    soc = x.power.soc[1]
-    v1 = x.power.v1[1]
+    # Numerical guard for ideal/near-ideal batteries (R0≈0).
+    R0_EPS = 1e-6
 
-    ocv = _battery_ocv(b, soc)
-    R0 = _battery_r0(b)
-    V_min = _battery_min_voltage(b)
-
-    # Solve terminal/bus voltage with deterministic robust coupling.
-    # If the battery is disconnected, bus voltage/current are forced to 0.
-    V_bus = if fstate.battery_connected
-        _solve_bus_voltage(p, x.rotor_ω, duties, ocv, v1, R0, V_min)
+    V_bus = MVector{K,Float64}(undef)
+    if !fstate.battery_connected
+        @inbounds for k = 1:K
+            V_bus[k] = 0.0
+        end
     else
-        0.0
-    end
-    if !isfinite(V_bus)
-        error(
-            "non-finite V_bus from bus solver: V_bus=$(V_bus) ocv=$(ocv) v1=$(v1) R0=$(R0) V_min=$(V_min) soc=$(soc) ω=$(x.rotor_ω) duties=$(duties)",
-        )
+        @inbounds for k = 1:K
+            # Mask duties to motors on this bus.
+            duties_k = SVector{N,Float64}(
+                ntuple(i -> (net.bus_for_motor[i] == k ? duties[i] : 0.0), N),
+            )
+
+            # Equivalent source for batteries on this bus.
+            w_sum = 0.0
+            wv_sum = 0.0
+            V_min_bus = 0.0
+            any_bat = false
+            all_ideal = true
+            for bi = 1:B
+                if net.bus_for_battery[bi] == k
+                    any_bat = true
+                    ocv_i = _battery_ocv(batteries[bi], x.power.soc[bi])
+                    v1_i = x.power.v1[bi]
+                    V0_i = ocv_i - v1_i
+
+                    R0_i = _battery_r0(batteries[bi])
+                    all_ideal &= !(isfinite(R0_i) && R0_i > 0.0)
+                    R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
+                    w = 1.0 / R0_eff
+                    w_sum += w
+                    wv_sum += w * V0_i
+
+                    V_min_bus = max(V_min_bus, _battery_min_voltage(batteries[bi]))
+                end
+            end
+
+            if !any_bat || !(isfinite(w_sum) && w_sum > 0.0)
+                V_bus[k] = 0.0
+                continue
+            end
+
+            V0_eq = wv_sum / w_sum
+            # If the bus is fed only by ideal (R0≈0) sources, treat the equivalent
+            # source as ideal too (exactly no droop).
+            R_eq = all_ideal ? 0.0 : (1.0 / w_sum)
+
+            # Approximate avionics draw during the solve as a constant current at V0.
+            P_av = net.avionics_load_w[k]
+            I_av_assumed = (P_av > 0.0 && V0_eq > 1e-6) ? (P_av / V0_eq) : 0.0
+            V0_eff = V0_eq - R_eq * I_av_assumed
+
+            V_k = _solve_bus_voltage(p, x.rotor_ω, duties_k, V0_eff, 0.0, R_eq, V_min_bus)
+            if !isfinite(V_k)
+                error(
+                    "non-finite V_bus[$k] from bus solver: V=$(V_k) V0_eq=$(V0_eq) V0_eff=$(V0_eff) R_eq=$(R_eq) V_min=$(V_min_bus) ω=$(x.rotor_ω) duties=$(duties_k)",
+                )
+            end
+            V_bus[k] = V_k
+        end
     end
 
     thrust = MVector{N,Float64}(undef)
     torque = MVector{N,Float64}(undef)
     omega_dot = MVector{N,Float64}(undef)
     imotor = MVector{N,Float64}(undef)
-    I_bus_total = 0.0
+    I_bus_motors_total = 0.0
+    I_bus_motors = MVector{K,Float64}(ntuple(_ -> 0.0, K))
 
     @inbounds for i = 1:N
         # Axial inflow component along the propulsor thrust direction (Phase 4).
         # Convention: axis_b points along the propulsor axis such that F = -T * axis_b.
         ai = axis_b[i]
         Vax_i = -Float64(v_air_body[1] * ai[1] + v_air_body[2] * ai[2] + v_air_body[3] * ai[3])
+        k = net.bus_for_motor[i]
+        V_i = (1 <= k <= K) ? V_bus[k] : 0.0
         Ti, Qi, ωdot_i, Ii, Ibus_i =
-            _motorprop_unit_eval(p.units[i], x.rotor_ω[i], duties[i], V_bus, ρ, Vax_i)
+            _motorprop_unit_eval(p.units[i], x.rotor_ω[i], duties[i], V_i, ρ, Vax_i)
         thrust[i] = Ti
         # Own yaw reaction sign here (single source of truth).
         torque[i] = p.rotor_dir[i] * Qi
         omega_dot[i] = ωdot_i
         imotor[i] = Ii
-        I_bus_total += Ibus_i
+        I_bus_motors_total += Ibus_i
+        if 1 <= k <= K
+            I_bus_motors[k] += Ibus_i
+        end
     end
 
-    if !isfinite(I_bus_total)
+    if !isfinite(I_bus_motors_total)
         error(
-            "non-finite I_bus_total in propulsion eval: I_bus_total=$(I_bus_total) V_bus=$(V_bus) ω=$(x.rotor_ω) duties=$(duties)",
+            "non-finite I_bus_total in propulsion eval: I_bus_total=$(I_bus_motors_total) ω=$(x.rotor_ω) duties=$(duties)",
         )
     end
 
@@ -715,10 +822,64 @@ function _eval_propulsion_and_bus(
         shaft_torque_nm = SVector{N,Float64}(torque),
         ω_rad_s = x.rotor_ω,
         motor_current_a = SVector{N,Float64}(imotor),
-        bus_current_a = I_bus_total,
+        bus_current_a = I_bus_motors_total,
     )
 
-    return rot_out, SVector{N,Float64}(omega_dot), I_bus_total, V_bus, ρ, v_air_body
+    # Per-bus total current = motors + avionics constant-power load (P/V).
+    I_bus_total = MVector{K,Float64}(undef)
+    @inbounds for k = 1:K
+        V_k = V_bus[k]
+        I_av = (fstate.battery_connected && V_k > 1e-6 && net.avionics_load_w[k] > 0.0) ?
+               (net.avionics_load_w[k] / V_k) : 0.0
+        I_bus_total[k] = I_bus_motors[k] + I_av
+    end
+
+    # Share per-bus current draw across batteries on that bus.
+    I_batt = MVector{B,Float64}(ntuple(_ -> 0.0, B))
+    @inbounds for k = 1:K
+        I_k = I_bus_total[k]
+        if !(isfinite(I_k) && I_k > 0.0)
+            continue
+        end
+
+        wsum = 0.0
+        for bi = 1:B
+            if net.bus_for_battery[bi] == k
+                if net.share_mode === :equal
+                    wsum += 1.0
+                else
+                    R0_i = _battery_r0(batteries[bi])
+                    R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
+                    wsum += 1.0 / R0_eff
+                end
+            end
+        end
+        wsum > 0.0 || continue
+
+        for bi = 1:B
+            if net.bus_for_battery[bi] == k
+                w = if net.share_mode === :equal
+                    1.0
+                else
+                    R0_i = _battery_r0(batteries[bi])
+                    R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
+                    1.0 / R0_eff
+                end
+                I_batt[bi] = I_k * w / wsum
+            end
+        end
+    end
+
+    return (
+        rot_out,
+        SVector{N,Float64}(omega_dot),
+        I_bus_motors_total,
+        SVector{K,Float64}(V_bus),
+        SVector{K,Float64}(I_bus_total),
+        SVector{B,Float64}(I_batt),
+        ρ,
+        v_air_body,
+    )
 end
 
 
@@ -740,25 +901,51 @@ function plant_outputs(
     p isa Propulsion.QuadRotorSet{N} ||
         error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
 
-    rot_out, _ωdot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map, f.model.params.rotor_axis_body)
-    batt = _battery_status_from_state(
-        f.battery,
-        x.power.soc[1],
-        x.power.v1[1],
-        I_bus,
-        V_bus;
-        connected = u.faults.battery_connected,
-    )
+    rot_out, _ωdot, _I_motors_total, V_bus, I_bus_total, I_batt, _ρ, _v_air_body =
+        _eval_propulsion_and_power_network(
+            p,
+            f.batteries,
+            f.power_net,
+            f.env,
+            t,
+            x,
+            u,
+            f.motor_map,
+            f.model.params.rotor_axis_body,
+        )
+
+    # Compute per-battery telemetry (Phase 5.3).
+    batt_all = SVector{B,BatteryStatus}(ntuple(i -> begin
+        k = f.power_net.bus_for_battery[i]
+        V_i = (1 <= k <= length(V_bus)) ? V_bus[k] : 0.0
+        I_i = I_batt[i]
+        _battery_status_from_state(
+            f.batteries[i],
+            x.power.soc[i],
+            x.power.v1[i],
+            I_i,
+            V_i;
+            connected = u.faults.battery_connected,
+        )
+    end, B))
+
+    # Legacy outputs/injection: expose a single "primary" bus and battery.
+    pb = f.power_net.primary_bus
+    pi = f.power_net.primary_battery
+    Vp = (1 <= pb <= length(V_bus)) ? V_bus[pb] : 0.0
+    Ib = (1 <= pb <= length(I_bus_total)) ? I_bus_total[pb] : 0.0
+    batt_primary = (1 <= pi <= length(batt_all)) ? batt_all[pi] : BatteryStatus()
+
     temp_k = air_temperature(f.env.atmosphere, -x.rb.pos_ned[3])
-    return PlantOutputs{N}(
+    return PlantOutputs{N,B}(
         rotors = rot_out,
-        bus_current_a = I_bus,
-        bus_voltage_v = V_bus,
+        bus_current_a = Ib,
+        bus_voltage_v = Vp,
         rho_kgm3 = _ρ,
         temp_k = temp_k,
         air_vel_body = _v_air_body,
-        battery_status = batt,
+        battery_status = batt_primary,
+        battery_statuses = batt_all,
     )
 end
 
@@ -779,8 +966,18 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N,B}, u::PlantInp
     p isa Propulsion.QuadRotorSet{N} ||
         error("CoupledMultirotorModel currently supports QuadRotorSet{$N} propulsion")
 
-    rot_out, ω_dot, I_bus, V_bus, _ρ, _v_air_body =
-        _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map, f.model.params.rotor_axis_body)
+    rot_out, ω_dot, _I_motors_total, _V_bus, _I_bus_total, I_batt, _ρ, _v_air_body =
+        _eval_propulsion_and_power_network(
+            p,
+            f.batteries,
+            f.power_net,
+            f.env,
+            t,
+            x,
+            u,
+            f.motor_map,
+            f.model.params.rotor_axis_body,
+        )
 
     # Rigid-body dynamics.
     d_rb = Vehicles.dynamics(f.model, f.env, t, x.rb, rot_out, u.wind_ned)
@@ -796,21 +993,23 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N,B}, u::PlantInp
         )
     end
 
-    # Battery dynamics from bus current.
-    cap_c = _battery_capacity_c(f.battery)
-    I = max(0.0, I_bus)
-    soc = x.power.soc[1]
-    soc_dot = -I / cap_c
-    if soc <= 0.0 && soc_dot < 0.0
-        soc_dot = 0.0
+    # Battery dynamics from per-battery current draw (Phase 5.2).
+    soc_dot = MVector{B,Float64}(undef)
+    v1_dot = MVector{B,Float64}(undef)
+    @inbounds for i = 1:B
+        cap_c = _battery_capacity_c(f.batteries[i])
+        I = max(0.0, I_batt[i])
+        sdot = -I / cap_c
+        if x.power.soc[i] <= 0.0 && sdot < 0.0
+            sdot = 0.0
+        end
+        soc_dot[i] = sdot
+        v1_dot[i] = _battery_v1_dot(f.batteries[i], x.power.v1[i], I)
     end
-    v1_dot = _battery_v1_dot(f.battery, x.power.v1[1], I)
 
-    # Phase 5.1: only the primary battery is coupled into the bus solve for now.
-    # Multi-battery power networks are implemented in Phase 5.2+.
     power_dot = PowerDeriv{B}(
-        soc_dot = setindex(zero(SVector{B,Float64}), soc_dot, 1),
-        v1_dot = setindex(zero(SVector{B,Float64}), v1_dot, 1),
+        soc_dot = SVector{B,Float64}(soc_dot),
+        v1_dot = SVector{B,Float64}(v1_dot),
     )
 
     return PlantDeriv{N,B}(

@@ -26,7 +26,7 @@ using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
 """Bump this when *field meanings or units* change."""
-const BUS_SCHEMA_VERSION = 6
+const BUS_SCHEMA_VERSION = 9
 
 """A minimal atmosphere snapshot for bus-level coupling."""
 Base.@kwdef struct EnvSample
@@ -50,7 +50,7 @@ Fields
 - `landed`: landed flag for PX4
 - `est`: estimated state presented to autopilot (truth or injected estimator)
 - `env`: minimal atmosphere sample (optional)
-- `battery`: battery telemetry presented to PX4
+- `batteries`: vector of battery telemetry (fixed length after build)
 """
 mutable struct SimBus
     schema_version::Int
@@ -72,10 +72,23 @@ mutable struct SimBus
     est::EstimatedState
 
     env::EnvSample
-    battery::BatteryTelemetry
+
+    # Phase 5.3: multi-battery telemetry (battery 1 is the primary).
+    batteries::Vector{BatteryTelemetry}
 end
 
-function SimBus(; time_us::UInt64 = 0)
+"""Construct a `SimBus`.
+
+Parameters
+----------
+- `time_us`: start time
+- `n_batteries`: number of battery telemetry slots to allocate (fixed-length after build)
+"""
+function SimBus(; time_us::UInt64 = 0, n_batteries::Integer = 1)
+    nb = Int(n_batteries)
+    nb >= 1 || error("SimBus(n_batteries=$nb) must be >= 1")
+    bats = [BatteryTelemetry() for _ in 1:nb]
+
     return SimBus(
         BUS_SCHEMA_VERSION,
         time_us,
@@ -92,7 +105,7 @@ function SimBus(; time_us::UInt64 = 0)
             ω_body = vec3(0.0, 0.0, 0.0),
         ),
         EnvSample(),
-        BatteryTelemetry(),
+        bats,
     )
 end
 
@@ -119,7 +132,12 @@ function reset_bus!(bus::SimBus, t_us::UInt64)
         ω_body = vec3(0.0, 0.0, 0.0),
     )
     bus.env = EnvSample()
-    bus.battery = BatteryTelemetry()
+
+    # Reset batteries in-place (fixed length).
+    bats = getfield(bus, :batteries)
+    for i in eachindex(bats)
+        bats[i] = BatteryTelemetry()
+    end
     return nothing
 end
 

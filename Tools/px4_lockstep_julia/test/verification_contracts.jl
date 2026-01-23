@@ -266,6 +266,188 @@ end
         @test e.condition(s.state, ctx_high, 0.0) == false
     end
 
+    @testset "Phase 5.2 - power network current sharing + avionics load" begin
+        # Two batteries on one bus, no motors. Verify current sharing under a pure avionics load.
+        b1 = PT.TheveninBattery(
+            capacity_ah = 2.0,
+            soc0 = 1.0,
+            ocv_soc = [0.0, 1.0],
+            ocv_v = [12.0, 12.0],
+            r0 = 0.05,
+            r1 = 0.01,
+            c1 = 100.0,
+            v1_0 = 0.0,
+            min_voltage_v = 0.0,
+        )
+        b2 = PT.TheveninBattery(
+            capacity_ah = 2.0,
+            soc0 = 1.0,
+            ocv_soc = [0.0, 1.0],
+            ocv_v = [12.0, 12.0],
+            r0 = 0.10, # higher internal resistance -> lower share in :inv_r0
+            r1 = 0.01,
+            c1 = 100.0,
+            v1_0 = 0.0,
+            min_voltage_v = 0.0,
+        )
+
+        net = Sim.PlantModels.PowerNetwork{4,2,1}(
+            bus_for_motor = SVector{4,Int}(1, 1, 1, 1),
+            bus_for_battery = SVector{2,Int}(1, 1),
+            avionics_load_w = SVector{1,Float64}(12.0),
+            share_mode = :inv_r0,
+            primary_bus = 1,
+            primary_battery = 1,
+        )
+
+        model = Sim.PlantModels.CoupledMultirotorModel(
+            Sim.iris_default_vehicle().model,
+            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
+            Sim.Contacts.NoContact(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Propulsion.default_iris_quadrotor_set(),
+            (b1, b2),
+            net,
+        )
+
+        x0 = Sim.Plant.PlantState{4,2}(
+            rotor_ω = zero(SVector{4,Float64}),
+            power = Sim.Plant.PowerState{2}(
+                soc = SVector{2,Float64}(1.0, 1.0),
+                v1 = SVector{2,Float64}(0.0, 0.0),
+            ),
+        )
+        u = Sim.Plant.PlantInput(cmd = Sim.Vehicles.ActuatorCommand(), faults = Sim.Faults.FaultState())
+
+        y = Sim.PlantModels.plant_outputs(model, 0.0, x0, u)
+        dx = model(0.0, x0, u)
+
+        # With 12 W load at ~12 V, total current ~1 A. Split by 1/R0 weights (2:1).
+        I1 = -dx.power.soc_dot[1] * b1.capacity_c
+        I2 = -dx.power.soc_dot[2] * b2.capacity_c
+        @test isapprox(I1 + I2, y.bus_current_a; rtol = 1e-6, atol = 1e-6)
+        @test isapprox(I1 / I2, 2.0; rtol = 1e-2, atol = 1e-2)
+
+        # Equal share mode should split current evenly.
+        net_eq = Sim.PlantModels.PowerNetwork{4,2,1}(
+            bus_for_motor = SVector{4,Int}(1, 1, 1, 1),
+            bus_for_battery = SVector{2,Int}(1, 1),
+            avionics_load_w = SVector{1,Float64}(12.0),
+            share_mode = :equal,
+            primary_bus = 1,
+            primary_battery = 1,
+        )
+        model_eq = Sim.PlantModels.CoupledMultirotorModel(
+            Sim.iris_default_vehicle().model,
+            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
+            Sim.Contacts.NoContact(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Propulsion.default_iris_quadrotor_set(),
+            (b1, b2),
+            net_eq,
+        )
+        dx_eq = model_eq(0.0, x0, u)
+        I1_eq = -dx_eq.power.soc_dot[1] * b1.capacity_c
+        I2_eq = -dx_eq.power.soc_dot[2] * b2.capacity_c
+        @test isapprox(I1_eq, I2_eq; rtol = 1e-6, atol = 1e-6)
+    end
+
+    @testset "Phase 5.2 - multi-bus voltage mapping" begin
+        # Two buses, two batteries. Apply motor load only on bus 1 and verify bus 1 voltage droops.
+        b1 = PT.TheveninBattery(
+            capacity_ah = 2.0,
+            soc0 = 1.0,
+            ocv_soc = [0.0, 1.0],
+            ocv_v = [12.0, 12.0],
+            r0 = 0.10,
+            r1 = 0.01,
+            c1 = 100.0,
+            v1_0 = 0.0,
+            min_voltage_v = 0.0,
+        )
+        b2 = PT.TheveninBattery(
+            capacity_ah = 2.0,
+            soc0 = 1.0,
+            ocv_soc = [0.0, 1.0],
+            ocv_v = [12.0, 12.0],
+            r0 = 0.10,
+            r1 = 0.01,
+            c1 = 100.0,
+            v1_0 = 0.0,
+            min_voltage_v = 0.0,
+        )
+
+        net = Sim.PlantModels.PowerNetwork{4,2,2}(
+            bus_for_motor = SVector{4,Int}(1, 1, 2, 2),
+            bus_for_battery = SVector{2,Int}(1, 2),
+            avionics_load_w = SVector{2,Float64}(12.0, 0.0),
+            share_mode = :inv_r0,
+            primary_bus = 1,
+            primary_battery = 1,
+        )
+
+        model = Sim.PlantModels.CoupledMultirotorModel(
+            Sim.iris_default_vehicle().model,
+            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
+            Sim.Contacts.NoContact(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Vehicles.DirectActuators(),
+            Sim.Propulsion.default_iris_quadrotor_set(),
+            (b1, b2),
+            net,
+        )
+
+        x0 = Sim.Plant.PlantState{4,2}(
+            rotor_ω = zero(SVector{4,Float64}),
+            power = Sim.Plant.PowerState{2}(
+                soc = SVector{2,Float64}(1.0, 1.0),
+                v1 = SVector{2,Float64}(0.0, 0.0),
+            ),
+        )
+
+        cmd = Sim.Vehicles.ActuatorCommand()
+        u = Sim.Plant.PlantInput(cmd = cmd, faults = Sim.Faults.FaultState())
+
+        y = Sim.PlantModels.plant_outputs(model, 0.0, x0, u)
+        @test y.battery_statuses !== nothing
+        bats = y.battery_statuses
+        @test length(bats) == 2
+        @test bats[1].voltage_v < bats[2].voltage_v
+        @test isapprox(bats[2].voltage_v, 12.0; atol = 1e-3)
+    end
+
+    @testset "Phase 5.2 - back-EMF can zero motor bus load" begin
+        # If ω is high enough that Ke*ω >= d*V, motor current clamps to 0 -> no bus droop.
+        setup = _iris_fullplant()
+        model = setup.model
+        batt = model.batteries[1]
+
+        soc = setup.plant0.power.soc[1]
+        ocv = Sim.PlantModels._battery_ocv(batt, soc)
+        Ke = Sim.Propulsion.motor_Ke(model.propulsion.units[1].motor)
+
+        duty = 0.2
+        ω_hi = 1.2 * (duty * ocv / Ke)
+
+        x = Sim.Plant.PlantState{4,1}(
+            rb = setup.plant0.rb,
+            motors_y = setup.plant0.motors_y,
+            motors_ydot = setup.plant0.motors_ydot,
+            servos_y = setup.plant0.servos_y,
+            servos_ydot = setup.plant0.servos_ydot,
+            rotor_ω = SVector{4,Float64}(ω_hi, ω_hi, ω_hi, ω_hi),
+            power = setup.plant0.power,
+        )
+        motors = SVector{12,Float64}(duty, duty, duty, duty, 0, 0, 0, 0, 0, 0, 0, 0)
+        u = Sim.Plant.PlantInput(cmd = Sim.Vehicles.ActuatorCommand(motors = motors))
+
+        y = Sim.PlantModels.plant_outputs(model, 0.0, x, u)
+        @test isapprox(y.bus_current_a, 0.0; atol = 1e-6)
+        @test isapprox(y.bus_voltage_v, ocv; atol = 1e-6)
+    end
+
     @testset "Phase 4 - Propulsor axis geometry" begin
         # Force/torque directions should follow the propulsor axis convention:
         # F = -T * axis_b, τ = r × F + axis_b * Q
@@ -546,7 +728,7 @@ end
     t = 0.0
 
     # Snapshot a few mutable parameter fields; plant_outputs must not mutate them.
-    batt = model.battery
+    batt = model.batteries[1]
     batt_snap = (
         soc0 = batt.soc0,
         v1_0 = batt.v1_0,

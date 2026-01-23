@@ -34,7 +34,7 @@ truth plant state ─┐
                    ├─> estimator source ─> bus.est ─┐
 scenario outputs ──┤                                ├─> autopilot source ─> bus.cmd
 wind source ───────┤                                │
-                   └─> derived outputs (battery) ───┘
+                   └─> derived outputs (battery telemetry) ───┘
 
 bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 ```
@@ -65,7 +65,7 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 ### Plant + integrators
 
 - `PlantState` / `PlantDeriv` (`src/sim/Plant.jl`) hold the **full** continuous state
-  (rigid body, actuators, rotors, battery), enabling adaptive solvers.
+  (rigid body, actuators, rotors, batteries), enabling adaptive solvers.
 - Integrators (`src/sim/Integrators.jl`) include:
   - Fixed-step Euler and RK4.
   - Adaptive RK23 and RK45 with optional microsecond-quantized substeps.
@@ -74,7 +74,7 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 
 - Record/replay is **bus-driven** and versioned by `BUS_SCHEMA_VERSION`.
 - Tier‑0 recordings capture the minimum set of streams needed for deterministic replay
-  (commands, wind, plant, battery), stored by `Recording.InMemoryRecorder`.
+  (commands, wind, plant, battery telemetry), stored by `Recording.InMemoryRecorder`.
 - Scenario streams can be recorded on the event axis (`*_evt`) to preserve dynamic
   transitions for replay.
 

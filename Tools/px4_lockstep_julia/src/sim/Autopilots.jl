@@ -254,6 +254,8 @@ function autopilot_step(
     cmd::AutopilotCommand;
     landed::Bool = false,
     battery::BatteryStatus = BatteryStatus(),
+    # Phase 5.3: full battery vector (deterministic order).
+    batteries::Vector{BatteryStatus} = BatteryStatus[battery],
 )
 
     yaw = yaw_from_quat(q_bn)
@@ -285,6 +287,7 @@ function autopilot_step(
         cmd = cmd,
         landed = landed,
         battery = battery,
+        batteries = batteries,
         yaw_rad = yaw,
         lat_deg = lat,
         lon_deg = lon,

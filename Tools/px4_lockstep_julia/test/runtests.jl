@@ -1041,6 +1041,7 @@ end
         cmd::Sim.Autopilots.AutopilotCommand;
         landed::Bool = false,
         battery::Sim.Powertrain.BatteryStatus = Sim.Powertrain.BatteryStatus(),
+        batteries::Vector{Sim.Powertrain.BatteryStatus} = Sim.Powertrain.BatteryStatus[battery],
     )::RateOutputs
         return ap.out
     end

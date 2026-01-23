@@ -140,7 +140,7 @@ Location:
 Consumes:
 
 * `bus.est` (estimated state)
-* `bus.battery` (telemetry)
+* `bus.batteries` (battery 1 is treated as the primary battery)
 * `bus.ap_cmd`, `bus.landed`
 
 Notes:

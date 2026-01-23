@@ -147,31 +147,40 @@ end
 
 mutable struct UORBBridge
     handle::LockstepHandle
-    pubs::Dict{Symbol,UORBPublisher}
-    subs::Dict{Symbol,UORBSubscriber}
+
+    # Phase 5.3: allow multiple uORB instances per logical key.
+    # Each entry is (handle, instance).
+    pubs::Dict{Symbol,Vector{Tuple{UORBPublisher,Int32}}}
+    subs::Dict{Symbol,Vector{Tuple{UORBSubscriber,Int32}}}
 end
 
 function _init_uorb_bridge(handle::LockstepHandle, cfg::PX4UORBInterfaceConfig)
-    pubs = Dict{Symbol,UORBPublisher}()
+    pubs = Dict{Symbol,Vector{Tuple{UORBPublisher,Int32}}}()
     for spec in cfg.pubs
         spec.type <: UORBMsg ||
             error("UORBPubSpec type must be a uORB message type (got $(spec.type))")
-        pub, _ = create_publisher(
+        pub, inst = create_publisher(
             handle,
             spec.type;
             priority = spec.priority,
             queue_size = spec.queue_size,
             instance = spec.instance,
         )
-        pubs[spec.key] = pub
+        v = get!(pubs, spec.key) do
+            Vector{Tuple{UORBPublisher,Int32}}()
+        end
+        push!(v, (pub, Int32(inst)))
     end
 
-    subs = Dict{Symbol,UORBSubscriber}()
+    subs = Dict{Symbol,Vector{Tuple{UORBSubscriber,Int32}}}()
     for spec in cfg.subs
         spec.type <: UORBMsg ||
             error("UORBSubSpec type must be a uORB message type (got $(spec.type))")
         sub = create_subscriber(handle, spec.type; instance = spec.instance)
-        subs[spec.key] = sub
+        v = get!(subs, spec.key) do
+            Vector{Tuple{UORBSubscriber,Int32}}()
+        end
+        push!(v, (sub, Int32(spec.instance)))
     end
 
     return UORBBridge(handle, pubs, subs)
@@ -182,24 +191,37 @@ _init_uorb_bridge(handle::LockstepHandle) =
     _init_uorb_bridge(handle, iris_state_injection_interface())
 
 function _close_uorb_bridge!(bridge::UORBBridge)
-    for sub in values(bridge.subs)
-        uorb_unsubscribe!(bridge.handle, sub)
+    for entries in values(bridge.subs)
+        for (sub, _inst) in entries
+            uorb_unsubscribe!(bridge.handle, sub)
+        end
     end
     return nothing
 end
 
+"""Publish a message to all configured publishers under `key` (if any)."""
 function _publish_uorb!(bridge::UORBBridge, key::Symbol, msg)
-    pub = get(bridge.pubs, key, nothing)
-    pub === nothing && return nothing
-    publish!(bridge.handle, pub, msg)
+    entries = get(bridge.pubs, key, nothing)
+    entries === nothing && return nothing
+    for (pub, _inst) in entries
+        publish!(bridge.handle, pub, msg)
+    end
     return nothing
 end
 
+"""Read (copy) the first updated subscriber under `key`.
+
+If multiple instances are configured, this returns the first updated one in the
+configuration order.
+"""
 function _read_uorb(bridge::UORBBridge, key::Symbol)
-    sub = get(bridge.subs, key, nothing)
-    sub === nothing && return nothing
-    uorb_check(bridge.handle, sub) || return nothing
-    return uorb_copy(bridge.handle, sub)
+    entries = get(bridge.subs, key, nothing)
+    entries === nothing && return nothing
+    for (sub, _inst) in entries
+        uorb_check(bridge.handle, sub) || continue
+        return uorb_copy(bridge.handle, sub)
+    end
+    return nothing
 end
 
 @inline function _update_controls_torque(
@@ -297,7 +319,7 @@ function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
     return out
 end
 
-@inline function _battery_status_msg(time_us::UInt64, battery::BatteryStatus)
+@inline function _battery_status_msg(time_us::UInt64, battery::BatteryStatus; id::UInt8 = UInt8(0))
     return BatteryStatusMsg(
         time_us,
         Float32(battery.voltage_v),
@@ -333,7 +355,7 @@ end
         UInt8(0),
         UInt8(0),
         UInt8(0),
-        UInt8(0),
+        id,
         false,
         false,
         UInt8(battery.warning),

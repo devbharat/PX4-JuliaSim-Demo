@@ -3,7 +3,7 @@
 ## Role
 
 `src/sim/Powertrain.jl` supplies battery models and PX4-facing `BatteryStatus`
-injection. The interface is intentionally small to keep the plant RHS deterministic.
+telemetry. The interface is intentionally small to keep the plant RHS deterministic.
 
 ## Key Decisions and Rationale
 
@@ -21,6 +21,7 @@ injection. The interface is intentionally small to keep the plant RHS determinis
   `Powertrain.BatteryState` (stand-alone stepping helper).
 - In the event-driven plant engine, SOC and polarization voltage are integrated as part
   of `PlantState` while the battery model supplies OCV/parameterization.
+- `PlantModels.PowerNetwork` wires batteries to buses and determines current sharing.
 - `status(model, state)` provides the exact fields expected by the lockstep ABI.
 
 ## Caveats

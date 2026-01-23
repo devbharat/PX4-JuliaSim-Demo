@@ -433,7 +433,7 @@ end
     function RT.update!(src::CaptureAutopilot, bus::RT.SimBus, plant, t_us::UInt64)
         push!(src.seen_t_us, t_us)
         push!(src.seen_wind, bus.wind_ned)
-        push!(src.seen_batt_connected, bus.battery.connected)
+        push!(src.seen_batt_connected, bus.batteries[1].connected)
         bus.cmd = Sim.Vehicles.ActuatorCommand() # don't care
         return nothing
     end

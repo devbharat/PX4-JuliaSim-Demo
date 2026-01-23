@@ -124,6 +124,79 @@ function _build_battery(bs::BatterySpec)
     end
 end
 
+"""Build the tuple of battery *parameter objects* from `spec.power.batteries`.
+
+Battery *state* lives in `Plant.PlantState` and is integrated by the plant model.
+"""
+function _build_batteries(spec::AircraftSpec)
+    B = length(spec.power.batteries)
+    B > 0 || error("power.batteries must be non-empty")
+    return ntuple(i -> _build_battery(spec.power.batteries[i]), Val(B))
+end
+
+"""Build a simple `PlantModels.PowerNetwork` from the aircraft spec.
+
+Phase 5.2 keeps the topology intentionally simple:
+* every motor must be assigned to exactly one bus
+* every battery must be assigned to exactly one bus
+
+Cross-feed/diode OR-ing is out of scope.
+"""
+function _build_power_network(spec::AircraftSpec)
+    N = length(spec.actuation.motors)
+    B = length(spec.power.batteries)
+    K = length(spec.power.buses)
+
+    # ID → index maps (deterministic, order-driven).
+    motor_idx = Dict{MotorId,Int}()
+    for (i, m) in enumerate(spec.actuation.motors)
+        motor_idx[m.id] = i
+    end
+    bat_idx = Dict{BatteryId,Int}()
+    for (i, b) in enumerate(spec.power.batteries)
+        bat_idx[b.id] = i
+    end
+
+    # Assign each motor/battery to exactly one bus.
+    bus_for_motor = fill(0, N)
+    bus_for_battery = fill(0, B)
+
+    for (k, bus) in enumerate(spec.power.buses)
+        for mid in bus.motor_ids
+            i = get(motor_idx, mid, 0)
+            i != 0 || error("Bus $(bus.id) references unknown motor id=$mid")
+            bus_for_motor[i] == 0 || error("Motor id=$mid is assigned to multiple buses")
+            bus_for_motor[i] = k
+        end
+        for bid in bus.battery_ids
+            i = get(bat_idx, bid, 0)
+            i != 0 || error("Bus $(bus.id) references unknown battery id=$bid")
+            bus_for_battery[i] == 0 || error("Battery id=$bid is assigned to multiple buses")
+            bus_for_battery[i] = k
+        end
+    end
+
+    any(x -> x == 0, bus_for_motor) &&
+        error("Every motor must be assigned to a power bus (missing assignments detected)")
+    any(x -> x == 0, bus_for_battery) &&
+        error("Every battery must be assigned to a power bus (missing assignments detected)")
+
+    # Primary battery/bus for legacy single-bus outputs and PX4 injection.
+    pbatt = get(bat_idx, spec.power.primary_battery, 0)
+    pbatt != 0 || error("primary_battery=$(spec.power.primary_battery) not found")
+    pbus = bus_for_battery[pbatt]
+    pbus != 0 || error("primary_battery=$(spec.power.primary_battery) is not assigned to any bus")
+
+    return PowerNetwork{N,B,K}(
+        bus_for_motor = SVector{N,Int}(ntuple(i -> bus_for_motor[i], N)),
+        bus_for_battery = SVector{B,Int}(ntuple(i -> bus_for_battery[i], B)),
+        avionics_load_w = SVector{K,Float64}(ntuple(i -> Float64(spec.power.buses[i].avionics_load_w), K)),
+        share_mode = :inv_r0,
+        primary_bus = pbus,
+        primary_battery = pbatt,
+    )
+end
+
 function _build_vehicle(spec::AircraftSpec; x0_override::Union{Nothing,RigidBodyState} = nothing)
     a = spec.airframe
 
@@ -339,11 +412,23 @@ function build_aircraft_instance(
 
         # Build param objects from spec but override initial RB to match the recording.
         vehicle = _build_vehicle(spec; x0_override = rec.plant0.rb)
-        bs = _select_battery_spec(spec, spec.power.primary_battery)
-        battery = _build_battery(bs)
+
+        # Phase 5.2: multi-battery power network (recording must match spec topology).
+        batteries = _build_batteries(spec)
+        power_net = _build_power_network(spec)
 
         # Explicit actuator -> physical propulsor mapping (Phase 2).
         N = length(spec.actuation.motors)
+        if length(rec.plant0.rotor_ω) != N
+            error(
+                "Replay recording motor count does not match spec: recording N=$(length(rec.plant0.rotor_ω)) spec N=$(N)",
+            )
+        end
+        if length(rec.plant0.power.soc) != length(batteries)
+            error(
+                "Replay recording battery count does not match spec: recording B=$(length(rec.plant0.power.soc)) spec B=$(length(batteries))",
+            )
+        end
         motor_map = Vehicles.MotorMap{N}(
             SVector{N,Int}(ntuple(i -> spec.actuation.motors[i].channel, N)),
         )
@@ -359,7 +444,8 @@ function build_aircraft_instance(
             vehicle.motor_actuators,
             vehicle.servo_actuators,
             vehicle.propulsion,
-            battery;
+            batteries,
+            power_net;
             motor_map = motor_map,
             servo_map = servo_map,
         )
@@ -426,8 +512,10 @@ function build_aircraft_instance(
 
     # Plant-side param objects.
     vehicle = _build_vehicle(spec)
-    bs = _select_battery_spec(spec, spec.power.primary_battery)
-    battery = _build_battery(bs)
+
+    # Phase 5.2: multi-battery power network.
+    batteries = _build_batteries(spec)
+    power_net = _build_power_network(spec)
 
     # Explicit actuator -> physical propulsor mapping (Phase 2).
     N = length(spec.actuation.motors)
@@ -446,7 +534,8 @@ function build_aircraft_instance(
         vehicle.motor_actuators,
         vehicle.servo_actuators,
         vehicle.propulsion,
-        battery;
+        batteries,
+        power_net;
         motor_map = motor_map,
         servo_map = servo_map,
     )
@@ -458,7 +547,7 @@ function build_aircraft_instance(
         vehicle.motor_actuators,
         vehicle.servo_actuators,
         vehicle.propulsion,
-        battery,
+        batteries,
     )
 
     # Apply spec-driven PX4 parameters (Phase 3).

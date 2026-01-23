@@ -2,7 +2,7 @@
 
 ## Role
 
-`src/sim/Autopilots.jl` translates estimated state + battery status into PX4 lockstep
+`src/sim/Autopilots.jl` translates estimated state + battery telemetry into PX4 lockstep
 inputs and provides the interface used by the simulation engines.
 
 The uORB bridge helpers (topic specs, pub/sub wiring, and message builders) live in
@@ -32,4 +32,6 @@ The uORB bridge helpers (topic specs, pub/sub wiring, and message builders) live
   missions.
 - `edge_trigger=true` converts mission/RTL requests into pulses; commands must be
   reasserted if the caller expects a sustained request.
+- `autopilot_step` receives both a legacy single-battery `battery` and a full
+  `batteries::Vector{BatteryStatus}` (deterministic order).
 - Only one lockstep handle is allowed per process by default.

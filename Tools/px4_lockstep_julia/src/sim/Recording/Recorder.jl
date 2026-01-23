@@ -146,7 +146,8 @@ function tier0_traces(rec::InMemoryRecorder, timeline::Timeline)
     wind_ned = samplehold_trace(rec, :wind_ned, timeline.wind)
     plant = sampled_trace(rec, :plant, timeline.log)
     battery = sampled_trace(rec, :battery, timeline.log)
-    return (; cmd, wind_ned, plant, battery)
+    batteries = sampled_trace(rec, :batteries, timeline.log)
+    return (; cmd, wind_ned, plant, battery, batteries)
 end
 
 """Build scenario output traces from an in-memory recorder."""

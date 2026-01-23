@@ -28,7 +28,7 @@ Consumes:
 - `bus.est` (estimated state)
 - `bus.ap_cmd` (arm/mission/rtl)
 - `bus.landed`
-- `bus.battery`
+- `bus.batteries` (battery 1 is the primary)
 
 Publishes:
 - `bus.cmd` (actuator command)
@@ -81,7 +81,8 @@ function update!(src::LiveAutopilotSource, bus::SimBus, plant_state, t_us::UInt6
         est.ω_body,
         bus.ap_cmd;
         landed = bus.landed,
-        battery = bus.battery,
+        battery = bus.batteries[1],
+        batteries = bus.batteries,
     )
 
     src.last_out = out

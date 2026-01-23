@@ -102,7 +102,7 @@ function validate_spec(
             throw(ArgumentError("airframe.rotor_axis_body_m[$i] is near-zero: $a"))
     end
 
-    # Power system (single battery Phase 1)
+    # Power system (Phase 5.2: multi-battery + multi-bus)
     bats = spec.power.batteries
     isempty(bats) && throw(ArgumentError("power.batteries must be non-empty"))
     bat_ids = [b.id for b in bats]
@@ -126,19 +126,34 @@ function validate_spec(
     motor_id_set = Set(motor_ids)
     servo_id_set = Set(servo_ids)
     bat_id_set = Set(bat_ids)
+
+    # Phase 5.2 topology constraints: each motor/battery must map to exactly one bus.
+    motor_bus_count = Dict{MotorId,Int}(mid => 0 for mid in motor_ids)
+    bat_bus_count = Dict{BatteryId,Int}(bid => 0 for bid in bat_ids)
     for bus in buses
         for bid in bus.battery_ids
             bid in bat_id_set ||
                 throw(ArgumentError("Bus $(bus.id) references unknown battery id=$bid"))
+            bat_bus_count[bid] = get(bat_bus_count, bid, 0) + 1
         end
         for mid in bus.motor_ids
             mid in motor_id_set ||
                 throw(ArgumentError("Bus $(bus.id) references unknown motor id=$mid"))
+            motor_bus_count[mid] = get(motor_bus_count, mid, 0) + 1
         end
         for sid in bus.servo_ids
             sid in servo_id_set ||
                 throw(ArgumentError("Bus $(bus.id) references unknown servo id=$sid"))
         end
+    end
+
+    for mid in motor_ids
+        c = get(motor_bus_count, mid, 0)
+        c == 1 || throw(ArgumentError("Motor id=$mid must be assigned to exactly one bus (got $c)"))
+    end
+    for bid in bat_ids
+        c = get(bat_bus_count, bid, 0)
+        c == 1 || throw(ArgumentError("Battery id=$bid must be assigned to exactly one bus (got $c)"))
     end
 
     if mode === :replay

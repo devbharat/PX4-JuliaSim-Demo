@@ -6,7 +6,7 @@ Concrete plant model implementations.
 Plant models implement pure continuous-time dynamics for the canonical engine:
 
 - RHS: `f(t, x::PlantState{N,B}, u::PlantInput) -> PlantDeriv{N,B}`
-- Algebraic outputs: `plant_outputs(t, x, u) -> PlantOutputs{N}`
+- Algebraic outputs: `plant_outputs(t, x, u) -> PlantOutputs{N,B}`
 
 Design rules:
 - No RNG inside the RHS.
@@ -14,6 +14,7 @@ Design rules:
 """
 module PlantModels
 
+include("PowerNetwork.jl")
 include("CoupledMultirotor.jl")
 
 end # module PlantModels

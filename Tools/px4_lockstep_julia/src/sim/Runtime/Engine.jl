@@ -410,9 +410,25 @@ function process_events_at!(sim::Engine)
                     sim.outputs.derived_valid = true
 
                     # Battery telemetry is the most important derived output: PX4 consumes it.
+                    # Phase 5.3: prefer the full per-battery vector when available.
+                    if y.battery_statuses !== nothing
+                        bats = y.battery_statuses
+                        nb = length(bats)
+                        if length(sim.bus.batteries) != nb
+                            error(
+                                "bus.batteries length mismatch: bus has $(length(sim.bus.batteries)) " *
+                                "but plant_outputs returned $(nb) batteries",
+                            )
+                        end
+                        for i in 1:nb
+                            sim.bus.batteries[i] = bats[i]
+                        end
+                    end
+
+                    # Legacy single-battery output (primary battery).
                     if y.battery_status !== nothing
                         sim.outputs.battery = y.battery_status
-                        sim.bus.battery = y.battery_status
+                        sim.bus.batteries[1] = y.battery_status
                     end
 
                     # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
@@ -453,7 +469,7 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :autopilot
             if ev.due_ap
-                # Autopilot consumes bus.est/battery and produces bus.cmd.
+                # Autopilot consumes bus.est/batteries and produces bus.cmd.
                 update!(sim.autopilot, sim.bus, sim.plant, sim.t_us)
 
                 # Defensive boundary validation: the plant integrator expects finite,
@@ -481,7 +497,11 @@ function process_events_at!(sim::Engine)
 
                 # Always record battery on the log axis so tier0 recordings are schema-stable,
                 # even for simplified dynamics models that do not implement plant_outputs(...).
-                record!(sim.recorder, :battery, sim.t_us, sim.bus.battery)
+                record!(sim.recorder, :battery, sim.t_us, sim.bus.batteries[1])
+
+                # Phase 5.3: record the full battery vector as a snapshot so recorded
+                # values are not aliased through the mutable bus vector.
+                record!(sim.recorder, :batteries, sim.t_us, copy(sim.bus.batteries))
 
                 _emit_logs_to_sinks!(sim)
             end
@@ -589,6 +609,7 @@ function _emit_logs_to_sinks!(sim::Engine)
 
     ap_tel = autopilot_telemetry(sim.autopilot)
 
+    batt = sim.bus.batteries[1]
     for sink in sim.log_sinks
         Logging.log!(
             sink,
@@ -599,7 +620,7 @@ function _emit_logs_to_sinks!(sim::Engine)
             wind_ned = wind_ned,
             rho = sim.bus.env.rho_kgm3,
             air_vel_body = air_vel_body,
-            battery = sim.bus.battery,
+            battery = batt,
             rotor_omega = rotor_omega,
             rotor_thrust = rotor_thrust,
             pos_sp = ap_tel.pos_sp,

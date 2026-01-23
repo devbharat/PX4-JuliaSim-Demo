@@ -34,8 +34,6 @@ Fields
 * `share_mode`: current-sharing rule between batteries on a bus
   - `:inv_r0` (default): share proportional to `1/R0`
   - `:equal`: equal share
-* `primary_bus`: bus index used for legacy single-bus outputs/injection
-* `primary_battery`: battery index used for legacy single-battery outputs/injection
 
 Notes
 -----
@@ -48,6 +46,4 @@ Base.@kwdef struct PowerNetwork{N,B,K}
     avionics_load_w::SVector{K,Float64} = zero(SVector{K,Float64})
 
     share_mode::Symbol = :inv_r0
-    primary_bus::Int = 1
-    primary_battery::Int = 1
 end

@@ -109,14 +109,6 @@ function validate_spec(
     length(unique(bat_ids)) == length(bat_ids) ||
         throw(ArgumentError("Duplicate battery IDs in power.batteries"))
 
-    if !(spec.power.primary_battery in bat_ids)
-        throw(
-            ArgumentError(
-                "power.primary_battery=$(spec.power.primary_battery) not found in power.batteries",
-            ),
-        )
-    end
-
     buses = spec.power.buses
     isempty(buses) && throw(ArgumentError("power.buses must be non-empty"))
     bus_ids = [b.id for b in buses]

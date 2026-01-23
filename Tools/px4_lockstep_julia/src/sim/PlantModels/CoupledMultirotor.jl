@@ -97,8 +97,6 @@ function CoupledMultirotorModel(
         bus_for_battery = SVector{1,Int}(1),
         avionics_load_w = SVector{1,Float64}(0.0),
         share_mode = :inv_r0,
-        primary_bus = 1,
-        primary_battery = 1,
     )
 
     return CoupledMultirotorModel(
@@ -892,11 +890,11 @@ end
 Intended for boundary-time logging and PX4 injection (battery_status). Must be pure.
 """
 function plant_outputs(
-    f::CoupledMultirotorModel,
+    f::CoupledMultirotorModel{M,E,C,AM,AS,P,BAT,PowerNetwork{N,B,K},MM,SM},
     t::Float64,
     x::PlantState{N,B},
     u::PlantInput,
-) where {N,B}
+) where {M,E,C,AM,AS,P,BAT,MM,SM,N,B,K}
     p = f.propulsion
     p isa Propulsion.QuadRotorSet{N} ||
         error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
@@ -929,22 +927,14 @@ function plant_outputs(
         )
     end, B))
 
-    # Legacy outputs/injection: expose a single "primary" bus and battery.
-    pb = f.power_net.primary_bus
-    pi = f.power_net.primary_battery
-    Vp = (1 <= pb <= length(V_bus)) ? V_bus[pb] : 0.0
-    Ib = (1 <= pb <= length(I_bus_total)) ? I_bus_total[pb] : 0.0
-    batt_primary = (1 <= pi <= length(batt_all)) ? batt_all[pi] : BatteryStatus()
-
     temp_k = air_temperature(f.env.atmosphere, -x.rb.pos_ned[3])
-    return PlantOutputs{N,B}(
+    return PlantOutputs{N,B,K}(
         rotors = rot_out,
-        bus_current_a = Ib,
-        bus_voltage_v = Vp,
+        bus_current_a = SVector{K,Float64}(I_bus_total),
+        bus_voltage_v = SVector{K,Float64}(V_bus),
         rho_kgm3 = _ρ,
         temp_k = temp_k,
         air_vel_body = _v_air_body,
-        battery_status = batt_primary,
         battery_statuses = batt_all,
     )
 end

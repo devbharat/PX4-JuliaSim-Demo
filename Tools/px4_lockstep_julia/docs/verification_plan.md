@@ -239,8 +239,8 @@ Fault behavior should be **defined as an engine + plant contract** so it’s tes
 
 * Contract: `FaultState.battery_connected == false` forces the electrical bus to an “open” state:
 
-  * `bus_voltage_v = 0.0`
-  * `bus_current_a = 0.0`
+  * `bus_voltage_v[:] = 0.0`
+  * `bus_current_a[:] = 0.0`
   * all motor currents clamp to **0 A**
 
 * Mechanical consequence: rotors spin down due to prop load + friction.

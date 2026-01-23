@@ -1199,7 +1199,7 @@ end
             prop = unit.prop,
         ) for unit in p_sat.units
     ]
-    p_sat = Sim.Propulsion.QuadRotorSet{4}(units_sat, p_sat.rotor_dir)
+    p_sat = Sim.Propulsion.QuadRotorSet(units_sat, p_sat.rotor_dir)
 
     ocv_sat = 12.6
     R0_sat = 0.02

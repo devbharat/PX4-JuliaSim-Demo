@@ -194,9 +194,6 @@ end
 Base.@kwdef struct PowerSpec
     batteries::Vector{BatterySpec} = BatterySpec[]
     buses::Vector{PowerBusSpec} = PowerBusSpec[]
-
-    """Battery used for legacy single-battery injection paths."""
-    primary_battery::BatteryId = :bat1
 end
 
 
@@ -396,7 +393,7 @@ function iris_spec(;
         ),
     ]
 
-    power = PowerSpec(batteries = batteries, buses = buses, primary_battery = :bat1)
+    power = PowerSpec(batteries = batteries, buses = buses)
 
     airframe = AirframeSpec(
         kind = :iris_quadrotor,
@@ -529,7 +526,6 @@ function octa_spec(;
     power = PowerSpec(
         batteries = batteries,
         buses = buses,
-        primary_battery = :bat1,
     )
 
     rotor_pos_body_m = Vec3[

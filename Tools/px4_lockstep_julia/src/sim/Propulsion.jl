@@ -173,9 +173,24 @@ end
 This is kept separate from the rigid-body model: the vehicle model defines geometry
 (rotor positions, directions), and the propulsion set defines the motor/prop dynamics.
 """
-mutable struct QuadRotorSet{N}
-    units::Vector{MotorPropUnit}   # length N
+mutable struct QuadRotorSet{N,U<:MotorPropUnit}
+    units::Vector{U}               # length N
     rotor_dir::SVector{N,Float64}  # +1/-1 for yaw reaction torque
+
+    function QuadRotorSet{N,U}(
+        units::Vector{U},
+        rotor_dir::SVector{N,Float64},
+    ) where {N,U<:MotorPropUnit}
+        length(units) == N || throw(ArgumentError("units length != N"))
+        return new{N,U}(units, rotor_dir)
+    end
+end
+
+function QuadRotorSet(
+    units::Vector{U},
+    rotor_dir::SVector{N,Float64},
+) where {N,U<:MotorPropUnit}
+    return QuadRotorSet{N,U}(units, rotor_dir)
 end
 
 """A reasonable Iris-like default motor+prop set.
@@ -225,7 +240,7 @@ function default_iris_quadrotor_set(;
     rotor_dir =
         N == 4 ? SVector(1.0, 1.0, -1.0, -1.0) :
         SVector{N,Float64}(ntuple(i -> (isodd(i) ? 1.0 : -1.0), N))
-    return QuadRotorSet{N}(units, rotor_dir)
+    return QuadRotorSet(units, rotor_dir)
 end
 
 """Solve for a QuadraticPropParams that hits a target thrust at duty=1.

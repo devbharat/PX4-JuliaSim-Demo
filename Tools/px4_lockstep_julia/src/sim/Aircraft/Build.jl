@@ -181,19 +181,11 @@ function _build_power_network(spec::AircraftSpec)
     any(x -> x == 0, bus_for_battery) &&
         error("Every battery must be assigned to a power bus (missing assignments detected)")
 
-    # Primary battery/bus for legacy single-bus outputs and PX4 injection.
-    pbatt = get(bat_idx, spec.power.primary_battery, 0)
-    pbatt != 0 || error("primary_battery=$(spec.power.primary_battery) not found")
-    pbus = bus_for_battery[pbatt]
-    pbus != 0 || error("primary_battery=$(spec.power.primary_battery) is not assigned to any bus")
-
     return PowerNetwork{N,B,K}(
         bus_for_motor = SVector{N,Int}(ntuple(i -> bus_for_motor[i], N)),
         bus_for_battery = SVector{B,Int}(ntuple(i -> bus_for_battery[i], B)),
         avionics_load_w = SVector{K,Float64}(ntuple(i -> Float64(spec.power.buses[i].avionics_load_w), K)),
         share_mode = :inv_r0,
-        primary_bus = pbus,
-        primary_battery = pbatt,
     )
 end
 

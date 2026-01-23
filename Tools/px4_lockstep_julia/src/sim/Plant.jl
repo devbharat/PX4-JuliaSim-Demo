@@ -187,25 +187,24 @@ end
 
 """Algebraic outputs of the plant (coupling + logging).
 
-Includes rotor outputs (thrust/torque/current), bus voltage/current, and battery-status
-data. Fields may be `nothing` if not populated by the caller.
+Includes rotor outputs (thrust/torque/current), per-bus voltage/current, and
+battery-status data. Fields may be `nothing` if not populated by the caller.
 """
-Base.@kwdef struct PlantOutputs{N,B}
+Base.@kwdef struct PlantOutputs{N,B,K}
     rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
 
     # Electrical bus (positive current = discharge).
-    bus_current_a::Float64 = 0.0
-    bus_voltage_v::Float64 = NaN
+    bus_current_a::SVector{K,Float64} =
+        SVector{K,Float64}(ntuple(_ -> 0.0, K))
+    bus_voltage_v::SVector{K,Float64} =
+        SVector{K,Float64}(ntuple(_ -> NaN, K))
 
     # Atmosphere + local relative flow at the vehicle.
     rho_kgm3::Float64 = NaN
     temp_k::Float64 = NaN
     air_vel_body::Vec3 = Vec3(NaN, NaN, NaN)
 
-    # Legacy single-battery output (primary battery only).
-    battery_status::Union{Nothing,Powertrain.BatteryStatus} = nothing
-
-    # Phase 5.3: per-battery telemetry (deterministic order, length = B).
+    # Per-battery telemetry (deterministic order, length = B).
     battery_statuses::Union{Nothing,SVector{B,Powertrain.BatteryStatus}} = nothing
 end
 

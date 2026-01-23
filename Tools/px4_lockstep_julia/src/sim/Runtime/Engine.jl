@@ -30,7 +30,6 @@ Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 using ..Types: Vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize
-using ..Powertrain: BatteryStatus
 using ..Plant: PlantInput, PlantOutputs, PlantState
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
 
@@ -166,9 +165,6 @@ Base.@kwdef mutable struct EngineOutputs
     # Cached plant_outputs(...) result for the current boundary (if computed).
     plant_y::Any = nothing
 
-    # Boundary-time battery telemetry (updated from plant_y when available).
-    battery::BatteryStatus = BatteryStatus()
-
     derived_valid::Bool = false
 end
 
@@ -214,6 +210,11 @@ mutable struct Engine{PS,DF,I,AP,W,SC,ES,TL,R}
 
     outputs::EngineOutputs
     stats::EngineStats
+
+    # Capability flags (computed once at construction).
+    has_outputs::Bool
+    has_project::Bool
+    has_ap_tick::Bool
 end
 
 function Engine(
@@ -242,6 +243,16 @@ function Engine(
 
     ls = _normalize_log_sinks(log_sinks)
 
+    has_outputs =
+        cfg.enable_derived_outputs &&
+        hasmethod(plant_outputs, Tuple{typeof(dynfun), Float64, typeof(plant0), PlantInput})
+    has_project = hasmethod(plant_project, Tuple{typeof(dynfun), typeof(plant0)})
+    has_ap_tick =
+        hasmethod(
+            plant_on_autopilot_tick,
+            Tuple{typeof(dynfun), typeof(plant0), ActuatorCommand},
+        )
+
     return Engine(
         cfg,
         timeline,
@@ -262,6 +273,9 @@ function Engine(
         ls,
         EngineOutputs(),
         EngineStats(),
+        has_outputs,
+        has_project,
+        has_ap_tick,
     )
 end
 
@@ -392,58 +406,47 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :derived_outputs
             # Derived outputs (battery telemetry) *after* faults/wind and before autopilot.
-            if sim.cfg.enable_derived_outputs
+            if sim.has_outputs
                 u = PlantInput(
                     cmd = sim.bus.cmd,
                     wind_ned = sim.bus.wind_ned,
                     faults = sim.bus.faults,
                 )
 
-                if applicable(plant_outputs, sim.dynfun, sim.t_s, sim.plant, u)
-                    y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
-                    y isa PlantOutputs || error(
-                        "plant_outputs must return Plant.PlantOutputs; got " *
-                        string(typeof(y)),
-                    )
+                y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
+                y isa PlantOutputs || error(
+                    "plant_outputs must return Plant.PlantOutputs; got " *
+                    string(typeof(y)),
+                )
 
-                    sim.outputs.plant_y = y
-                    sim.outputs.derived_valid = true
+                sim.outputs.plant_y = y
+                sim.outputs.derived_valid = true
 
-                    # Battery telemetry is the most important derived output: PX4 consumes it.
-                    # Phase 5.3: prefer the full per-battery vector when available.
-                    if y.battery_statuses !== nothing
-                        bats = y.battery_statuses
-                        nb = length(bats)
-                        if length(sim.bus.batteries) != nb
-                            error(
-                                "bus.batteries length mismatch: bus has $(length(sim.bus.batteries)) " *
-                                "but plant_outputs returned $(nb) batteries",
-                            )
-                        end
-                        for i in 1:nb
-                            sim.bus.batteries[i] = bats[i]
-                        end
+                # Battery telemetry is the most important derived output: PX4 consumes it.
+                # Phase 5.3: prefer the full per-battery vector when available.
+                if y.battery_statuses !== nothing
+                    bats = y.battery_statuses
+                    nb = length(bats)
+                    if length(sim.bus.batteries) != nb
+                        error(
+                            "bus.batteries length mismatch: bus has $(length(sim.bus.batteries)) " *
+                            "but plant_outputs returned $(nb) batteries",
+                        )
                     end
+                    for i in 1:nb
+                        sim.bus.batteries[i] = bats[i]
+                    end
+                end
 
-                    # Legacy single-battery output (primary battery).
-                    if y.battery_status !== nothing
-                        sim.outputs.battery = y.battery_status
-                        sim.bus.batteries[1] = y.battery_status
-                    end
-
-                    # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
-                    rho = y.rho_kgm3
-                    if isfinite(rho)
-                        sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
-                    end
-                    temp = y.temp_k
-                    if isfinite(temp)
-                        sim.bus.env =
-                            EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
-                    end
-                else
-                    sim.outputs.plant_y = nothing
-                    sim.outputs.derived_valid = false
+                # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
+                rho = y.rho_kgm3
+                if isfinite(rho)
+                    sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
+                end
+                temp = y.temp_k
+                if isfinite(temp)
+                    sim.bus.env =
+                        EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                 end
             else
                 sim.outputs.plant_y = nothing
@@ -485,7 +488,7 @@ function process_events_at!(sim::Engine)
         elseif stage === :plant_discontinuities
             if ev.due_ap
                 # Boundary-time plant discontinuities at autopilot ticks.
-                if applicable(plant_on_autopilot_tick, sim.dynfun, sim.plant, sim.bus.cmd)
+                if sim.has_ap_tick
                     sim.plant = plant_on_autopilot_tick(sim.dynfun, sim.plant, sim.bus.cmd)
                 end
             end
@@ -663,7 +666,7 @@ function step_to_next_event!(sim::Engine)
     sim.plant = step_integrator(sim.integrator, sim.dynfun, sim.t_s, sim.plant, u, dt_s)
 
     # Optional post-step projection into physical bounds.
-    if applicable(plant_project, sim.dynfun, sim.plant)
+    if sim.has_project
         sim.plant = plant_project(sim.dynfun, sim.plant)
     end
 

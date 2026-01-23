@@ -296,8 +296,6 @@ end
             bus_for_battery = SVector{2,Int}(1, 1),
             avionics_load_w = SVector{1,Float64}(12.0),
             share_mode = :inv_r0,
-            primary_bus = 1,
-            primary_battery = 1,
         )
 
         model = Sim.PlantModels.CoupledMultirotorModel(
@@ -326,7 +324,7 @@ end
         # With 12 W load at ~12 V, total current ~1 A. Split by 1/R0 weights (2:1).
         I1 = -dx.power.soc_dot[1] * b1.capacity_c
         I2 = -dx.power.soc_dot[2] * b2.capacity_c
-        @test isapprox(I1 + I2, y.bus_current_a; rtol = 1e-6, atol = 1e-6)
+        @test isapprox(I1 + I2, y.bus_current_a[1]; rtol = 1e-6, atol = 1e-6)
         @test isapprox(I1 / I2, 2.0; rtol = 1e-2, atol = 1e-2)
 
         # Equal share mode should split current evenly.
@@ -335,8 +333,6 @@ end
             bus_for_battery = SVector{2,Int}(1, 1),
             avionics_load_w = SVector{1,Float64}(12.0),
             share_mode = :equal,
-            primary_bus = 1,
-            primary_battery = 1,
         )
         model_eq = Sim.PlantModels.CoupledMultirotorModel(
             Sim.iris_default_vehicle().model,
@@ -384,8 +380,6 @@ end
             bus_for_battery = SVector{2,Int}(1, 2),
             avionics_load_w = SVector{2,Float64}(12.0, 0.0),
             share_mode = :inv_r0,
-            primary_bus = 1,
-            primary_battery = 1,
         )
 
         model = Sim.PlantModels.CoupledMultirotorModel(
@@ -444,8 +438,8 @@ end
         u = Sim.Plant.PlantInput(cmd = Sim.Vehicles.ActuatorCommand(motors = motors))
 
         y = Sim.PlantModels.plant_outputs(model, 0.0, x, u)
-        @test isapprox(y.bus_current_a, 0.0; atol = 1e-6)
-        @test isapprox(y.bus_voltage_v, ocv; atol = 1e-6)
+        @test isapprox(y.bus_current_a[1], 0.0; atol = 1e-6)
+        @test isapprox(y.bus_voltage_v[1], ocv; atol = 1e-6)
     end
 
     @testset "Phase 4 - Propulsor axis geometry" begin
@@ -543,7 +537,7 @@ end
         esc = Sim.Propulsion.ESCParams()
         motor = Sim.Propulsion.BLDCMotorParams()
         units = [Sim.Propulsion.MotorPropUnit(esc = esc, motor = motor, prop = SignProp(1.0, 0.5))]
-        prop = Sim.Propulsion.QuadRotorSet{1}(units, SVector{1,Float64}(1.0))
+        prop = Sim.Propulsion.QuadRotorSet(units, SVector{1,Float64}(1.0))
         battery = PT.IdealBattery()
 
         motor_map = Sim.Vehicles.MotorMap{1}(SVector{1,Int}(1))
@@ -761,9 +755,9 @@ end
     # Consistency: RHS uses the same bus current in the battery SoC derivative.
     dx = model(t, x0, u)
     I_rhs = -dx.power.soc_dot[1] * batt.capacity_c
-    @test isfinite(y1.bus_current_a)
+    @test all(isfinite, y1.bus_current_a)
     @test isfinite(I_rhs)
-    @test isapprox(I_rhs, y1.bus_current_a; rtol = 1e-12, atol = 1e-12)
+    @test isapprox(I_rhs, y1.bus_current_a[1]; rtol = 1e-12, atol = 1e-12)
 
     # Battery disconnected should force zero bus power and a disconnected status.
     u_off = Sim.Plant.PlantInput(
@@ -772,10 +766,10 @@ end
         faults = Sim.Faults.FaultState(battery_connected = false),
     )
     y_off = Sim.PlantModels.plant_outputs(model, t, x0, u_off)
-    @test y_off.bus_current_a == 0.0
-    @test y_off.bus_voltage_v == 0.0
-    @test y_off.battery_status !== nothing
-    @test y_off.battery_status.connected == false
+    @test all(isapprox.(y_off.bus_current_a, 0.0; atol = 1e-12))
+    @test all(isapprox.(y_off.bus_voltage_v, 0.0; atol = 1e-12))
+    @test y_off.battery_statuses !== nothing
+    @test y_off.battery_statuses[1].connected == false
 end
 
 @testset "Verification Tier 2 - Full-plant contract tests" begin
@@ -1029,7 +1023,7 @@ end
         )
         u = Sim.Plant.PlantInput(cmd = cmd, wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0), faults = Sim.Faults.FaultState())
         y1 = Sim.plant_outputs(full_model, 0.0, xplant, u)
-        prop2 = Sim.Propulsion.QuadRotorSet{4}(veh.propulsion.units, -veh.propulsion.rotor_dir)
+        prop2 = Sim.Propulsion.QuadRotorSet(veh.propulsion.units, -veh.propulsion.rotor_dir)
         model2 = Sim.PlantModels.CoupledMultirotorModel(
             veh.model,
             env2,
@@ -1100,8 +1094,8 @@ end
             faults = Sim.Faults.FaultState(battery_connected = false),
         )
         y_disc = Sim.plant_outputs(model, t, x, u_disc)
-        @test y_disc.battery_status.connected == false
-        @test isapprox(y_disc.bus_voltage_v, 0.0; atol=1e-12)
+        @test y_disc.battery_statuses[1].connected == false
+        @test isapprox(y_disc.bus_voltage_v[1], 0.0; atol=1e-12)
         @test isapprox(y_disc.rotors.bus_current_a, 0.0; atol=1e-12)
         @test all(y_disc.rotors.motor_current_a .== 0.0)
 

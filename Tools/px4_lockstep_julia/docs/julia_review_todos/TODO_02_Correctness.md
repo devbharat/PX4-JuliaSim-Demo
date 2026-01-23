@@ -72,7 +72,7 @@ This TODO list is strictly about *bugs*, *invariants*, and *determinism*. Anythi
 - Add a test that calls `plant_outputs(dynfun, t, x, u)` twice and asserts:
   - `x` is unchanged,
   - `dynfun`’s internal component objects (battery/propulsion) are unchanged (or, better, make them immutable params).
-- Add a consistency check test that compares `plant_outputs(...).battery_status` against what the RHS computes internally (within tolerance).
+- Add a consistency check test that compares `plant_outputs(...).battery_statuses[1]` against what the RHS computes internally (within tolerance).
 
 ---
 
@@ -166,4 +166,3 @@ This TODO list is strictly about *bugs*, *invariants*, and *determinism*. Anythi
 - `evt` always contains `t0_us` and `t_end_us`.
 - Every axis member time appears in `evt`.
 - `consume_boundary!` / `advance_evt!` never skip due events.
-

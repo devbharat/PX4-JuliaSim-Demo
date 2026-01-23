@@ -25,7 +25,7 @@ Engines may call `plant_outputs` at event boundaries to:
 Notes
 -----
 * This is intentionally a **generic function with no fallback method**.
-  Engines should check `applicable(plant_outputs, ...)` before calling.
+  The canonical engine caches capability detection at construction time.
 * Concrete RHS functors (e.g., `PlantModels.CoupledMultirotorModel`) should
   implement a method returning `Plant.PlantOutputs` or another appropriate
   outputs struct.
@@ -49,8 +49,8 @@ canonical engine may call `plant_project(f, x)` after each integrated interval.
 
 Notes
 -----
-* This is intentionally an optional protocol: engines should check
-  `applicable(plant_project, f, x)` before calling.
+* This is intentionally an optional protocol: the canonical engine caches
+  capability detection at construction time.
 * Implementations should be pure (return a new state) or mutate only local, owned
   state; they must not use RNG.
 """

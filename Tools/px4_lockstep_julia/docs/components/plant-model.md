@@ -10,8 +10,8 @@ deterministic variable-step integration.
 
 - **Fixed-size actuator channels:** motor/servo arrays match the lockstep ABI and keep
   allocations out of hot integration loops.
-- **Rotor count as a type parameter:** `PlantState{N}` specializes on rotor count to
-  keep adaptive integrators allocation-free.
+- **Rotor + battery count as type parameters:** `PlantState{N,B}` specializes on rotor
+  and battery counts to keep adaptive integrators allocation-free.
 - **Explicit input/output split:** `PlantInput` holds commands, wind, and faults;
   `PlantOutputs` carries algebraic couplings (rotor outputs, bus voltage/current,
   battery status) so the RHS stays pure.

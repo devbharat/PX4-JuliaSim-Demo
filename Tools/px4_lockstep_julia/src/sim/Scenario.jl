@@ -485,7 +485,7 @@ function when_soc_below!(s::EventScenario, threshold::Float64, action::Function)
     push!(
         s.scheduler,
         When(
-            (st, ctx, t)->(ctx.plant.batt_soc <= threshold),
+            (st, ctx, t)->(minimum(ctx.plant.power.soc) <= threshold),
             (st, ctx, t)->action(st, ctx, t),
         ),
     )

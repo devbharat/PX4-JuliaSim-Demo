@@ -237,10 +237,10 @@ end
     ::EulerIntegrator,
     f,
     t::Float64,
-    x::PlantState{N},
+    x::PlantState{N,B},
     u,
     dt::Float64,
-) where {N}
+) where {N,B}
     k1 = f(t, x, u)
     return plant_add(x, k1, dt)
 end
@@ -249,10 +249,10 @@ end
     ::RK4Integrator,
     f,
     t::Float64,
-    x::PlantState{N},
+    x::PlantState{N,B},
     u,
     dt::Float64,
-) where {N}
+) where {N,B}
     k1 = f(t, x, u)
     x2 = plant_add(x, k1, 0.5*dt)
     k2 = f(t + 0.5*dt, x2, u)
@@ -307,9 +307,9 @@ end
 end
 
 @inline function _err_norm(
-    x_hi::PlantState{N},
-    x_lo::PlantState{N},
-    x_ref::PlantState{N},
+    x_hi::PlantState{N,B},
+    x_lo::PlantState{N,B},
+    x_ref::PlantState{N,B},
     rtol_pos::Float64,
     atol_pos::Float64,
     rtol_vel::Float64,
@@ -317,7 +317,7 @@ end
     rtol_ω::Float64,
     atol_ω::Float64,
     atol_att_rad::Float64,
-)::Float64 where {N}
+)::Float64 where {N,B}
     # Legacy helper: adaptive error control based on rigid-body components only.
     # For full-plant error control, use `_err_norm(::RK23Integrator/RK45Integrator, ...)`.
     return _err_norm(
@@ -361,7 +361,7 @@ This extends rigid-body error control with optional additional state groups:
 * actuator outputs (`motors_y`, `servos_y`)
 * actuator rates (`motors_ydot`, `servos_ydot`)
 * rotor speeds (`rotor_ω`)
-* battery states (`batt_soc`, `batt_v1`)
+* battery states (`power.soc`, `power.v1`)
 
 To preserve legacy behavior, all of these are **ignored by default** because:
 * `plant_error_control` defaults to `false`, and
@@ -373,10 +373,10 @@ Design intent:
 """
 @inline function _err_norm(
     i::Union{RK23Integrator,RK45Integrator},
-    x_hi::PlantState{N},
-    x_lo::PlantState{N},
-    x_ref::PlantState{N},
-)::Float64 where {N}
+    x_hi::PlantState{N,B},
+    x_lo::PlantState{N,B},
+    x_ref::PlantState{N,B},
+)::Float64 where {N,B}
     # Always include rigid-body error.
     err = _err_norm(
         x_hi.rb,
@@ -445,19 +445,23 @@ Design intent:
         end
     end
 
-    # Battery.
+    # Battery (vectorized; B=1 matches legacy behavior).
     if isfinite(i.atol_soc)
-        Δ = x_hi.batt_soc - x_lo.batt_soc
-        s = i.atol_soc + i.rtol_soc * max(abs(x_ref.batt_soc), abs(x_hi.batt_soc))
-        s = max(s, 1e-15)
-        err = max(err, abs(Δ) / s)
+        @inbounds for k = 1:B
+            Δ = x_hi.power.soc[k] - x_lo.power.soc[k]
+            s = i.atol_soc + i.rtol_soc * max(abs(x_ref.power.soc[k]), abs(x_hi.power.soc[k]))
+            s = max(s, 1e-15)
+            err = max(err, abs(Δ) / s)
+        end
     end
 
     if isfinite(i.atol_v1)
-        Δ = x_hi.batt_v1 - x_lo.batt_v1
-        s = i.atol_v1 + i.rtol_v1 * max(abs(x_ref.batt_v1), abs(x_hi.batt_v1))
-        s = max(s, 1e-15)
-        err = max(err, abs(Δ) / s)
+        @inbounds for k = 1:B
+            Δ = x_hi.power.v1[k] - x_lo.power.v1[k]
+            s = i.atol_v1 + i.rtol_v1 * max(abs(x_ref.power.v1[k]), abs(x_hi.power.v1[k]))
+            s = max(s, 1e-15)
+            err = max(err, abs(Δ) / s)
+        end
     end
 
     return isfinite(err) ? err : Inf
@@ -805,10 +809,10 @@ function step_integrator(
     i::RK23Integrator,
     f,
     t::Float64,
-    x0::PlantState{N},
+    x0::PlantState{N,B},
     u,
     dt::Float64,
-) where {N}
+) where {N,B}
     dt > 0 || return x0
 
     # Initial guess for substep size.
@@ -908,10 +912,10 @@ function step_integrator(
     i::RK45Integrator,
     f,
     t::Float64,
-    x0::PlantState{N},
+    x0::PlantState{N,B},
     u,
     dt::Float64,
-) where {N}
+) where {N,B}
     dt > 0 || return x0
 
     h = if isfinite(i.last_h)

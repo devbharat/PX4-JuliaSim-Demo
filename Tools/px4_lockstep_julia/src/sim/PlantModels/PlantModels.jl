@@ -5,7 +5,7 @@ Concrete plant model implementations.
 `Sim.Plant` defines the integration state (`PlantState`) and arithmetic.
 Plant models implement pure continuous-time dynamics for the canonical engine:
 
-- RHS: `f(t, x::PlantState{N}, u::PlantInput) -> PlantDeriv{N}`
+- RHS: `f(t, x::PlantState{N,B}, u::PlantInput) -> PlantDeriv{N,B}`
 - Algebraic outputs: `plant_outputs(t, x, u) -> PlantOutputs{N}`
 
 Design rules:

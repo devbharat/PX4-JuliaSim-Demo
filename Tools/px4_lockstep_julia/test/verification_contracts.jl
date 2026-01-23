@@ -17,6 +17,8 @@ const T = Sim.Types
 const Env = Sim.Environment
 const PT = Sim.Powertrain
 const RB = Sim.RigidBody
+const Scen = Sim.Scenario
+const Ev = Sim.Events
 
 """Test-only prop model that makes thrust/torque depend on Vax sign."""
 struct SignProp <: Sim.Propulsion.AbstractPropParams
@@ -34,7 +36,7 @@ Returns a NamedTuple with:
 - batt  :: Powertrain.TheveninBattery
 - env   :: Environment.EnvironmentModel
 - model :: PlantModels.CoupledMultirotorModel
-- plant0:: Plant.PlantState{4}
+- plant0:: Plant.PlantState{4,1}
 """
 function _iris_fullplant(
     ;
@@ -176,6 +178,94 @@ end
         @test st.v1 > 0.0
     end
 
+    @testset "Phase 5.1 - multi-battery PlantState math" begin
+        power0 = Sim.Plant.PowerState{2}(
+            soc = SVector{2,Float64}(1.0, 0.5),
+            v1 = SVector{2,Float64}(0.1, 0.2),
+        )
+        x0 = Sim.Plant.PlantState{4,2}(power = power0)
+
+        power_dot = Sim.Plant.PowerDeriv{2}(
+            soc_dot = SVector{2,Float64}(-0.01, -0.02),
+            v1_dot = SVector{2,Float64}(0.03, 0.04),
+        )
+        k = Sim.Plant.PlantDeriv{4,2}(power = power_dot)
+
+        dt = 2.0
+        x1 = Sim.Plant.plant_add(x0, k, dt)
+        @test x1.power.soc ≈ power0.soc + power_dot.soc_dot * dt
+        @test x1.power.v1 ≈ power0.v1 + power_dot.v1_dot * dt
+
+        # RK4 scale-add should reduce to the same linear update when all ks are equal.
+        x2 = Sim.Plant.plant_scale_add(x0, k, k, k, k, dt)
+        @test x2.power.soc ≈ power0.soc + power_dot.soc_dot * dt
+        @test x2.power.v1 ≈ power0.v1 + power_dot.v1_dot * dt
+
+        # Generic linear combination with mixed derivatives.
+        k2 = Sim.Plant.PlantDeriv{4,2}(
+            power = Sim.Plant.PowerDeriv{2}(
+                soc_dot = SVector{2,Float64}(-0.03, -0.01),
+                v1_dot = SVector{2,Float64}(0.02, 0.01),
+            ),
+        )
+        x3 = Sim.Plant.plant_lincomb(x0, dt, (k, k2), (0.25, 0.75))
+        @test x3.power.soc ≈ power0.soc + (0.25 * power_dot.soc_dot + 0.75 * k2.power.soc_dot) * dt
+        @test x3.power.v1 ≈ power0.v1 + (0.25 * power_dot.v1_dot + 0.75 * k2.power.v1_dot) * dt
+    end
+
+    @testset "Phase 5.1 - init_plant_state with multiple batteries" begin
+        veh = Sim.iris_default_vehicle()
+        b1 = PT.TheveninBattery(soc0 = 0.9, v1_0 = 0.12)
+        b2 = PT.TheveninBattery(soc0 = 0.8, v1_0 = 0.34)
+        x0 = Sim.Plant.init_plant_state(
+            veh.state,
+            veh.motor_actuators,
+            veh.servo_actuators,
+            veh.propulsion,
+            (b1, b2),
+        )
+        @test x0.power.soc == SVector{2,Float64}(0.9, 0.8)
+        @test x0.power.v1 == SVector{2,Float64}(0.12, 0.34)
+    end
+
+    @testset "Phase 5.1 - when_soc_below uses minimum SOC" begin
+        s = Scen.EventScenario()
+        Scen.when_soc_below!(s, 0.1, (st, ctx, t) -> st)
+        @test length(s.scheduler.events) == 1
+        e = s.scheduler.events[1]
+        @test e isa Ev.When
+
+        plant_low = Sim.Plant.PlantState{4,2}(
+            power = Sim.Plant.PowerState{2}(
+                soc = SVector{2,Float64}(0.2, 0.05),
+                v1 = SVector{2,Float64}(0.0, 0.0),
+            ),
+        )
+        ctx_low = Scen.ScenarioContext(
+            t_us = UInt64(0),
+            t_s = 0.0,
+            step = 0,
+            plant = plant_low,
+            rb = plant_low.rb,
+        )
+        @test e.condition(s.state, ctx_low, 0.0) == true
+
+        plant_high = Sim.Plant.PlantState{4,2}(
+            power = Sim.Plant.PowerState{2}(
+                soc = SVector{2,Float64}(0.2, 0.15),
+                v1 = SVector{2,Float64}(0.0, 0.0),
+            ),
+        )
+        ctx_high = Scen.ScenarioContext(
+            t_us = UInt64(0),
+            t_s = 0.0,
+            step = 0,
+            plant = plant_high,
+            rb = plant_high.rb,
+        )
+        @test e.condition(s.state, ctx_high, 0.0) == false
+    end
+
     @testset "Phase 4 - Propulsor axis geometry" begin
         # Force/torque directions should follow the propulsor axis convention:
         # F = -T * axis_b, τ = r × F + axis_b * Q
@@ -294,15 +384,14 @@ end
             battery,
         )
 
-        plant = Sim.Plant.PlantState{1}(
+        plant = Sim.Plant.PlantState{1,1}(
             rb = plant0.rb,
             motors_y = plant0.motors_y,
             motors_ydot = plant0.motors_ydot,
             servos_y = plant0.servos_y,
             servos_ydot = plant0.servos_ydot,
             rotor_ω = SVector{1,Float64}(0.0),
-            batt_soc = plant0.batt_soc,
-            batt_v1 = plant0.batt_v1,
+            power = plant0.power,
         )
 
         cmd = Sim.Vehicles.ActuatorCommand(motors = plant0.motors_y, servos = plant0.servos_y)
@@ -489,7 +578,7 @@ end
 
     # Consistency: RHS uses the same bus current in the battery SoC derivative.
     dx = model(t, x0, u)
-    I_rhs = -dx.batt_soc_dot * batt.capacity_c
+    I_rhs = -dx.power.soc_dot[1] * batt.capacity_c
     @test isfinite(y1.bus_current_a)
     @test isfinite(I_rhs)
     @test isapprox(I_rhs, y1.bus_current_a; rtol = 1e-12, atol = 1e-12)
@@ -581,8 +670,8 @@ end
 
             @test isapprox(_qnorm(x.rb.q_bn), 1.0; atol=1e-12)
             @test all(x.rotor_ω .>= -1e-12)
-            @test 0.0 <= x.batt_soc <= 1.0
-            @test isfinite(x.batt_v1)
+            @test 0.0 <= x.power.soc[1] <= 1.0
+            @test isfinite(x.power.v1[1])
         end
     end
 
@@ -629,15 +718,14 @@ end
 
         # Build a PlantState with rotor ω initialized to hover ω.
         x = setup.plant0
-        x = Sim.Plant.PlantState{4}(
+        x = Sim.Plant.PlantState{4,1}(
             x.rb,
             x.motors_y,
             x.motors_ydot,
             x.servos_y,
             x.servos_ydot,
             SVector{4,Float64}(fill(ω_hover, 4)),
-            x.batt_soc,
-            x.batt_v1,
+            x.power,
         )
 
         u = Sim.Plant.PlantInput() # cmd=0, wind=0, faults=none
@@ -741,15 +829,17 @@ end
         plant0 = setup.plant0
         ω0 = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
         motors_y = SVector{12,Float64}(0.6, 0.6, 0.6, 0.6, 0, 0, 0, 0, 0, 0, 0, 0)
-        xplant = Sim.Plant.PlantState{4}(
+        xplant = Sim.Plant.PlantState{4,1}(
             rb = plant0.rb,
             motors_y = motors_y,
             motors_ydot = plant0.motors_ydot,
             servos_y = plant0.servos_y,
             servos_ydot = plant0.servos_ydot,
             rotor_ω = ω0,
-            batt_soc = 1.0,
-            batt_v1 = 0.0,
+            power = Sim.Plant.PowerState{1}(
+                soc = SVector{1,Float64}(1.0),
+                v1 = SVector{1,Float64}(0.0),
+            ),
         )
         cmd = Sim.Vehicles.ActuatorCommand(
             motors = motors_y,
@@ -781,15 +871,17 @@ end
         # Construct a state with nonzero rotor speed so disable has an immediate effect.
         ω0 = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
         motors_y = SVector{12,Float64}(0.6, 0.6, 0.6, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        x = Sim.Plant.PlantState{4}(
+        x = Sim.Plant.PlantState{4,1}(
             rb = plant0.rb,
             motors_y = motors_y,
             motors_ydot = plant0.motors_ydot,
             servos_y = plant0.servos_y,
             servos_ydot = plant0.servos_ydot,
             rotor_ω = ω0,
-            batt_soc = 1.0,
-            batt_v1 = 0.0,
+            power = Sim.Plant.PowerState{1}(
+                soc = SVector{1,Float64}(1.0),
+                v1 = SVector{1,Float64}(0.0),
+            ),
         )
 
         cmd = Sim.Vehicles.ActuatorCommand(

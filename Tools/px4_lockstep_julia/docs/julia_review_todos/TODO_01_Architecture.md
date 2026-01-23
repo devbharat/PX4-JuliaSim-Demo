@@ -43,7 +43,7 @@ This TODO list is about structural changes that improve determinism, composabili
 **Where**
 - `src/sim/Plant.jl`: `sync_components_from_plant!` / `sync_components_to_plant!`
 - `src/sim/Propulsion.jl`: `MotorPropUnit` contains `ω_rad_s` and `enabled`, but the plant integrates `rotor_ω` separately.
-- `src/sim/Powertrain.jl`: battery models are mutable and store SOC/V1, but plant integrates `batt_soc`/`batt_v1`.
+- `src/sim/Powertrain.jl`: battery models are mutable and store SOC/V1, but plant integrates `power.soc`/`power.v1`.
 
 **Plan (recommended)**
 - Split each “component model” into:
@@ -198,4 +198,3 @@ Deliverables:
 Deliverables:
 - contact forces computed in a module that can be swapped
 - any discontinuities are applied via `plant_on_autopilot_tick` or a new boundary hook
-

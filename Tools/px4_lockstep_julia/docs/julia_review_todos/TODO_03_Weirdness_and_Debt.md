@@ -87,7 +87,7 @@ These items are not necessarily “wrong” today, but they are the kinds of sur
 
 **What I saw**
 - `src/sim/Powertrain.jl`: `IdealBattery` and `TheveninBattery` are mutable with internal SOC/V1.
-- `PlantState` contains `batt_soc` and `batt_v1`.
+- `PlantState` contains `power.soc` and `power.v1`.
 
 **Why it’s weird**
 - It invites accidental mixing: some code may read from the battery object while other code uses plant state.
@@ -143,4 +143,3 @@ These items are not necessarily “wrong” today, but they are the kinds of sur
   - `Sim.record_live_px4`
   - `Sim.replay_recording`
   - `Workflows.simulate_iris_mission`
-

@@ -40,7 +40,7 @@ import ..Powertrain
 using ..Powertrain: BatteryStatus
 using ..Contacts: AbstractContactModel, NoContact, contact_force_ned
 using ..Faults: is_motor_disabled
-using ..Plant: PlantState, PlantInput, PlantDeriv, PlantOutputs
+using ..Plant: PlantState, PlantInput, PlantDeriv, PlantOutputs, PowerState, PowerDeriv
 
 import ..plant_outputs
 import ..plant_project
@@ -636,11 +636,11 @@ function _eval_propulsion_and_bus(
     b::Powertrain.AbstractBatteryModel,
     env::EnvironmentModel,
     t::Float64,
-    x::PlantState{N},
+    x::PlantState{N,B},
     u::PlantInput,
     motor_map::Vehicles.MotorMap{N},
     axis_b::SVector{N,Vec3},
-) where {N}
+) where {N,B}
     # Atmosphere expects MSL altitude.
     alt_msl_m = env.origin.alt_msl_m - x.rb.pos_ned[3]
     ρ = air_density(env.atmosphere, alt_msl_m)
@@ -659,8 +659,12 @@ function _eval_propulsion_and_bus(
         ntuple(i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(duties_cmd[i], 0.0, 1.0)), N),
     )
 
-    soc = x.batt_soc
-    v1 = x.batt_v1
+    # Phase 5.1: Plant state is vectorized for B batteries, but the coupled bus solve
+    # still assumes a single battery (Phase 5.2 implements the power network).
+    B == 1 || error("CoupledMultirotorModel currently supports B=1; multi-battery power networks are implemented in Phase 5.2+")
+
+    soc = x.power.soc[1]
+    v1 = x.power.v1[1]
 
     ocv = _battery_ocv(b, soc)
     R0 = _battery_r0(b)
@@ -729,9 +733,9 @@ Intended for boundary-time logging and PX4 injection (battery_status). Must be p
 function plant_outputs(
     f::CoupledMultirotorModel,
     t::Float64,
-    x::PlantState{N},
+    x::PlantState{N,B},
     u::PlantInput,
-) where {N}
+) where {N,B}
     p = f.propulsion
     p isa Propulsion.QuadRotorSet{N} ||
         error("PlantOutputs currently supports QuadRotorSet{$N} propulsion")
@@ -740,8 +744,8 @@ function plant_outputs(
         _eval_propulsion_and_bus(p, f.battery, f.env, t, x, u, f.motor_map, f.model.params.rotor_axis_body)
     batt = _battery_status_from_state(
         f.battery,
-        x.batt_soc,
-        x.batt_v1,
+        x.power.soc[1],
+        x.power.v1[1],
         I_bus,
         V_bus;
         connected = u.faults.battery_connected,
@@ -763,7 +767,7 @@ end
 # RHS functor
 ############################
 
-function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput) where {N}
+function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N,B}, u::PlantInput) where {N,B}
     # Actuator dynamics (pure; no mutation of actuator model objects).
     my_dot, mydot_dot =
         _actuator_derivs(f.motor_actuators, x.motors_y, x.motors_ydot, u.cmd.motors)
@@ -795,22 +799,28 @@ function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N}, u::PlantInput
     # Battery dynamics from bus current.
     cap_c = _battery_capacity_c(f.battery)
     I = max(0.0, I_bus)
-    soc = x.batt_soc
+    soc = x.power.soc[1]
     soc_dot = -I / cap_c
     if soc <= 0.0 && soc_dot < 0.0
         soc_dot = 0.0
     end
-    v1_dot = _battery_v1_dot(f.battery, x.batt_v1, I)
+    v1_dot = _battery_v1_dot(f.battery, x.power.v1[1], I)
 
-    return PlantDeriv{N}(
+    # Phase 5.1: only the primary battery is coupled into the bus solve for now.
+    # Multi-battery power networks are implemented in Phase 5.2+.
+    power_dot = PowerDeriv{B}(
+        soc_dot = setindex(zero(SVector{B,Float64}), soc_dot, 1),
+        v1_dot = setindex(zero(SVector{B,Float64}), v1_dot, 1),
+    )
+
+    return PlantDeriv{N,B}(
         rb = d_rb,
         motors_y_dot = my_dot,
         motors_ydot_dot = mydot_dot,
         servos_y_dot = sy_dot,
         servos_ydot_dot = sydot_dot,
         rotor_ω_dot = ω_dot,
-        batt_soc_dot = soc_dot,
-        batt_v1_dot = v1_dot,
+        power = power_dot,
     )
 end
 
@@ -827,12 +837,12 @@ NaN cascades from occasional overshoot in adaptive solvers.
 Important: this is not meant to hide modeling bugs. If projection is frequently
 active, tighten tolerances or fix the stiffness/discontinuity.
 """
-function plant_project(f::CoupledMultirotorModel, x::PlantState{N}) where {N}
+function plant_project(f::CoupledMultirotorModel, x::PlantState{N,B}) where {N,B}
     # Rotor speeds nonnegative.
     ω_clamped = map(w -> max(0.0, w), x.rotor_ω)
 
-    # SOC in [0,1].
-    soc_clamped = clamp(x.batt_soc, 0.0, 1.0)
+    # SOC in [0,1] (vectorized for B batteries).
+    soc_clamped = map(s -> clamp(s, 0.0, 1.0), x.power.soc)
 
     # Actuator outputs in ABI-consistent ranges.
     motors_y_clamped = map(u -> clamp(u, 0.0, 1.0), x.motors_y)
@@ -860,20 +870,20 @@ function plant_project(f::CoupledMultirotorModel, x::PlantState{N}) where {N}
     end
 
     if (ω_clamped != x.rotor_ω) ||
-       (soc_clamped != x.batt_soc) ||
+       (soc_clamped != x.power.soc) ||
        (motors_y_clamped != x.motors_y) ||
        (servos_y_clamped != x.servos_y) ||
        (motors_ydot_proj != x.motors_ydot) ||
        (servos_ydot_proj != x.servos_ydot)
-        return PlantState{N}(
+        power = PowerState{B}(soc = soc_clamped, v1 = x.power.v1)
+        return PlantState{N,B}(
             rb = x.rb,
             motors_y = motors_y_clamped,
             motors_ydot = motors_ydot_proj,
             servos_y = servos_y_clamped,
             servos_ydot = servos_ydot_proj,
             rotor_ω = ω_clamped,
-            batt_soc = soc_clamped,
-            batt_v1 = x.batt_v1,
+            power = power,
         )
     end
 
@@ -891,34 +901,32 @@ For non-direct actuators, this is a no-op.
 """
 function plant_on_autopilot_tick(
     f::CoupledMultirotorModel,
-    x::PlantState{N},
+    x::PlantState{N,B},
     cmd::ActuatorCommand,
-) where {N}
+) where {N,B}
     x2 = x
 
     if f.motor_actuators isa Vehicles.DirectActuators
-        x2 = PlantState{N}(
+        x2 = PlantState{N,B}(
             rb = x2.rb,
             motors_y = cmd.motors,
             motors_ydot = zero(SVector{12,Float64}),
             servos_y = x2.servos_y,
             servos_ydot = x2.servos_ydot,
             rotor_ω = x2.rotor_ω,
-            batt_soc = x2.batt_soc,
-            batt_v1 = x2.batt_v1,
+            power = x2.power,
         )
     end
 
     if f.servo_actuators isa Vehicles.DirectActuators
-        x2 = PlantState{N}(
+        x2 = PlantState{N,B}(
             rb = x2.rb,
             motors_y = x2.motors_y,
             motors_ydot = x2.motors_ydot,
             servos_y = cmd.servos,
             servos_ydot = zero(SVector{8,Float64}),
             rotor_ω = x2.rotor_ω,
-            batt_soc = x2.batt_soc,
-            batt_v1 = x2.batt_v1,
+            power = x2.power,
         )
     end
 

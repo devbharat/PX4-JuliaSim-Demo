@@ -217,8 +217,8 @@ This mirrors `rb_error` but extends it with a minimal set of non-rigid-body
 continuous states that matter for the full-plant variable-step integrator:
 
 * `rotor` : ‖Δrotor_ω‖ (rad/s)
-* `soc`   : |ΔSOC|
-* `v1`    : |ΔV1| (V)
+* `soc`   : ‖ΔSOC‖ (L2 across batteries; equals |ΔSOC| for B=1)
+* `v1`    : ‖ΔV1‖  (L2 across batteries; equals |ΔV1| for B=1)
 
 Notes
 -----
@@ -226,11 +226,11 @@ Notes
   the dominant lag in rotor ω dynamics.
 * If actuator error terms are required, add a separate helper or extend this one.
 """
-@inline function plant_error(x::PlantState{N}, xref::PlantState{N}) where {N}
+@inline function plant_error(x::PlantState{N,B}, xref::PlantState{N,B}) where {N,B}
     rb = rb_error(x.rb, xref.rb)
     rotor = norm(x.rotor_ω - xref.rotor_ω)
-    soc = abs(x.batt_soc - xref.batt_soc)
-    v1 = abs(x.batt_v1 - xref.batt_v1)
+    soc = norm(x.power.soc - xref.power.soc)
+    v1 = norm(x.power.v1 - xref.power.v1)
     return (
         pos = rb.pos,
         vel = rb.vel,
@@ -307,14 +307,14 @@ Returns a named tuple:
 * `t` : time vector (Float64)
 * `pos_err`, `vel_err`, `att_err_rad`, `ω_err` : rigid-body error components
 * `rotor_err` : ‖Δrotor_ω‖ (rad/s)
-* `soc_err`   : |ΔSOC|
-* `v1_err`    : |ΔV1| (V)
+* `soc_err`   : ‖ΔSOC‖ (L2 across batteries)
+* `v1_err`    : ‖ΔV1‖  (L2 across batteries; V)
 * `max` and `rms` summaries for all components.
 """
 function error_series(
-    ref::Trajectory{PlantState{N}},
-    sol::Trajectory{PlantState{N}},
-) where {N}
+    ref::Trajectory{PlantState{N,B}},
+    sol::Trajectory{PlantState{N,B}},
+) where {N,B}
     @assert isapprox(ref.dt, sol.dt; atol = 0.0, rtol = 0.0) "dt mismatch"
     @assert length(ref.x) == length(sol.x) "length mismatch"
 
@@ -447,15 +447,15 @@ end
 This mirrors `compare_to_reference(::Trajectory{RigidBodyState}, ...)` but uses
 the `PlantState` error series (RB + rotor ω + SOC/V1).
 
-If `invfun` is provided, it must accept `PlantState{N}` and return a `NamedTuple`
+If `invfun` is provided, it must accept `PlantState{N,B}` and return a `NamedTuple`
 of scalar invariants. This enables "invariant drift" comparisons even for full-plant
 systems (e.g., Kepler energy/angular momentum in the rigid-body subset).
 """
 function compare_to_reference(
-    ref::Trajectory{PlantState{N}},
-    sol::Trajectory{PlantState{N}};
+    ref::Trajectory{PlantState{N,B}},
+    sol::Trajectory{PlantState{N,B}};
     invfun = nothing,
-) where {N}
+) where {N,B}
     err = error_series(ref, sol)
     if invfun === nothing
         return (err = err, invariants = nothing)

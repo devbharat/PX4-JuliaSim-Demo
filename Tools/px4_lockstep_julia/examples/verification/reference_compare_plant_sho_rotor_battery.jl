@@ -41,14 +41,17 @@ alpha = 200.0          # (1/s) rotor convergence rate (fast)
 soc_dot = -0.01    # per second
 tau_v1 = 0.2         # seconds
 
-function f(t::Float64, x::Sim.Plant.PlantState{4}, _u)
+function f(t::Float64, x::Sim.Plant.PlantState{4,1}, _u)
     rb_dot = f_rb(t, x.rb, nothing)
     rotor_dot = -alpha .* (x.rotor_ω - omega_target)
-    return Sim.Plant.PlantDeriv{4}(
+    power_dot = Sim.Plant.PowerDeriv{1}(
+        soc_dot = SVector{1,Float64}(soc_dot),
+        v1_dot = SVector{1,Float64}(-x.power.v1[1] / tau_v1),
+    )
+    return Sim.Plant.PlantDeriv{4,1}(
         rb = rb_dot,
         rotor_ω_dot = rotor_dot,
-        batt_soc_dot = soc_dot,
-        batt_v1_dot = -x.batt_v1 / tau_v1,
+        power = power_dot,
     )
 end
 
@@ -59,11 +62,13 @@ rb0 = Sim.RigidBody.RigidBodyState(
     ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
 )
 
-x0 = Sim.Plant.PlantState{4}(
+x0 = Sim.Plant.PlantState{4,1}(
     rb = rb0,
     rotor_ω = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-    batt_soc = 1.0,
-    batt_v1 = 1.0
+    power = Sim.Plant.PowerState{1}(
+        soc = SVector{1,Float64}(1.0),
+        v1 = SVector{1,Float64}(1.0),
+    ),
 )
 
 # Output grid for the *tested* solver.
@@ -88,7 +93,7 @@ ref_fine = V.rk45_reference(
 )
 ref = V.resample_trajectory(ref_fine, dt_sol)
 
-invfun = (s::Sim.Plant.PlantState{4},) -> (
+invfun = (s::Sim.Plant.PlantState{4,1},) -> (
     E_sho = V.sho_energy(sho, s.rb.pos_ned[1], s.rb.vel_ned[1]),
 )
 solvers = [

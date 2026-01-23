@@ -42,6 +42,8 @@ using ..Faults: FaultState
 
 export PlantState,
     PlantDeriv,
+    PowerState,
+    PowerDeriv,
     PlantInput,
     PlantOutputs,
     init_plant_state,
@@ -53,6 +55,40 @@ export PlantState,
 # Core plant state
 ############################
 
+"""Electrical power state integrated as part of the continuous plant.
+
+`B` is the number of batteries. This is kept as a type parameter so all state math
+remains allocation-free.
+
+Fields:
+* `soc`: state of charge for each battery [0,1]
+* `v1` : Thevenin polarization voltage state (V) for each battery (0 for ideal)
+"""
+struct PowerState{B}
+    soc::SVector{B,Float64}
+    v1::SVector{B,Float64}
+end
+
+function PowerState{B}(;
+    soc::SVector{B,Float64} = SVector{B,Float64}(ntuple(_ -> 1.0, B)),
+    v1::SVector{B,Float64} = zero(SVector{B,Float64}),
+) where {B}
+    return PowerState{B}(soc, v1)
+end
+
+"""Time derivative for `PowerState{B}`."""
+struct PowerDeriv{B}
+    soc_dot::SVector{B,Float64}
+    v1_dot::SVector{B,Float64}
+end
+
+function PowerDeriv{B}(;
+    soc_dot::SVector{B,Float64} = zero(SVector{B,Float64}),
+    v1_dot::SVector{B,Float64} = zero(SVector{B,Float64}),
+) where {B}
+    return PowerDeriv{B}(soc_dot, v1_dot)
+end
+
 """Continuous-time plant state.
 
 Fields:
@@ -62,77 +98,71 @@ Fields:
 * `servos_y`     : servo actuator outputs (8 channels, normalized [-1,1])
 * `servos_ydot`  : servo actuator rates
 * `rotor_ω`      : per-rotor angular speeds (rad/s)
-* `batt_soc`     : battery state of charge [0,1]
-* `batt_v1`      : Thevenin polarization voltage state (V), 0 for ideal batteries
+* `power`        : battery SOC + polarization state (`PowerState{B}`)
 
 Notes:
 * Motors/servos are fixed-size to match PX4 lockstep ABI sizes.
 * Rotor count is a type parameter `N` so the integrator can stay allocation-free.
+* Battery count is a type parameter `B` for the same reason.
 """
-struct PlantState{N}
+struct PlantState{N,B}
     rb::RigidBodyState
     motors_y::SVector{12,Float64}
     motors_ydot::SVector{12,Float64}
     servos_y::SVector{8,Float64}
     servos_ydot::SVector{8,Float64}
     rotor_ω::SVector{N,Float64}
-    batt_soc::Float64
-    batt_v1::Float64
+    power::PowerState{B}
 end
 
-function PlantState{N}(;
+function PlantState{N,B}(;
     rb::RigidBodyState = RigidBodyState(),
     motors_y::SVector{12,Float64} = zero(SVector{12,Float64}),
     motors_ydot::SVector{12,Float64} = zero(SVector{12,Float64}),
     servos_y::SVector{8,Float64} = zero(SVector{8,Float64}),
     servos_ydot::SVector{8,Float64} = zero(SVector{8,Float64}),
     rotor_ω::SVector{N,Float64} = zero(SVector{N,Float64}),
-    batt_soc::Float64 = 1.0,
-    batt_v1::Float64 = 0.0,
-) where {N}
-    return PlantState{N}(
+    power::PowerState{B} = PowerState{B}(),
+) where {N,B}
+    return PlantState{N,B}(
         rb,
         motors_y,
         motors_ydot,
         servos_y,
         servos_ydot,
         rotor_ω,
-        batt_soc,
-        batt_v1,
+        power,
     )
 end
 
 """Continuous-time plant derivative."""
-struct PlantDeriv{N}
+struct PlantDeriv{N,B}
     rb::RigidBodyDeriv
     motors_y_dot::SVector{12,Float64}
     motors_ydot_dot::SVector{12,Float64}
     servos_y_dot::SVector{8,Float64}
     servos_ydot_dot::SVector{8,Float64}
     rotor_ω_dot::SVector{N,Float64}
-    batt_soc_dot::Float64
-    batt_v1_dot::Float64
+    power::PowerDeriv{B}
 end
 
-function PlantDeriv{N}(;
+function PlantDeriv{N,B}(;
     rb::RigidBodyDeriv = RigidBodyDeriv(),
     motors_y_dot::SVector{12,Float64} = zero(SVector{12,Float64}),
     motors_ydot_dot::SVector{12,Float64} = zero(SVector{12,Float64}),
     servos_y_dot::SVector{8,Float64} = zero(SVector{8,Float64}),
     servos_ydot_dot::SVector{8,Float64} = zero(SVector{8,Float64}),
     rotor_ω_dot::SVector{N,Float64} = zero(SVector{N,Float64}),
-    batt_soc_dot::Float64 = 0.0,
-    batt_v1_dot::Float64 = 0.0,
-) where {N}
-    return PlantDeriv{N}(
+    power::PowerDeriv{B} = PowerDeriv{B}(),
+) where {N,B}
+    return PlantDeriv{N,B}(
         rb,
         motors_y_dot,
         motors_ydot_dot,
         servos_y_dot,
         servos_ydot_dot,
         rotor_ω_dot,
-        batt_soc_dot,
-        batt_v1_dot,
+        power,
     )
 end
 
@@ -179,30 +209,37 @@ end
 # State math (used by integrators)
 ############################
 
-@inline function plant_add(x::PlantState{N}, k::PlantDeriv{N}, h::Float64) where {N}
-    return PlantState{N}(
+@inline function plant_add(x::PlantState{N,B}, k::PlantDeriv{N,B}, h::Float64) where {N,B}
+    p = PowerState{B}(
+        soc = x.power.soc + k.power.soc_dot * h,
+        v1 = x.power.v1 + k.power.v1_dot * h,
+    )
+    return PlantState{N,B}(
         rb = rb_add(x.rb, k.rb, h),
         motors_y = x.motors_y + k.motors_y_dot * h,
         motors_ydot = x.motors_ydot + k.motors_ydot_dot * h,
         servos_y = x.servos_y + k.servos_y_dot * h,
         servos_ydot = x.servos_ydot + k.servos_ydot_dot * h,
         rotor_ω = x.rotor_ω + k.rotor_ω_dot * h,
-        batt_soc = x.batt_soc + k.batt_soc_dot * h,
-        batt_v1 = x.batt_v1 + k.batt_v1_dot * h,
+        power = p,
     )
 end
 
 @inline function plant_scale_add(
-    x::PlantState{N},
-    k1::PlantDeriv{N},
-    k2::PlantDeriv{N},
-    k3::PlantDeriv{N},
-    k4::PlantDeriv{N},
+    x::PlantState{N,B},
+    k1::PlantDeriv{N,B},
+    k2::PlantDeriv{N,B},
+    k3::PlantDeriv{N,B},
+    k4::PlantDeriv{N,B},
     h::Float64,
-) where {N}
+) where {N,B}
     # Mirrors `RigidBody.rb_scale_add` (classic RK4 combination).
     w = h / 6.0
-    return PlantState{N}(
+    p = PowerState{B}(
+        soc = x.power.soc + (k1.power.soc_dot + 2k2.power.soc_dot + 2k3.power.soc_dot + k4.power.soc_dot) * w,
+        v1 = x.power.v1 + (k1.power.v1_dot + 2k2.power.v1_dot + 2k3.power.v1_dot + k4.power.v1_dot) * w,
+    )
+    return PlantState{N,B}(
         rb = rb_scale_add(x.rb, k1.rb, k2.rb, k3.rb, k4.rb, h),
         motors_y = x.motors_y +
                    (
@@ -228,21 +265,16 @@ end
         ) * w,
         rotor_ω = x.rotor_ω +
                   (k1.rotor_ω_dot + 2k2.rotor_ω_dot + 2k3.rotor_ω_dot + k4.rotor_ω_dot) * w,
-        batt_soc = x.batt_soc +
-                   (
-            k1.batt_soc_dot + 2k2.batt_soc_dot + 2k3.batt_soc_dot + k4.batt_soc_dot
-        ) * w,
-        batt_v1 = x.batt_v1 +
-                  (k1.batt_v1_dot + 2k2.batt_v1_dot + 2k3.batt_v1_dot + k4.batt_v1_dot) * w,
+        power = p,
     )
 end
 
 @inline function plant_lincomb(
-    x::PlantState{N},
+    x::PlantState{N,B},
     h::Float64,
-    ks::NTuple{K,PlantDeriv{N}},
+    ks::NTuple{K,PlantDeriv{N,B}},
     as::NTuple{K,Float64},
-) where {N,K}
+) where {N,B,K}
     # Generic linear combination used by adaptive RK methods.
     # Note: keep quaternion normalization to a single normalize at the end (matches `_rb_lincomb`).
 
@@ -258,8 +290,8 @@ end
     servos_y = x.servos_y
     servos_ydot = x.servos_ydot
     rotor_ω = x.rotor_ω
-    batt_soc = x.batt_soc
-    batt_v1 = x.batt_v1
+    soc = x.power.soc
+    v1 = x.power.v1
 
     @inbounds for i = 1:K
         w = as[i] * h
@@ -273,21 +305,21 @@ end
         servos_y = servos_y + ks[i].servos_y_dot * w
         servos_ydot = servos_ydot + ks[i].servos_ydot_dot * w
         rotor_ω = rotor_ω + ks[i].rotor_ω_dot * w
-        batt_soc = batt_soc + ks[i].batt_soc_dot * w
-        batt_v1 = batt_v1 + ks[i].batt_v1_dot * w
+        soc = soc + ks[i].power.soc_dot * w
+        v1 = v1 + ks[i].power.v1_dot * w
     end
 
     rb = RigidBodyState(pos_ned = pos, vel_ned = vel, q_bn = quat_normalize(q), ω_body = ω)
 
-    return PlantState{N}(
+    p = PowerState{B}(soc = soc, v1 = v1)
+    return PlantState{N,B}(
         rb = rb,
         motors_y = motors_y,
         motors_ydot = motors_ydot,
         servos_y = servos_y,
         servos_ydot = servos_ydot,
         rotor_ω = rotor_ω,
-        batt_soc = batt_soc,
-        batt_v1 = batt_v1,
+        power = p,
     )
 end
 
@@ -335,19 +367,56 @@ function init_plant_state(
     my, mydot = _act_state(motor_actuators, Val(12))
     sy, sydot = _act_state(servo_actuators, Val(8))
     soc, v1 = _battery_state(battery)
+    power = PowerState{1}(
+        soc = SVector{1,Float64}(Float64(soc)),
+        v1 = SVector{1,Float64}(Float64(v1)),
+    )
 
     # Rotor angular rates are owned by the integrated plant state.
     ω = zero(SVector{N,Float64})
 
-    return PlantState{N}(
+    return PlantState{N,1}(
         rb = rb,
         motors_y = SVector{12,Float64}(my),
         motors_ydot = SVector{12,Float64}(mydot),
         servos_y = SVector{8,Float64}(sy),
         servos_ydot = SVector{8,Float64}(sydot),
         rotor_ω = ω,
-        batt_soc = soc,
-        batt_v1 = v1,
+        power = power,
+    )
+end
+
+"""Initialize a `PlantState{N,B}` for `B` batteries.
+
+This is a Phase 5.1 building block for multi-battery power networks. The current
+canonical coupled multirotor plant model still uses a *single* battery for the bus
+solve; multi-battery coupling is implemented in Phase 5.2+.
+"""
+function init_plant_state(
+    rb::RigidBodyState,
+    motor_actuators,
+    servo_actuators,
+    propulsion::Propulsion.QuadRotorSet{N},
+    batteries::NTuple{B,<:Powertrain.AbstractBatteryModel},
+) where {N,B}
+    my, mydot = _act_state(motor_actuators, Val(12))
+    sy, sydot = _act_state(servo_actuators, Val(8))
+
+    soc = SVector{B,Float64}(ntuple(i -> Float64(_battery_state(batteries[i])[1]), B))
+    v1 = SVector{B,Float64}(ntuple(i -> Float64(_battery_state(batteries[i])[2]), B))
+    power = PowerState{B}(soc = soc, v1 = v1)
+
+    # Rotor angular rates are owned by the integrated plant state.
+    ω = zero(SVector{N,Float64})
+
+    return PlantState{N,B}(
+        rb = rb,
+        motors_y = SVector{12,Float64}(my),
+        motors_ydot = SVector{12,Float64}(mydot),
+        servos_y = SVector{8,Float64}(sy),
+        servos_ydot = SVector{8,Float64}(sydot),
+        rotor_ω = ω,
+        power = power,
     )
 end
 

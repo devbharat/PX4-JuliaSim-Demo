@@ -193,14 +193,14 @@ end
 @testset "Integrators: adaptive RK45 supports PlantState" begin
     g = 9.80665
 
-    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+    function f(t::Float64, x::Sim.Plant.PlantState{4,1}, u)
         rḃ = Sim.RigidBody.RigidBodyDeriv(
             pos_dot = x.rb.vel_ned,
             vel_dot = Sim.Types.vec3(0.0, 0.0, g),
             q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
             ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
         )
-        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+        return Sim.Plant.PlantDeriv{4,1}(rb = rḃ)
     end
 
     rb0 = Sim.RigidBody.RigidBodyState(
@@ -209,7 +209,13 @@ end
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+    x0 = Sim.Plant.PlantState{4,1}(
+        rb = rb0,
+        power = Sim.Plant.PowerState{1}(
+            soc = SVector{1,Float64}(1.0),
+            v1 = SVector{1,Float64}(0.0),
+        ),
+    )
 
     integ1 = Sim.Integrators.RK45Integrator(
         rtol_pos = 1e-8,
@@ -231,8 +237,7 @@ end
     @test x1.motors_y == x0.motors_y
     @test x1.servos_y == x0.servos_y
     @test x1.rotor_ω == x0.rotor_ω
-    @test x1.batt_soc == x0.batt_soc
-    @test x1.batt_v1 == x0.batt_v1
+    @test x1.power == x0.power
 
     # Determinism check.
     integ2 = Sim.Integrators.RK45Integrator(
@@ -253,14 +258,14 @@ end
 @testset "Integrators: adaptive RK23 supports PlantState" begin
     g = 9.80665
 
-    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+    function f(t::Float64, x::Sim.Plant.PlantState{4,1}, u)
         rḃ = Sim.RigidBody.RigidBodyDeriv(
             pos_dot = x.rb.vel_ned,
             vel_dot = Sim.Types.vec3(0.0, 0.0, g),
             q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
             ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
         )
-        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+        return Sim.Plant.PlantDeriv{4,1}(rb = rḃ)
     end
 
     rb0 = Sim.RigidBody.RigidBodyState(
@@ -269,7 +274,13 @@ end
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+    x0 = Sim.Plant.PlantState{4,1}(
+        rb = rb0,
+        power = Sim.Plant.PowerState{1}(
+            soc = SVector{1,Float64}(1.0),
+            v1 = SVector{1,Float64}(0.0),
+        ),
+    )
 
     integ1 = Sim.Integrators.RK23Integrator(
         rtol_pos = 1e-8,
@@ -290,8 +301,7 @@ end
     @test x1.motors_y == x0.motors_y
     @test x1.servos_y == x0.servos_y
     @test x1.rotor_ω == x0.rotor_ω
-    @test x1.batt_soc == x0.batt_soc
-    @test x1.batt_v1 == x0.batt_v1
+    @test x1.power == x0.power
 
     integ2 = Sim.Integrators.RK23Integrator(
         rtol_pos = 1e-8,
@@ -311,14 +321,14 @@ end
 @testset "Integrators: RK4 supports PlantState" begin
     g = 9.80665
 
-    function f(t::Float64, x::Sim.Plant.PlantState{4}, u)
+    function f(t::Float64, x::Sim.Plant.PlantState{4,1}, u)
         rḃ = Sim.RigidBody.RigidBodyDeriv(
             pos_dot = x.rb.vel_ned,
             vel_dot = Sim.Types.vec3(0.0, 0.0, g),
             q_dot = Sim.RigidBody.quat_deriv(x.rb.q_bn, x.rb.ω_body),
             ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
         )
-        return Sim.Plant.PlantDeriv{4}(rb = rḃ)
+        return Sim.Plant.PlantDeriv{4,1}(rb = rḃ)
     end
 
     rb0 = Sim.RigidBody.RigidBodyState(
@@ -327,7 +337,13 @@ end
         q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    x0 = Sim.Plant.PlantState{4}(rb = rb0, batt_soc = 1.0, batt_v1 = 0.0)
+    x0 = Sim.Plant.PlantState{4,1}(
+        rb = rb0,
+        power = Sim.Plant.PowerState{1}(
+            soc = SVector{1,Float64}(1.0),
+            v1 = SVector{1,Float64}(0.0),
+        ),
+    )
 
     integ1 = Sim.Integrators.RK4Integrator()
     x1 = Sim.Integrators.step_integrator(integ1, f, 0.0, x0, nothing, 1.0)
@@ -338,8 +354,7 @@ end
     @test x1.motors_y == x0.motors_y
     @test x1.servos_y == x0.servos_y
     @test x1.rotor_ω == x0.rotor_ω
-    @test x1.batt_soc == x0.batt_soc
-    @test x1.batt_v1 == x0.batt_v1
+    @test x1.power == x0.power
 
     integ2 = Sim.Integrators.RK4Integrator()
     x2 = Sim.Integrators.step_integrator(integ2, f, 0.0, x0, nothing, 1.0)
@@ -358,9 +373,13 @@ end
     ω_hi = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
     ω_lo = SVector{4,Float64}(90.0, 90.0, 90.0, 90.0)
 
-    x_ref = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_hi, batt_soc = 1.0, batt_v1 = 0.0)
-    x_hi = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_hi, batt_soc = 1.0, batt_v1 = 0.0)
-    x_lo = Sim.Plant.PlantState{4}(rb = rb0, rotor_ω = ω_lo, batt_soc = 1.0, batt_v1 = 0.0)
+    power0 = Sim.Plant.PowerState{1}(
+        soc = SVector{1,Float64}(1.0),
+        v1 = SVector{1,Float64}(0.0),
+    )
+    x_ref = Sim.Plant.PlantState{4,1}(rb = rb0, rotor_ω = ω_hi, power = power0)
+    x_hi = Sim.Plant.PlantState{4,1}(rb = rb0, rotor_ω = ω_hi, power = power0)
+    x_lo = Sim.Plant.PlantState{4,1}(rb = rb0, rotor_ω = ω_lo, power = power0)
 
     integ = Sim.Integrators.RK45Integrator(
         plant_error_control = false,  # default behavior
@@ -831,15 +850,14 @@ end
         applicable(Sim.plant_on_autopilot_tick, dynfun, plant0, cmd) ?
         Sim.plant_on_autopilot_tick(dynfun, plant0, cmd) :
         plant0
-    plant0_spin = Sim.Plant.PlantState{4}(
+    plant0_spin = Sim.Plant.PlantState{4,1}(
         rb = plant0_mapped.rb,
         motors_y = plant0_mapped.motors_y,
         motors_ydot = plant0_mapped.motors_ydot,
         servos_y = plant0_mapped.servos_y,
         servos_ydot = plant0_mapped.servos_ydot,
         rotor_ω = SVector{4,Float64}(0.0, 0.0, 300.0, 0.0),
-        batt_soc = plant0_mapped.batt_soc,
-        batt_v1 = plant0_mapped.batt_v1,
+        power = plant0_mapped.power,
     )
 
     y = Sim.plant_outputs(dynfun, 0.0, plant0_spin, u)

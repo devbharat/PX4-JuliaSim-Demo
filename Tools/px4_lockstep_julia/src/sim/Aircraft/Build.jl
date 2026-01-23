@@ -596,7 +596,12 @@ function build_engine(
 
     try
         if mode === :record
-            recorder = Recording.InMemoryRecorder()
+            recorder = Recording.FixedRecorder(
+                inst.timeline,
+                inst.plant0;
+                record_faults_evt = true,
+                record_estimator = false,
+            )
             eng = _SIM.simulate(
                 mode = :record,
                 timeline = inst.timeline,
@@ -615,7 +620,7 @@ function build_engine(
             rec = Recording.Tier0Recording(
                 timeline = inst.timeline,
                 plant0 = inst.plant0,
-                recorder = recorder,
+                recorder = Recording.to_inmemory(recorder),
                 meta = inst.meta,
             )
             if recording_out !== nothing

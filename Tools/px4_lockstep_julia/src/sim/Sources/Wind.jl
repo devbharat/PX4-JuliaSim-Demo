@@ -12,6 +12,7 @@ The wind published on the bus is treated as **sample-and-hold** between wind tic
 using Random: AbstractRNG
 
 using ..Environment: AbstractWind, step_wind!, sample_wind!, wind_velocity
+using ..Recording: AbstractTrace, SampleHoldTrace, SampleHoldCursor, sample
 using ..Runtime: dt_to_us
 
 """Base type for wind sources."""
@@ -51,9 +52,12 @@ end
 
 Samples a sample-and-hold wind trace and publishes into `bus.wind_ned`.
 """
-struct ReplayWindSource{T<:SampleHoldTrace{Vec3}} <: AbstractWindSource
+struct ReplayWindSource{T<:AbstractTrace{Vec3}} <: AbstractWindSource
     wind_trace::T
 end
+
+ReplayWindSource(tr::SampleHoldTrace{Vec3}) = ReplayWindSource(SampleHoldCursor(tr))
+ReplayWindSource(tr::SampleHoldCursor{Vec3}) = ReplayWindSource{typeof(tr)}(tr)
 
 function update!(src::ReplayWindSource, bus::SimBus, plant_state, t_us::UInt64)
     bus.wind_ned = sample(src.wind_trace, t_us)

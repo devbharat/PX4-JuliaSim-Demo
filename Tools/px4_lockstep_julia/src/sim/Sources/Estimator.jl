@@ -13,6 +13,7 @@ using Random: AbstractRNG
 
 using ..Estimators: AbstractEstimator, estimate!
 using ..Faults: SENSOR_FAULT_EST_FREEZE
+using ..Recording: AbstractTrace, ZOHTrace, ZOHCursor, sample
 
 """Base type for estimator sources."""
 abstract type AbstractEstimatorSource <: AbstractSource end
@@ -40,9 +41,12 @@ Publishes `bus.est` at autopilot axis times.
 
 Interpolation: estimator output is treated as ZOH between ticks.
 """
-struct ReplayEstimatorSource{T<:ZOHTrace{EstimatedState}} <: AbstractEstimatorSource
+struct ReplayEstimatorSource{T<:AbstractTrace{EstimatedState}} <: AbstractEstimatorSource
     est_trace::T
 end
+
+ReplayEstimatorSource(tr::ZOHTrace{EstimatedState}) = ReplayEstimatorSource(ZOHCursor(tr))
+ReplayEstimatorSource(tr::ZOHCursor{EstimatedState}) = ReplayEstimatorSource{typeof(tr)}(tr)
 
 function update!(src::ReplayEstimatorSource, bus::SimBus, plant_state, t_us::UInt64)
     bus.est = sample(src.est_trace, t_us)

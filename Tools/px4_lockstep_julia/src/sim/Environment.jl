@@ -218,8 +218,8 @@ Adds `gust_v_ned` between `[t_on, t_off)`.
 This is intentionally simple and deterministic; it can be replaced with Dryden/von Karman
 models later.
 """
-struct GustStep <: AbstractWind
-    mean::AbstractWind
+struct GustStep{W<:AbstractWind} <: AbstractWind
+    mean::W
     gust_v_ned::Vec3
     t_on_us::UInt64
     t_off_us::UInt64

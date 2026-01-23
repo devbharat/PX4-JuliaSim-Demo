@@ -17,6 +17,7 @@ module Sources
 
 using ..Types: Vec3
 using ..RigidBody: RigidBodyState
+using ..Plant: PlantState
 using ..Vehicles: ActuatorCommand
 using ..Estimators: EstimatedState
 using ..Faults: FaultState
@@ -28,14 +29,11 @@ import ..Runtime: SimBus, update!, event_times_us
 abstract type AbstractSource end
 
 """Extract a rigid-body state from either `RigidBodyState` or `PlantState`."""
-function _rb_state(plant_state)
-    if plant_state isa RigidBodyState
-        return plant_state
-    elseif hasproperty(plant_state, :rb)
-        return getproperty(plant_state, :rb)
-    end
+@inline _rb_state(state::RigidBodyState) = state
+@inline _rb_state(state::PlantState) = state.rb
+function _rb_state(state)
     error(
-        "Sources: cannot extract rigid-body state from plant_state of type $(typeof(plant_state))",
+        "Sources: cannot extract rigid-body state from plant_state of type $(typeof(state))",
     )
 end
 

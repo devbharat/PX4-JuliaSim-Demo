@@ -235,8 +235,8 @@ itself does not constrain the PX4 step frequency.
 function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
     inj = PX4UORBInjector()
 
-    if haskey(bridge.pubs, :battery_status)
-        pub = bridge.pubs[:battery_status]::UORBPublisher{BatteryStatusMsg}
+    pub = bridge.pub_battery_status
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :battery_status,
             pub = pub,
@@ -245,8 +245,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_attitude)
-        pub = bridge.pubs[:vehicle_attitude]::UORBPublisher{VehicleAttitudeMsg}
+    pub = bridge.pub_vehicle_attitude
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_attitude,
             pub = pub,
@@ -255,8 +255,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_local_position)
-        pub = bridge.pubs[:vehicle_local_position]::UORBPublisher{VehicleLocalPositionMsg}
+    pub = bridge.pub_vehicle_local_position
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_local_position,
             pub = pub,
@@ -273,8 +273,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_global_position)
-        pub = bridge.pubs[:vehicle_global_position]::UORBPublisher{VehicleGlobalPositionMsg}
+    pub = bridge.pub_vehicle_global_position
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_global_position,
             pub = pub,
@@ -284,8 +284,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_angular_velocity)
-        pub = bridge.pubs[:vehicle_angular_velocity]::UORBPublisher{VehicleAngularVelocityMsg}
+    pub = bridge.pub_vehicle_angular_velocity
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_angular_velocity,
             pub = pub,
@@ -294,8 +294,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_land_detected)
-        pub = bridge.pubs[:vehicle_land_detected]::UORBPublisher{VehicleLandDetectedMsg}
+    pub = bridge.pub_vehicle_land_detected
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_land_detected,
             pub = pub,
@@ -304,8 +304,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_status)
-        pub = bridge.pubs[:vehicle_status]::UORBPublisher{VehicleStatusMsg}
+    pub = bridge.pub_vehicle_status
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_status,
             pub = pub,
@@ -314,8 +314,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :vehicle_control_mode)
-        pub = bridge.pubs[:vehicle_control_mode]::UORBPublisher{VehicleControlModeMsg}
+    pub = bridge.pub_vehicle_control_mode
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :vehicle_control_mode,
             pub = pub,
@@ -330,8 +330,8 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :actuator_armed)
-        pub = bridge.pubs[:actuator_armed]::UORBPublisher{ActuatorArmedMsg}
+    pub = bridge.pub_actuator_armed
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :actuator_armed,
             pub = pub,
@@ -340,13 +340,13 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
         ))
     end
 
-    if haskey(bridge.pubs, :home_position)
-        pub = bridge.pubs[:home_position]::UORBPublisher{HomePositionMsg}
+    pub = bridge.pub_home_position
+    if pub !== nothing
         add_source!(inj, HomePositionUORBInjection(pub = pub, home = home))
     end
 
-    if haskey(bridge.pubs, :geofence_status)
-        pub = bridge.pubs[:geofence_status]::UORBPublisher{GeofenceStatusMsg}
+    pub = bridge.pub_geofence_status
+    if pub !== nothing
         add_source!(inj, PeriodicUORBInjection(
             name = :geofence_status,
             pub = pub,

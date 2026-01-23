@@ -145,14 +145,63 @@ Base.@kwdef mutable struct UORBOutputs
     trajectory_setpoint_yawspeed::Float32 = 0.0f0
 end
 
+struct UORBSubSlot{T}
+    sub::UORBSubscriber{T}
+    buf::Base.RefValue{T}
+end
+
+UORBSubSlot(sub::UORBSubscriber{T}) where {T} = UORBSubSlot{T}(sub, Ref{T}())
+
+@inline function read_updated!(h::LockstepHandle, slot::UORBSubSlot{T}) where {T}
+    uorb_check(h, slot.sub) || return false
+    uorb_copy!(h, slot.sub, slot.buf)
+    return true
+end
+
 mutable struct UORBBridge
     handle::LockstepHandle
     pubs::Dict{Symbol,UORBPublisher}
-    subs::Dict{Symbol,UORBSubscriber}
+    subs::Dict{Symbol,UORBSubSlot}
+
+    # Fast-path publishers (avoid Dict lookups in hot loop).
+    pub_battery_status::Union{Nothing,UORBPublisher{BatteryStatusMsg}}
+    pub_vehicle_attitude::Union{Nothing,UORBPublisher{VehicleAttitudeMsg}}
+    pub_vehicle_local_position::Union{Nothing,UORBPublisher{VehicleLocalPositionMsg}}
+    pub_vehicle_global_position::Union{Nothing,UORBPublisher{VehicleGlobalPositionMsg}}
+    pub_vehicle_angular_velocity::Union{Nothing,UORBPublisher{VehicleAngularVelocityMsg}}
+    pub_vehicle_land_detected::Union{Nothing,UORBPublisher{VehicleLandDetectedMsg}}
+    pub_vehicle_status::Union{Nothing,UORBPublisher{VehicleStatusMsg}}
+    pub_vehicle_control_mode::Union{Nothing,UORBPublisher{VehicleControlModeMsg}}
+    pub_actuator_armed::Union{Nothing,UORBPublisher{ActuatorArmedMsg}}
+    pub_home_position::Union{Nothing,UORBPublisher{HomePositionMsg}}
+    pub_geofence_status::Union{Nothing,UORBPublisher{GeofenceStatusMsg}}
+
+    # Fast-path subscribers (avoid Dict lookups + allocations in hot loop).
+    sub_torque_sp::Union{Nothing,UORBSubSlot{VehicleTorqueSetpointMsg}}
+    sub_thrust_sp::Union{Nothing,UORBSubSlot{VehicleThrustSetpointMsg}}
+    sub_actuator_motors::Union{Nothing,UORBSubSlot{ActuatorMotorsMsg}}
+    sub_actuator_servos::Union{Nothing,UORBSubSlot{ActuatorServosMsg}}
+    sub_attitude_sp::Union{Nothing,UORBSubSlot{VehicleAttitudeSetpointMsg}}
+    sub_rates_sp::Union{Nothing,UORBSubSlot{VehicleRatesSetpointMsg}}
+    sub_mission_result::Union{Nothing,UORBSubSlot{MissionResultMsg}}
+    sub_vehicle_status::Union{Nothing,UORBSubSlot{VehicleStatusMsg}}
+    sub_battery_status::Union{Nothing,UORBSubSlot{BatteryStatusMsg}}
+    sub_trajectory_setpoint::Union{Nothing,UORBSubSlot{TrajectorySetpointMsg}}
 end
 
 function _init_uorb_bridge(handle::LockstepHandle, cfg::PX4UORBInterfaceConfig)
     pubs = Dict{Symbol,UORBPublisher}()
+    pub_battery_status = nothing
+    pub_vehicle_attitude = nothing
+    pub_vehicle_local_position = nothing
+    pub_vehicle_global_position = nothing
+    pub_vehicle_angular_velocity = nothing
+    pub_vehicle_land_detected = nothing
+    pub_vehicle_status = nothing
+    pub_vehicle_control_mode = nothing
+    pub_actuator_armed = nothing
+    pub_home_position = nothing
+    pub_geofence_status = nothing
     for spec in cfg.pubs
         spec.type <: UORBMsg ||
             error("UORBPubSpec type must be a uORB message type (got $(spec.type))")
@@ -164,17 +213,97 @@ function _init_uorb_bridge(handle::LockstepHandle, cfg::PX4UORBInterfaceConfig)
             instance = spec.instance,
         )
         pubs[spec.key] = pub
+        if spec.key === :battery_status
+            pub_battery_status = pub::UORBPublisher{BatteryStatusMsg}
+        elseif spec.key === :vehicle_attitude
+            pub_vehicle_attitude = pub::UORBPublisher{VehicleAttitudeMsg}
+        elseif spec.key === :vehicle_local_position
+            pub_vehicle_local_position = pub::UORBPublisher{VehicleLocalPositionMsg}
+        elseif spec.key === :vehicle_global_position
+            pub_vehicle_global_position = pub::UORBPublisher{VehicleGlobalPositionMsg}
+        elseif spec.key === :vehicle_angular_velocity
+            pub_vehicle_angular_velocity = pub::UORBPublisher{VehicleAngularVelocityMsg}
+        elseif spec.key === :vehicle_land_detected
+            pub_vehicle_land_detected = pub::UORBPublisher{VehicleLandDetectedMsg}
+        elseif spec.key === :vehicle_status
+            pub_vehicle_status = pub::UORBPublisher{VehicleStatusMsg}
+        elseif spec.key === :vehicle_control_mode
+            pub_vehicle_control_mode = pub::UORBPublisher{VehicleControlModeMsg}
+        elseif spec.key === :actuator_armed
+            pub_actuator_armed = pub::UORBPublisher{ActuatorArmedMsg}
+        elseif spec.key === :home_position
+            pub_home_position = pub::UORBPublisher{HomePositionMsg}
+        elseif spec.key === :geofence_status
+            pub_geofence_status = pub::UORBPublisher{GeofenceStatusMsg}
+        end
     end
 
-    subs = Dict{Symbol,UORBSubscriber}()
+    subs = Dict{Symbol,UORBSubSlot}()
+    sub_torque_sp = nothing
+    sub_thrust_sp = nothing
+    sub_actuator_motors = nothing
+    sub_actuator_servos = nothing
+    sub_attitude_sp = nothing
+    sub_rates_sp = nothing
+    sub_mission_result = nothing
+    sub_vehicle_status = nothing
+    sub_battery_status = nothing
+    sub_trajectory_setpoint = nothing
     for spec in cfg.subs
         spec.type <: UORBMsg ||
             error("UORBSubSpec type must be a uORB message type (got $(spec.type))")
         sub = create_subscriber(handle, spec.type; instance = spec.instance)
-        subs[spec.key] = sub
+        slot = UORBSubSlot(sub)
+        subs[spec.key] = slot
+        if spec.key === :torque_sp
+            sub_torque_sp = slot::UORBSubSlot{VehicleTorqueSetpointMsg}
+        elseif spec.key === :thrust_sp
+            sub_thrust_sp = slot::UORBSubSlot{VehicleThrustSetpointMsg}
+        elseif spec.key === :actuator_motors
+            sub_actuator_motors = slot::UORBSubSlot{ActuatorMotorsMsg}
+        elseif spec.key === :actuator_servos
+            sub_actuator_servos = slot::UORBSubSlot{ActuatorServosMsg}
+        elseif spec.key === :attitude_sp
+            sub_attitude_sp = slot::UORBSubSlot{VehicleAttitudeSetpointMsg}
+        elseif spec.key === :rates_sp
+            sub_rates_sp = slot::UORBSubSlot{VehicleRatesSetpointMsg}
+        elseif spec.key === :mission_result
+            sub_mission_result = slot::UORBSubSlot{MissionResultMsg}
+        elseif spec.key === :vehicle_status
+            sub_vehicle_status = slot::UORBSubSlot{VehicleStatusMsg}
+        elseif spec.key === :battery_status
+            sub_battery_status = slot::UORBSubSlot{BatteryStatusMsg}
+        elseif spec.key === :trajectory_setpoint
+            sub_trajectory_setpoint = slot::UORBSubSlot{TrajectorySetpointMsg}
+        end
     end
 
-    return UORBBridge(handle, pubs, subs)
+    return UORBBridge(
+        handle,
+        pubs,
+        subs,
+        pub_battery_status,
+        pub_vehicle_attitude,
+        pub_vehicle_local_position,
+        pub_vehicle_global_position,
+        pub_vehicle_angular_velocity,
+        pub_vehicle_land_detected,
+        pub_vehicle_status,
+        pub_vehicle_control_mode,
+        pub_actuator_armed,
+        pub_home_position,
+        pub_geofence_status,
+        sub_torque_sp,
+        sub_thrust_sp,
+        sub_actuator_motors,
+        sub_actuator_servos,
+        sub_attitude_sp,
+        sub_rates_sp,
+        sub_mission_result,
+        sub_vehicle_status,
+        sub_battery_status,
+        sub_trajectory_setpoint,
+    )
 end
 
 # Convenience: build the default Iris interface.
@@ -182,8 +311,8 @@ _init_uorb_bridge(handle::LockstepHandle) =
     _init_uorb_bridge(handle, iris_state_injection_interface())
 
 function _close_uorb_bridge!(bridge::UORBBridge)
-    for sub in values(bridge.subs)
-        uorb_unsubscribe!(bridge.handle, sub)
+    for slot in values(bridge.subs)
+        uorb_unsubscribe!(bridge.handle, slot.sub)
     end
     return nothing
 end
@@ -196,10 +325,10 @@ function _publish_uorb!(bridge::UORBBridge, key::Symbol, msg)
 end
 
 function _read_uorb(bridge::UORBBridge, key::Symbol)
-    sub = get(bridge.subs, key, nothing)
-    sub === nothing && return nothing
-    uorb_check(bridge.handle, sub) || return nothing
-    return uorb_copy(bridge.handle, sub)
+    slot = get(bridge.subs, key, nothing)
+    slot === nothing && return nothing
+    read_updated!(bridge.handle, slot) || return nothing
+    return slot.buf[]
 end
 
 @inline function _update_controls_torque(
@@ -236,62 +365,67 @@ end
 
 function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
     controls = out.actuator_controls
-    torque_msg = _read_uorb(bridge, :torque_sp)
-    if torque_msg !== nothing
-        controls = _update_controls_torque(controls, torque_msg)
+    slot = bridge.sub_torque_sp
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        controls = _update_controls_torque(controls, slot.buf[])
     end
-    thrust_msg = _read_uorb(bridge, :thrust_sp)
-    if thrust_msg !== nothing
-        controls = _update_controls_thrust(controls, thrust_msg)
+    slot = bridge.sub_thrust_sp
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        controls = _update_controls_thrust(controls, slot.buf[])
     end
     out.actuator_controls = controls
 
-    motors_msg = _read_uorb(bridge, :actuator_motors)
-    if motors_msg !== nothing
-        out.actuator_motors = motors_msg.control
+    slot = bridge.sub_actuator_motors
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        out.actuator_motors = slot.buf[].control
     end
 
-    servos_msg = _read_uorb(bridge, :actuator_servos)
-    if servos_msg !== nothing
-        out.actuator_servos = servos_msg.control
+    slot = bridge.sub_actuator_servos
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        out.actuator_servos = slot.buf[].control
     end
 
-    att_msg = _read_uorb(bridge, :attitude_sp)
-    if att_msg !== nothing
-        out.attitude_setpoint_q = att_msg.q_d
-        out.thrust_setpoint_body = att_msg.thrust_body
+    slot = bridge.sub_attitude_sp
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        msg = slot.buf[]
+        out.attitude_setpoint_q = msg.q_d
+        out.thrust_setpoint_body = msg.thrust_body
     end
 
-    rates_msg = _read_uorb(bridge, :rates_sp)
-    if rates_msg !== nothing
-        out.rates_setpoint_xyz = (rates_msg.roll, rates_msg.pitch, rates_msg.yaw)
+    slot = bridge.sub_rates_sp
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        msg = slot.buf[]
+        out.rates_setpoint_xyz = (msg.roll, msg.pitch, msg.yaw)
     end
 
-    mission_msg = _read_uorb(bridge, :mission_result)
-    if mission_msg !== nothing
-        out.mission_seq = Int32(mission_msg.seq_current)
-        out.mission_count = Int32(mission_msg.seq_total)
-        out.mission_finished = mission_msg.finished ? Int32(1) : Int32(0)
+    slot = bridge.sub_mission_result
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        msg = slot.buf[]
+        out.mission_seq = Int32(msg.seq_current)
+        out.mission_count = Int32(msg.seq_total)
+        out.mission_finished = msg.finished ? Int32(1) : Int32(0)
     end
 
-    vstatus_msg = _read_uorb(bridge, :vehicle_status)
-    if vstatus_msg !== nothing
-        out.nav_state = Int32(vstatus_msg.nav_state)
-        out.arming_state = Int32(vstatus_msg.arming_state)
+    slot = bridge.sub_vehicle_status
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        msg = slot.buf[]
+        out.nav_state = Int32(msg.nav_state)
+        out.arming_state = Int32(msg.arming_state)
     end
 
-    battery_msg = _read_uorb(bridge, :battery_status)
-    if battery_msg !== nothing
-        out.battery_warning = Int32(battery_msg.warning)
+    slot = bridge.sub_battery_status
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        out.battery_warning = Int32(slot.buf[].warning)
     end
 
-    traj_msg = _read_uorb(bridge, :trajectory_setpoint)
-    if traj_msg !== nothing
-        out.trajectory_setpoint_position = traj_msg.position
-        out.trajectory_setpoint_velocity = traj_msg.velocity
-        out.trajectory_setpoint_acceleration = traj_msg.acceleration
-        out.trajectory_setpoint_yaw = traj_msg.yaw
-        out.trajectory_setpoint_yawspeed = traj_msg.yawspeed
+    slot = bridge.sub_trajectory_setpoint
+    if slot !== nothing && read_updated!(bridge.handle, slot)
+        msg = slot.buf[]
+        out.trajectory_setpoint_position = msg.position
+        out.trajectory_setpoint_velocity = msg.velocity
+        out.trajectory_setpoint_acceleration = msg.acceleration
+        out.trajectory_setpoint_yaw = msg.yaw
+        out.trajectory_setpoint_yawspeed = msg.yawspeed
     end
 
     return out

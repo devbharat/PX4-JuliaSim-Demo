@@ -14,6 +14,7 @@ using StaticArrays: SVector
 import Base.CoreLogging: @warn
 
 using ..Autopilots: autopilot_step, autopilot_output_type, UORBOutputs
+using ..Recording: AbstractTrace, ZOHTrace, ZOHCursor
 import ..Runtime: AutopilotTelemetry, autopilot_telemetry
 
 """Base type for autopilot sources."""
@@ -110,9 +111,12 @@ end
 
 Samples a ZOH command trace and publishes into `bus.cmd`.
 """
-struct ReplayAutopilotSource{T<:ZOHTrace{ActuatorCommand}} <: AbstractAutopilotSource
+struct ReplayAutopilotSource{T<:AbstractTrace{ActuatorCommand}} <: AbstractAutopilotSource
     cmd_trace::T
 end
+
+ReplayAutopilotSource(tr::ZOHTrace{ActuatorCommand}) = ReplayAutopilotSource(ZOHCursor(tr))
+ReplayAutopilotSource(tr::ZOHCursor{ActuatorCommand}) = ReplayAutopilotSource{typeof(tr)}(tr)
 
 function update!(src::ReplayAutopilotSource, bus::SimBus, plant_state, t_us::UInt64)
     bus.cmd = sample(src.cmd_trace, t_us)

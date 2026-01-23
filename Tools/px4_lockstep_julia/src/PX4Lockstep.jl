@@ -136,11 +136,31 @@ Base.@kwdef struct LockstepConfig
     control_allocator_rate_hz::Int32 = 250
 end
 
+"""Cached function pointers for hot-path lockstep calls."""
+struct LockstepFns
+    step_uorb::Ptr{Cvoid}
+    orb_check::Ptr{Cvoid}
+    orb_copy::Ptr{Cvoid}
+    orb_queue_publish::Ptr{Cvoid}
+    orb_unsubscribe::Ptr{Cvoid}
+end
+
+function _init_lockstep_fns(lib::Ptr{Cvoid})
+    return LockstepFns(
+        _resolve_symbol(lib, :px4_lockstep_step_uorb),
+        _resolve_symbol(lib, :px4_lockstep_orb_check),
+        _resolve_symbol(lib, :px4_lockstep_orb_copy),
+        _resolve_symbol(lib, :px4_lockstep_orb_queue_publish),
+        _resolve_symbol(lib, :px4_lockstep_orb_unsubscribe),
+    )
+end
+
 """Handle for a loaded `libpx4_lockstep` instance."""
 mutable struct LockstepHandle
     ptr::Ptr{Cvoid}
     lib::Ptr{Cvoid}
     config::LockstepConfig
+    fns::LockstepFns
 end
 
 """Validate Julia <-> C ABI compatibility.
@@ -198,7 +218,8 @@ function create(
         fn = _resolve_symbol(lib, :px4_lockstep_create)
         handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
         handle == C_NULL && error("px4_lockstep_create returned NULL")
-        lockstep = LockstepHandle(handle, lib, config)
+        fns = _init_lockstep_fns(lib)
+        lockstep = LockstepHandle(handle, lib, config, fns)
         finalizer(lockstep) do instance
             try
                 destroy(instance)
@@ -227,12 +248,7 @@ function load_mission(handle::LockstepHandle, path::AbstractString)
 end
 
 function step_uorb!(handle::LockstepHandle, time_us::UInt64)
-    fn = try
-        _resolve_symbol(handle.lib, :px4_lockstep_step_uorb)
-    catch err
-        error("px4_lockstep_step_uorb unavailable; rebuild libpx4_lockstep")
-    end
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, UInt64), handle.ptr, time_us)
+    ret = ccall(handle.fns.step_uorb, Cint, (Ptr{Cvoid}, UInt64), handle.ptr, time_us)
     ret == 0 || error("px4_lockstep_step_uorb failed with code $ret")
     return nothing
 end
@@ -770,8 +786,15 @@ function _queue_uorb_publish!(handle::LockstepHandle, pub::UORBPublisher, msg::T
     n == pub.msg_size || error(
         "uORB msg size mismatch for pub $(pub.id): got $n bytes, expected $(pub.msg_size)",
     )
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_queue_publish)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, pub.id, msg, n)
+    ret = ccall(
+        handle.fns.orb_queue_publish,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{T}, UInt32),
+        handle.ptr,
+        pub.id,
+        msg,
+        n,
+    )
     ret == 0 || error("px4_lockstep_orb_queue_publish failed with code $ret")
     return nothing
 end
@@ -842,9 +865,15 @@ end
 
 """Return whether a subscription has new data."""
 function uorb_check(handle::LockstepHandle, sub::UORBSubscriber)::Bool
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_check)
     updated = Ref{Int32}(0)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{Int32}), handle.ptr, sub.id, updated)
+    ret = ccall(
+        handle.fns.orb_check,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{Int32}),
+        handle.ptr,
+        sub.id,
+        updated,
+    )
     ret == 0 || error("px4_lockstep_orb_check failed with code $ret")
     return updated[] != 0
 end
@@ -856,8 +885,15 @@ function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber{T}, out::Ref{T})
     n == sub.msg_size || error(
         "uORB msg size mismatch for sub $(sub.id): got $n bytes, expected $(sub.msg_size)",
     )
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_copy)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, sub.id, out, n)
+    ret = ccall(
+        handle.fns.orb_copy,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{T}, UInt32),
+        handle.ptr,
+        sub.id,
+        out,
+        n,
+    )
     ret == 0 || error("px4_lockstep_orb_copy failed with code $ret")
     return nothing
 end
@@ -880,8 +916,7 @@ end
 
 """Unsubscribe and free the underlying uORB handle."""
 function uorb_unsubscribe!(handle::LockstepHandle, sub::UORBSubscriber)
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_unsubscribe)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32), handle.ptr, sub.id)
+    ret = ccall(handle.fns.orb_unsubscribe, Cint, (Ptr{Cvoid}, Int32), handle.ptr, sub.id)
     ret == 0 || error("px4_lockstep_orb_unsubscribe failed with code $ret")
     return nothing
 end

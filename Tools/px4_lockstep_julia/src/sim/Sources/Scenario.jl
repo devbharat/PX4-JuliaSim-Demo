@@ -24,6 +24,13 @@ using ..Types: vec3
 
 using ..Scenario
 using ..Events: AtTime
+using ..Recording:
+    AbstractTrace,
+    ZOHTrace,
+    ZOHCursor,
+    SampleHoldTrace,
+    SampleHoldCursor,
+    sample
 
 """Base type for scenario sources."""
 abstract type AbstractScenarioSource <: AbstractSource end
@@ -53,9 +60,9 @@ Samples scenario output traces and publishes into:
 All traces are expected to be ZOH semantics.
 """
 struct ReplayScenarioSource{
-    TA<:ZOHTrace{AutopilotCommand},
-    TL<:ZOHTrace{Bool},
-    TF<:ZOHTrace{FaultState},
+    TA<:AbstractTrace{AutopilotCommand},
+    TL<:AbstractTrace{Bool},
+    TF<:AbstractTrace{FaultState},
     TW,
 } <: AbstractScenarioSource
     ap_cmd::TA
@@ -65,6 +72,12 @@ struct ReplayScenarioSource{
 end
 
 function ReplayScenarioSource(ap_cmd, landed, faults; wind_dist = nothing)
+    ap_cmd = ap_cmd isa ZOHTrace ? ZOHCursor(ap_cmd) : ap_cmd
+    landed = landed isa ZOHTrace ? ZOHCursor(landed) : landed
+    faults = faults isa ZOHTrace ? ZOHCursor(faults) : faults
+    if wind_dist !== nothing && wind_dist isa ZOHTrace
+        wind_dist = ZOHCursor(wind_dist)
+    end
     return ReplayScenarioSource(ap_cmd, landed, faults, wind_dist)
 end
 

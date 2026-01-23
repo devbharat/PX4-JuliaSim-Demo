@@ -32,7 +32,7 @@ using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize
 using ..Powertrain: BatteryStatus
 using ..Plant: PlantInput, PlantOutputs, PlantState
-using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
+using ..Integrators: AbstractIntegrator, IntegratorStats, step_integrator, last_stats, reset!
 
 import ..plant_outputs
 import ..plant_project
@@ -158,13 +158,13 @@ Base.@kwdef mutable struct EngineStats
     # Integration interval stats
     n_intervals::Int = 0
     last_interval_us::UInt64 = 0
-    last_integrator_stats::Any = nothing
+    last_integrator_stats::Union{Nothing,IntegratorStats} = nothing
 end
 
 """Cached algebraic outputs from the plant model."""
 Base.@kwdef mutable struct EngineOutputs
     # Cached plant_outputs(...) result for the current boundary (if computed).
-    plant_y::Any = nothing
+    plant_y::Union{Nothing,PlantOutputs} = nothing
 
     # Boundary-time battery telemetry (updated from plant_y when available).
     battery::BatteryStatus = BatteryStatus()
@@ -196,6 +196,9 @@ mutable struct Engine{PS,DF,I,AP,W,SC,ES,TL,R}
     # continuous model + integrator
     dynfun::DF
     integrator::I
+    has_outputs::Bool
+    has_project::Bool
+    has_ap_tick::Bool
 
     # discrete sources
     autopilot::AP
@@ -241,6 +244,11 @@ function Engine(
     reset_bus!(bus, t_us)
 
     ls = _normalize_log_sinks(log_sinks)
+    plant_type = typeof(plant0)
+    dyn_type = typeof(dynfun)
+    has_outputs = hasmethod(plant_outputs, Tuple{dyn_type, Float64, plant_type, PlantInput})
+    has_project = hasmethod(plant_project, Tuple{dyn_type, plant_type})
+    has_ap_tick = hasmethod(plant_on_autopilot_tick, Tuple{dyn_type, plant_type, ActuatorCommand})
 
     return Engine(
         cfg,
@@ -253,6 +261,9 @@ function Engine(
         plant0,
         dynfun,
         integrator,
+        has_outputs,
+        has_project,
+        has_ap_tick,
         autopilot,
         wind,
         scenario,
@@ -392,42 +403,36 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :derived_outputs
             # Derived outputs (battery telemetry) *after* faults/wind and before autopilot.
-            if sim.cfg.enable_derived_outputs
+            if sim.cfg.enable_derived_outputs && sim.has_outputs
                 u = PlantInput(
                     cmd = sim.bus.cmd,
                     wind_ned = sim.bus.wind_ned,
                     faults = sim.bus.faults,
                 )
+                y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
+                y isa PlantOutputs || error(
+                    "plant_outputs must return Plant.PlantOutputs; got " *
+                    string(typeof(y)),
+                )
 
-                if applicable(plant_outputs, sim.dynfun, sim.t_s, sim.plant, u)
-                    y = plant_outputs(sim.dynfun, sim.t_s, sim.plant, u)
-                    y isa PlantOutputs || error(
-                        "plant_outputs must return Plant.PlantOutputs; got " *
-                        string(typeof(y)),
-                    )
+                sim.outputs.plant_y = y
+                sim.outputs.derived_valid = true
 
-                    sim.outputs.plant_y = y
-                    sim.outputs.derived_valid = true
+                # Battery telemetry is the most important derived output: PX4 consumes it.
+                if y.battery_status !== nothing
+                    sim.outputs.battery = y.battery_status
+                    sim.bus.battery = y.battery_status
+                end
 
-                    # Battery telemetry is the most important derived output: PX4 consumes it.
-                    if y.battery_status !== nothing
-                        sim.outputs.battery = y.battery_status
-                        sim.bus.battery = y.battery_status
-                    end
-
-                    # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
-                    rho = y.rho_kgm3
-                    if isfinite(rho)
-                        sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
-                    end
-                    temp = y.temp_k
-                    if isfinite(temp)
-                        sim.bus.env =
-                            EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
-                    end
-                else
-                    sim.outputs.plant_y = nothing
-                    sim.outputs.derived_valid = false
+                # Env cache for sinks/telemetry (explicit schema; NaN means 'missing').
+                rho = y.rho_kgm3
+                if isfinite(rho)
+                    sim.bus.env = EnvSample(rho_kgm3 = rho, temp_k = sim.bus.env.temp_k)
+                end
+                temp = y.temp_k
+                if isfinite(temp)
+                    sim.bus.env =
+                        EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                 end
             else
                 sim.outputs.plant_y = nothing
@@ -469,7 +474,7 @@ function process_events_at!(sim::Engine)
         elseif stage === :plant_discontinuities
             if ev.due_ap
                 # Boundary-time plant discontinuities at autopilot ticks.
-                if applicable(plant_on_autopilot_tick, sim.dynfun, sim.plant, sim.bus.cmd)
+                if sim.has_ap_tick
                     sim.plant = plant_on_autopilot_tick(sim.dynfun, sim.plant, sim.bus.cmd)
                 end
             end
@@ -642,7 +647,7 @@ function step_to_next_event!(sim::Engine)
     sim.plant = step_integrator(sim.integrator, sim.dynfun, sim.t_s, sim.plant, u, dt_s)
 
     # Optional post-step projection into physical bounds.
-    if applicable(plant_project, sim.dynfun, sim.plant)
+    if sim.has_project
         sim.plant = plant_project(sim.dynfun, sim.plant)
     end
 

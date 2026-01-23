@@ -23,7 +23,7 @@ using PX4Lockstep: LockstepHandle
 using PX4Lockstep: create, destroy, load_mission, step_uorb!
 using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
 using PX4Lockstep: create_publisher, create_subscriber, publish!
-using PX4Lockstep: uorb_check, uorb_copy, uorb_unsubscribe!
+using PX4Lockstep: uorb_check, uorb_copy!, uorb_copy, uorb_unsubscribe!
 using PX4Lockstep: BatteryStatusMsg, VehicleAttitudeMsg, VehicleLocalPositionMsg
 using PX4Lockstep:
     VehicleGlobalPositionMsg, VehicleAngularVelocityMsg, VehicleLandDetectedMsg
@@ -106,6 +106,8 @@ autopilot_output_type(::AbstractAutopilot) = Any
 mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     handle::LockstepHandle
     home::HomeLocation
+    inv_r::Float64
+    inv_rcos::Float64
     edge_trigger::Bool
     last_cmd::AutopilotCommand
     uorb::UORBBridge
@@ -192,10 +194,14 @@ function init!(;
     # Default injector publishes the state-injection topics that are configured
     # as publishers in `uorb_cfg`.
     injector = build_state_injection_injector(uorb, home)
+    inv_r = 1.0 / EARTH_RADIUS_M
+    inv_rcos = 1.0 / (EARTH_RADIUS_M * cosd(home.lat_deg))
 
     return PX4LockstepAutopilot(
         h,
         home,
+        inv_r,
+        inv_rcos,
         edge_trigger,
         AutopilotCommand(),
         uorb,
@@ -218,10 +224,10 @@ function load_mission!(ap::PX4LockstepAutopilot, path::AbstractString)
     return rc
 end
 
-@inline function _ned_to_lla(pos_ned::Vec3, home::HomeLocation)
+@inline function _ned_to_lla(pos_ned::Vec3, home::HomeLocation, inv_r::Float64, inv_rcos::Float64)
     x, y, z = pos_ned
-    dlat = x / EARTH_RADIUS_M
-    dlon = y / (EARTH_RADIUS_M * cosd(home.lat_deg))
+    dlat = x * inv_r
+    dlon = y * inv_rcos
     lat = home.lat_deg + rad2deg(dlat)
     lon = home.lon_deg + rad2deg(dlon)
     alt = home.alt_msl_m - z
@@ -257,7 +263,7 @@ function autopilot_step(
 )
 
     yaw = yaw_from_quat(q_bn)
-    lat, lon, alt = _ned_to_lla(state_pos_ned, ap.home)
+    lat, lon, alt = _ned_to_lla(state_pos_ned, ap.home, ap.inv_r, ap.inv_rcos)
 
     req_mission =
         ap.edge_trigger ? (cmd.request_mission && !ap.last_cmd.request_mission) :

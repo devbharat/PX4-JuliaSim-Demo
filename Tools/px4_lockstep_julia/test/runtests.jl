@@ -796,33 +796,64 @@ end
 end
 
 @testset "Propulsion owns rotor_dir yaw-torque sign" begin
-    model = Sim.Vehicles.IrisQuadrotor()
-    hover_T = model.params.mass * 9.80665 / 4.0
-    prop = Sim.Propulsion.default_iris_quadrotor_set(km_m = 0.05, thrust_hover_per_rotor_n = hover_T)
+    env = Sim.iris_default_env_replay()
+    vehicle = Sim.iris_default_vehicle()
+    battery = Sim.iris_default_battery()
+
+    dynfun = Sim.PlantModels.CoupledMultirotorModel(
+        vehicle.model,
+        env,
+        Sim.Contacts.NoContact(),
+        vehicle.motor_actuators,
+        vehicle.servo_actuators,
+        vehicle.propulsion,
+        battery,
+    )
+
+    plant0 = Sim.Plant.init_plant_state(
+        vehicle.state,
+        vehicle.motor_actuators,
+        vehicle.servo_actuators,
+        vehicle.propulsion,
+        battery,
+    )
 
     # Spin only rotor 3 (which has rotor_dir = -1 in the default set).
-    duties = SVector{4,Float64}(0.0, 0.0, 0.5, 0.0)
-    ω0 = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0)
-    out = Sim.Propulsion.step_propulsion!(
-        prop,
-        ω0,
-        duties,
-        16.0,
-        1.225,
-        Sim.Types.vec3(0.0, 0.0, 0.0),
-        0.002,
+    motors = SVector{12,Float64}(ntuple(i -> (i == 3 ? 0.5 : 0.0), 12))
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = zero(SVector{8,Float64}))
+    u = Sim.Plant.PlantInput(
+        cmd = cmd,
+        wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        faults = Sim.Faults.FaultState(),
     )
 
+    plant0_mapped =
+        applicable(Sim.plant_on_autopilot_tick, dynfun, plant0, cmd) ?
+        Sim.plant_on_autopilot_tick(dynfun, plant0, cmd) :
+        plant0
+    plant0_spin = Sim.Plant.PlantState{4}(
+        rb = plant0_mapped.rb,
+        motors_y = plant0_mapped.motors_y,
+        motors_ydot = plant0_mapped.motors_ydot,
+        servos_y = plant0_mapped.servos_y,
+        servos_ydot = plant0_mapped.servos_ydot,
+        rotor_ω = SVector{4,Float64}(0.0, 0.0, 300.0, 0.0),
+        batt_soc = plant0_mapped.batt_soc,
+        batt_v1 = plant0_mapped.batt_v1,
+    )
+
+    y = Sim.plant_outputs(dynfun, 0.0, plant0_spin, u)
+    out = y.rotors
     @test out.shaft_torque_nm[3] < 0.0
 
-    env = Sim.Environment.EnvironmentModel()
-    x = Sim.RigidBody.RigidBodyState(
-        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
-        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    d = Sim.Vehicles.dynamics(
+        vehicle.model,
+        env,
+        0.0,
+        plant0_spin.rb,
+        out,
+        Sim.Types.vec3(0.0, 0.0, 0.0),
     )
-    d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, Sim.Types.vec3(0.0, 0.0, 0.0))
     @test d.ω_dot[3] < 0.0
 end
 

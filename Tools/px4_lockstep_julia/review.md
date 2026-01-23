@@ -607,7 +607,7 @@ Profile targets:
 
 - `Simulation.step!`
 - `Vehicles.dynamics(::IrisQuadrotor, ...)`
-- `Propulsion.step_propulsion!` / `_step_unit!`
+- `Propulsion._step_unit!` (propulsion inner loop)
 - `Integrators.step_integrator!` (Euler/RK4)
 - `Logging.log_sample!`
 
@@ -622,7 +622,7 @@ In Julia, look for:
 1) **`MVector` usage in propulsion**
 `MVector` is a mutable struct. In Julia, mutable structs generally heap-allocate unless scalar-replaced.
 
-If you see allocations in `step_propulsion!`, replace `MVector` with `ntuple`/`SVector` construction:
+If you see allocations in the propulsion inner loop, replace `MVector` with `ntuple`/`SVector` construction:
 
 - build `NTuple{N,Float64}` with `ntuple` and then `SVector(...)`.
 
@@ -813,7 +813,7 @@ Effort scale:
 3) Switch gust intervals to half-open `[t_on, t_off)` (done).
 4) Add `time_us` column to logs (done).
 5) Add a guard against multiple lockstep handles (done).
-6) Replace `MVector` in `step_propulsion!` if it shows allocations (pending).
+6) Replace `MVector` in the propulsion inner loop if it shows allocations (pending).
 
 ---
 

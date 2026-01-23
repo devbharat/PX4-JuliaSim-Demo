@@ -18,6 +18,15 @@ const Env = Sim.Environment
 const PT = Sim.Powertrain
 const RB = Sim.RigidBody
 
+"""Test-only prop model that makes thrust/torque depend on Vax sign."""
+struct SignProp <: Sim.Propulsion.AbstractPropParams
+    kT::Float64
+    kQ::Float64
+end
+
+Sim.Propulsion.prop_thrust(p::SignProp, _ρ::Float64, _ω::Float64, Vax::Float64) = p.kT * Vax
+Sim.Propulsion.prop_torque(p::SignProp, _ρ::Float64, _ω::Float64, Vax::Float64) = p.kQ * Vax
+
 """Build a minimal Iris full-plant model (CoupledMultirotorModel) for tests.
 
 Returns a NamedTuple with:
@@ -41,6 +50,7 @@ function _iris_fullplant(
             mass = params.mass,
             inertia_diag = params.inertia_diag,
             rotor_pos_body = params.rotor_pos_body,
+            rotor_axis_body = params.rotor_axis_body,
             linear_drag = linear_drag === nothing ? params.linear_drag : linear_drag,
             angular_damping =
                 angular_damping === nothing ? params.angular_damping : angular_damping,
@@ -164,6 +174,273 @@ end
 
         @test st.soc < soc0
         @test st.v1 > 0.0
+    end
+
+    @testset "Phase 4 - Propulsor axis geometry" begin
+        # Force/torque directions should follow the propulsor axis convention:
+        # F = -T * axis_b, τ = r × F + axis_b * Q
+        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
+        rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
+        rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
+
+        params = Sim.Vehicles.QuadrotorParams{1}(
+            mass = 1.0,
+            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body = rotor_pos,
+            rotor_axis_body = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+        model = Sim.Vehicles.GenericMultirotor{1}(params)
+        x = RB.RigidBodyState()
+
+        out = Sim.Propulsion.RotorOutput{1}(
+            thrust_n = SVector{1,Float64}(2.0),
+            shaft_torque_nm = SVector{1,Float64}(0.5),
+            ω_rad_s = SVector{1,Float64}(0.0),
+            motor_current_a = SVector{1,Float64}(0.0),
+            bus_current_a = 0.0,
+        )
+
+        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
+        @test isapprox(d.vel_dot[1], -2.0; atol = 1e-12)
+        @test isapprox(d.vel_dot[2], 0.0; atol = 1e-12)
+        @test isapprox(d.vel_dot[3], 0.0; atol = 1e-12)
+        @test isapprox(d.ω_dot[1], 0.5; atol = 1e-12)
+        @test isapprox(d.ω_dot[2], 0.0; atol = 1e-12)
+        @test isapprox(d.ω_dot[3], 0.0; atol = 1e-12)
+    end
+
+    @testset "Phase 4 - Wrench composition (r×F + axis*Q)" begin
+        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
+        rotor_pos = SVector{2,T.Vec3}(T.vec3(1.0, 0.0, 0.0), T.vec3(0.0, 1.0, 0.0))
+        rotor_axis = SVector{2,T.Vec3}(T.vec3(0.0, 0.0, 1.0), T.vec3(0.0, 1.0, 0.0))
+
+        params = Sim.Vehicles.QuadrotorParams{2}(
+            mass = 1.0,
+            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body = rotor_pos,
+            rotor_axis_body = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+        model = Sim.Vehicles.GenericMultirotor{2}(params)
+        x = RB.RigidBodyState()
+
+        # Rotor 1: axis +Z, thrust 2, reaction torque 0.5
+        # Rotor 2: axis +Y, thrust 3, reaction torque 0.2
+        out = Sim.Propulsion.RotorOutput{2}(
+            thrust_n = SVector{2,Float64}(2.0, 3.0),
+            shaft_torque_nm = SVector{2,Float64}(0.5, 0.2),
+            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
+            motor_current_a = SVector{2,Float64}(0.0, 0.0),
+            bus_current_a = 0.0,
+        )
+
+        # Expected force: F = -T * axis
+        F_exp = T.vec3(0.0, -3.0, -2.0)
+        # Expected torque: r×F + axis*Q
+        τ_exp = T.vec3(0.0, 2.2, 0.5)
+
+        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
+        @test isapprox(d.vel_dot[1], F_exp[1]; atol = 1e-12)
+        @test isapprox(d.vel_dot[2], F_exp[2]; atol = 1e-12)
+        @test isapprox(d.vel_dot[3], F_exp[3]; atol = 1e-12)
+        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+    end
+
+    @testset "Phase 4 - Vax sign from axis projection" begin
+        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
+        rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
+        rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
+
+        params = Sim.Vehicles.QuadrotorParams{1}(
+            mass = 1.0,
+            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body = rotor_pos,
+            rotor_axis_body = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+        model = Sim.Vehicles.GenericMultirotor{1}(params)
+        motor_act = Sim.Vehicles.DirectActuators()
+        servo_act = Sim.Vehicles.DirectActuators()
+
+        esc = Sim.Propulsion.ESCParams()
+        motor = Sim.Propulsion.BLDCMotorParams()
+        units = [Sim.Propulsion.MotorPropUnit(esc = esc, motor = motor, prop = SignProp(1.0, 0.5))]
+        prop = Sim.Propulsion.QuadRotorSet{1}(units, SVector{1,Float64}(1.0))
+        battery = PT.IdealBattery()
+
+        motor_map = Sim.Vehicles.MotorMap{1}(SVector{1,Int}(1))
+        dynfun = Sim.PlantModels.CoupledMultirotorModel(
+            model,
+            env,
+            Sim.Contacts.NoContact(),
+            motor_act,
+            servo_act,
+            prop,
+            battery;
+            motor_map = motor_map,
+        )
+
+        plant0 = Sim.Plant.init_plant_state(
+            Sim.RigidBody.RigidBodyState(),
+            motor_act,
+            servo_act,
+            prop,
+            battery,
+        )
+
+        plant = Sim.Plant.PlantState{1}(
+            rb = plant0.rb,
+            motors_y = plant0.motors_y,
+            motors_ydot = plant0.motors_ydot,
+            servos_y = plant0.servos_y,
+            servos_ydot = plant0.servos_ydot,
+            rotor_ω = SVector{1,Float64}(0.0),
+            batt_soc = plant0.batt_soc,
+            batt_v1 = plant0.batt_v1,
+        )
+
+        cmd = Sim.Vehicles.ActuatorCommand(motors = plant0.motors_y, servos = plant0.servos_y)
+
+        u_pos = Sim.Plant.PlantInput(
+            cmd = cmd,
+            wind_ned = T.vec3(1.0, 0.0, 0.0),
+            faults = Sim.Faults.FaultState(),
+        )
+        u_neg = Sim.Plant.PlantInput(
+            cmd = cmd,
+            wind_ned = T.vec3(-1.0, 0.0, 0.0),
+            faults = Sim.Faults.FaultState(),
+        )
+
+        y_pos = Sim.plant_outputs(dynfun, 0.0, plant, u_pos)
+        y_neg = Sim.plant_outputs(dynfun, 0.0, plant, u_neg)
+
+        @test y_pos.rotors.thrust_n[1] < 0.0
+        @test y_neg.rotors.thrust_n[1] > 0.0
+    end
+
+    @testset "Phase 4 - Wingtra-style twin forward props (yaw via differential thrust)" begin
+        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
+        r = 0.5
+        rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
+        # Axis chosen so F = -T * axis gives forward +X force.
+        rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
+
+        params = Sim.Vehicles.QuadrotorParams{2}(
+            mass = 1.0,
+            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body = rotor_pos,
+            rotor_axis_body = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+        model = Sim.Vehicles.GenericMultirotor{2}(params)
+        x = RB.RigidBodyState()
+
+        # Differential thrust: right prop produces more thrust than left prop.
+        T_left = 2.0
+        T_right = 5.0
+        out = Sim.Propulsion.RotorOutput{2}(
+            thrust_n = SVector{2,Float64}(T_left, T_right),
+            shaft_torque_nm = SVector{2,Float64}(0.0, 0.0),
+            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
+            motor_current_a = SVector{2,Float64}(0.0, 0.0),
+            bus_current_a = 0.0,
+        )
+
+        # Expected force: F = -T * axis -> (+X) thrust
+        F_exp = T.vec3(T_left + T_right, 0.0, 0.0)
+        # Expected yaw torque: r × F, with r at ±Y and F along +X
+        τz = r * (T_right - T_left)
+        τ_exp = T.vec3(0.0, 0.0, τz)
+
+        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
+        @test isapprox(d.vel_dot[1], F_exp[1]; atol = 1e-12)
+        @test isapprox(d.vel_dot[2], F_exp[2]; atol = 1e-12)
+        @test isapprox(d.vel_dot[3], F_exp[3]; atol = 1e-12)
+        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+    end
+
+    @testset "Phase 4 - Twin forward props roll torque from reaction torque" begin
+        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
+        r = 0.5
+        rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
+        rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
+
+        params = Sim.Vehicles.QuadrotorParams{2}(
+            mass = 1.0,
+            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body = rotor_pos,
+            rotor_axis_body = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+        model = Sim.Vehicles.GenericMultirotor{2}(params)
+        x = RB.RigidBodyState()
+
+        # Equal thrust; nonzero reaction torque on each prop (about +X due to axis).
+        T_left = 3.0
+        T_right = 3.0
+        Q_left = 0.4
+        Q_right = 0.6
+        out = Sim.Propulsion.RotorOutput{2}(
+            thrust_n = SVector{2,Float64}(T_left, T_right),
+            shaft_torque_nm = SVector{2,Float64}(Q_left, Q_right),
+            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
+            motor_current_a = SVector{2,Float64}(0.0, 0.0),
+            bus_current_a = 0.0,
+        )
+
+        # r×F cancels in yaw; roll torque comes purely from axis*Q.
+        τ_exp = T.vec3(-(Q_left + Q_right), 0.0, 0.0)
+
+        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
+        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+    end
+
+    @testset "Phase 4 - CA axis param sign convention" begin
+        rotor_pos = T.Vec3[T.vec3(0.0, 0.0, 0.0), T.vec3(0.0, 0.0, 0.0)]
+        rotor_axis = T.Vec3[T.vec3(0.0, 0.0, 2.0), T.vec3(0.0, 1.0, 0.0)]
+
+        airframe = Sim.Aircraft.AirframeSpec(
+            kind = :multirotor,
+            mass_kg = 1.0,
+            inertia_diag_kgm2 = T.vec3(1.0, 1.0, 1.0),
+            rotor_pos_body_m = rotor_pos,
+            rotor_axis_body_m = rotor_axis,
+            linear_drag = 0.0,
+            angular_damping = T.vec3(0.0, 0.0, 0.0),
+        )
+
+        motors = Sim.Aircraft.MotorSpec[
+            Sim.Aircraft.MotorSpec(id = :motor1, channel = 1),
+            Sim.Aircraft.MotorSpec(id = :motor2, channel = 2),
+        ]
+
+        actuation = Sim.Aircraft.ActuationSpec(
+            motors = motors,
+            servos = Sim.Aircraft.ServoSpec[],
+            motor_actuators = Sim.Aircraft.DirectActuatorSpec(),
+            servo_actuators = Sim.Aircraft.DirectActuatorSpec(),
+        )
+
+        spec = Sim.Aircraft.AircraftSpec(name = :test, airframe = airframe, actuation = actuation)
+        vehicle = Sim.Aircraft._build_vehicle(spec)
+        params = Sim.Aircraft._derive_ca_params(spec, vehicle)
+
+        pmap = Dict(p.name => Float64(p.value) for p in params)
+        @test isapprox(pmap["CA_ROTOR0_AZ"], -1.0; atol = 1e-12)
+        @test isapprox(pmap["CA_ROTOR1_AY"], -1.0; atol = 1e-12)
     end
 end
 

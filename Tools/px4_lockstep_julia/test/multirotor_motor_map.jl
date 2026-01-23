@@ -15,11 +15,13 @@ const Sim = PX4Lockstep.Sim
         Sim.Types.vec3(0.1, -0.1, 0.0),
         Sim.Types.vec3(-0.1, 0.1, 0.0),
     )
+    rotor_axis = SVector{N,Sim.Types.Vec3}(ntuple(_ -> Sim.Types.vec3(0.0, 0.0, 1.0), N))
 
     params = Sim.Vehicles.QuadrotorParams{N}(
         mass = 1.0,
         inertia_diag = Sim.Types.vec3(0.01, 0.01, 0.02),
         rotor_pos_body = rotor_pos,
+        rotor_axis_body = rotor_axis,
         linear_drag = 0.0,
         angular_damping = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
@@ -88,11 +90,13 @@ end
             Sim.Types.vec3(r * cos(θ), r * sin(θ), 0.0)
         end, N),
     )
+    rotor_axis = SVector{N,Sim.Types.Vec3}(ntuple(_ -> Sim.Types.vec3(0.0, 0.0, 1.0), N))
 
     params = Sim.Vehicles.QuadrotorParams{N}(
         mass = 2.0,
         inertia_diag = Sim.Types.vec3(0.05, 0.05, 0.10),
         rotor_pos_body = rotor_pos,
+        rotor_axis_body = rotor_axis,
         linear_drag = 0.05,
         angular_damping = Sim.Types.vec3(0.02, 0.02, 0.01),
     )

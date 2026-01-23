@@ -24,6 +24,11 @@ baseline Iris quadrotor dynamics used for PX4-in-the-loop testing.
 
 - The Iris model is intentionally low fidelity (simple drag and damping) and is not a
   validated aero model.
+- Rigid-body inertia is modeled as **diagonal only** (`inertia_diag`); off-diagonal products
+  of inertia are not represented.
+- Rotor inertia is modeled inside the propulsion units (`BLDCMotorParams.J`) for rotor
+  speed dynamics, but **gyroscopic coupling into the rigid body is not modeled** (no rotor
+  angular momentum effects on body rates).
 - Second-order actuator dynamics use a semi-implicit Euler step; large `dt` can reduce
   accuracy or stability.
 - Non-quadrotor or aerodynamic models require new `dynamics` implementations and

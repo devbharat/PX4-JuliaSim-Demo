@@ -19,6 +19,12 @@ The guiding idea: keep the C boundary minimal and deterministic, and build every
 
 These scripts assume this repo lives at `PX4-Autopilot/Tools/px4_lockstep_julia`.
 
+0) Ensure Julia is installed. If not, follow the install guide:
+
+```
+https://julialang.org/downloads/
+```
+
 1) Build lockstep SITL in your PX4 tree (example):
 
 ```bash

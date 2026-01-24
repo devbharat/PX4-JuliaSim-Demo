@@ -89,23 +89,7 @@ bus.cmd + bus.wind + bus.faults  →  plant integrator  →  new plant state
 - All time and scheduling decisions are integer microseconds.
 - Inputs are piecewise constant between boundaries.
 
-```mermaid
-flowchart LR
-  subgraph Discrete[Discrete-time boundary updates (event-driven)]
-    Scn[Scenario] --> Bus[(SimBus)]
-    Wind[Wind source] --> Bus
-    Est[Estimator source] --> Bus
-    AP[PX4 lockstep autopilot] --> Bus
-  end
-
-  subgraph Continuous[Continuous-time plant integration]
-    Bus -->|sample-and-hold inputs| Int[Integrator]
-    Int --> X[PlantState]
-    X -->|derived outputs| Bus
-  end
-
-  Bus --> Log[Log sinks / recorder]
-```
+![runtime_flowchart](https://github.com/user-attachments/assets/a4b0ac3b-ae83-48e9-9cd0-82cdcd7b168e)
 
 ## System Boundary
 

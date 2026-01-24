@@ -56,23 +56,7 @@ Outputs are written under `Tools/px4_lockstep_julia/examples/replay/out/`.
 
 ## Architecture in one picture
 
-```mermaid
-flowchart LR
-  subgraph Discrete[Discrete-time boundary updates (event-driven)]
-    Scn[Scenario] --> Bus[(SimBus)]
-    Wind[Wind source] --> Bus
-    Est[Estimator source] --> Bus
-    AP[PX4 lockstep autopilot] --> Bus
-  end
-
-  subgraph Continuous[Continuous-time plant integration]
-    Bus -->|sample-and-hold inputs| Int[Integrator]
-    Int --> X[PlantState]
-    X -->|derived outputs| Bus
-  end
-
-  Bus --> Log[Log sinks / recorder]
-```
+![runtime_flowchart](https://github.com/user-attachments/assets/54fa6ff8-6389-4aa0-b0b5-f22c3393631f)
 
 Key invariants:
 

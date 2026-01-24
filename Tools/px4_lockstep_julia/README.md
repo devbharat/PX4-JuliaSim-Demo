@@ -46,7 +46,7 @@ Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 
 This produces `sim_log.csv` in your current directory.
 
-4) (Highly recommended) Do a **record → replay** integrator sweep:
+4) Do a **record → replay** integrator sweep:
 
 ```bash
 Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh 20

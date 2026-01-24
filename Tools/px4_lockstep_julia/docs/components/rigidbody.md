@@ -2,6 +2,8 @@
 
 ## Role
 
+See also: **[Frames and sign conventions](../reference/conventions.md)**.
+
 `src/sim/RigidBody.jl` defines the minimal 6DOF state and update helpers shared across
 all vehicle models and integrators.
 

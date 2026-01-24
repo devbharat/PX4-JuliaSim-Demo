@@ -927,7 +927,9 @@ function plant_outputs(
         )
     end, B))
 
-    temp_k = air_temperature(f.env.atmosphere, -x.rb.pos_ned[3])
+    # Atmosphere expects MSL altitude (consistent with density in propulsion eval).
+    alt_msl_m = f.env.origin.alt_msl_m - x.rb.pos_ned[3]
+    temp_k = air_temperature(f.env.atmosphere, alt_msl_m)
     return PlantOutputs{N,B,K}(
         rotors = rot_out,
         bus_current_a = SVector{K,Float64}(I_bus_total),

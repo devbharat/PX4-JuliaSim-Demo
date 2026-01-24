@@ -18,8 +18,7 @@ This module is the canonical home for the engine API. Source implementations liv
 under `Sim.Sources` and recorder/trace implementations live under `Sim.Recording`.
 
 See:
-* `docs/engine_unification.md`
-* `docs/engine_unification_todo.md`
+* `docs/notes/runtime_engine.md`
 """
 module Runtime
 

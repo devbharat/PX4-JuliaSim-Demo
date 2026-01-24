@@ -1,7 +1,6 @@
-# Engine Unification
+# Runtime Engine
 
-This document captures the rationale and the resulting architecture of the engine
-unification refactor in **PX4Lockstep.Sim**.
+This document describes the canonical runtime engine architecture in **PX4Lockstep.Sim**.
 
 ## Historical context
 

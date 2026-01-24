@@ -2,36 +2,53 @@
 
 ## Role
 
-`src/sim/Autopilots.jl` translates estimated state + battery telemetry into PX4 lockstep
-inputs and provides the interface used by the simulation engines.
+`src/sim/Autopilots.jl` provides the PX4-facing autopilot implementation used by the
+simulation runtime.
 
-The uORB bridge helpers (topic specs, pub/sub wiring, and message builders) live in
-`src/sim/Autopilots/UORBBridge.jl`.
+In a live run it:
 
-## Key Decisions and Rationale
+- publishes estimated state + auxiliary inputs (battery, landed, commands) into PX4 via
+  the lockstep uORB ABI
+- steps PX4 with an exact microsecond timestamp
+- samples uORB outputs (actuator commands, nav state, setpoints) for downstream use
 
-- **Microsecond entry point:** `autopilot_step(::UInt64, ...)` avoids float rounding
-  and guarantees exact PX4 time injection.
-- **Shared `WorldOrigin`:** the PX4 home location is the same `WorldOrigin` used by the
-  environment, keeping NED↔LLA conversions consistent (spherical Earth approximation).
-- **Edge-triggered commands:** optional `edge_trigger` converts mission/RTL requests
-  into pulses so their semantics do not depend on the tick rate.
-- **Rate guard hook:** `max_internal_rate_hz` exposes internal PX4 task cadence so
-  engines can validate `dt_autopilot`.
+The uORB plumbing (topic specifications, publisher/subscriber wiring, message builders,
+and optional injection scheduling) lives in:
 
-## Integration Contracts
+- `src/sim/Autopilots/UORBBridge.jl`
+- `src/sim/Autopilots/UORBInjection.jl`
 
-- `autopilot_step` should be called with microsecond-quantized `time_us` in lockstep.
-- Autopilot outputs are sample-and-hold until the next autopilot tick.
-- Home/origin mismatches are synchronized when one side is default; otherwise a
-  warning is emitted.
+## Key decisions and rationale
+
+- **Microsecond entry point:** `autopilot_step(ap, time_us, ...)` uses `UInt64`
+  microseconds so PX4 time injection is exact and repeatable.
+- **Explicit home/origin:** `HomeLocation` (an alias of `Sim.Types.WorldOrigin`) is the
+  single source of truth for NED↔LLA conversions and home-related uORB messages.
+- **Tick‑rate‑independent command semantics:** `edge_trigger=true` converts mission/RTL
+  requests into one‑tick pulses so behavior does not depend on the autopilot tick rate.
+- **Scheduling validation hooks:** `max_internal_rate_hz`, `recommended_step_dt_us`, and
+  `injection_periods_us` allow the runtime to validate that the chosen `timeline.ap`
+  cadence is compatible with internal PX4 module rates and configured uORB injections.
+
+## Integration contracts
+
+- `autopilot_step` is called at `timeline.ap` boundaries with the scheduler’s integer
+  `time_us` (no float time conversion on the call boundary).
+- Inputs are sourced from the runtime bus (`SimBus`): estimated state (`bus.est`),
+  `bus.ap_cmd`, `bus.landed`, and `bus.batteries`.
+- Outputs are treated as sample-and-hold until the next autopilot tick.
+- Home/reference fields:
+  - When `LockstepConfig.enable_commander == 0`, the bridge publishes `home_position`
+    and uses `home` for the `vehicle_global_position.ref_*` fields.
+  - When commander is enabled, `ref_*` fields follow the current LLA computed from the
+    provided NED state.
 
 ## Caveats
 
-- The NED↔LLA conversion assumes a spherical Earth and is suitable only for local
-  missions.
-- `edge_trigger=true` converts mission/RTL requests into pulses; commands must be
-  reasserted if the caller expects a sustained request.
-- `autopilot_step` receives both a legacy single-battery `battery` and a full
-  `batteries::Vector{BatteryStatus}` (deterministic order).
-- Only one lockstep handle is allowed per process by default.
+- The NED↔LLA conversion is a spherical-Earth approximation intended for local missions
+  (small geographic extent).
+- With `edge_trigger=true`, mission/RTL requests become pulses; callers that want a
+  sustained request must reassert it.
+- Only one lockstep handle is allowed per process by default (unless
+  `allow_multiple_handles=true` is used and the underlying lockstep runtime is known to
+  be re-entrant).

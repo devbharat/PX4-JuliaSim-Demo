@@ -2,6 +2,8 @@
 
 ## Role
 
+See also: **[Frames and sign conventions](../reference/conventions.md)**.
+
 `src/sim/Environment.jl` provides atmosphere, wind, and gravity models with deterministic
 step and sampling APIs.
 

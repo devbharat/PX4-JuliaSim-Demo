@@ -2,34 +2,50 @@
 
 ## Role
 
-`src/sim/Vehicles.jl` defines the vehicle model interface, actuator dynamics, and the
-baseline Iris quadrotor dynamics used for PX4-in-the-loop testing.
+See also: **[Frames and sign conventions](../reference/conventions.md)**.
 
-## Key Decisions and Rationale
+`src/sim/Vehicles.jl` defines:
+
+- the vehicle model interface (`mass`, `inertia_diag`, `dynamics`)
+- reusable actuator dynamics (direct/first-order/second-order)
+- a minimal multirotor rigid-body model (including the Iris defaults)
+
+This layer is intentionally propulsion-agnostic: propulsion models compute thrust and
+shaft torques; vehicle models consume those and produce rigid-body derivatives.
+
+## Key decisions and rationale
 
 - **Fixed-size actuator commands:** aligns with the lockstep ABI and keeps engine code
   airframe-agnostic.
 - **Actuator dynamics spectrum:** direct, first-order (exact discretization), and
   second-order (semi-implicit Euler with optional rate limits) cover common actuator
-  behaviors without heavy modeling overhead.
-- **Minimal Iris model:** prioritizes stability and closed-loop signal over high-fidelity
-  aero, enabling fast iteration on PX4 integration.
+  behaviors without heavyweight modeling dependencies.
+- **Minimal multirotor model:** prioritizes stable, high-signal closed-loop behavior for
+  PX4-in-the-loop runs over high-fidelity aerodynamic effects.
 
-## Integration Contracts
+## Integration contracts
 
-- `dynamics(model, env, t, state, u)` returns `RigidBodyDeriv` in NED/body frames.
-- Rotor torque sign is supplied by the propulsion model, not the vehicle model.
+- `mass(model) -> Float64` exposes vehicle mass so external forces (e.g. contact)
+  can be applied without hard-coding airframe types.
+- `inertia_diag(model) -> Vec3` returns the diagonal body-frame inertia used by the
+  rigid-body integrators.
+- `dynamics(model, env, t_s, x, u, wind_ned) -> RigidBodyDeriv` computes the 6DOF
+  rigid-body derivative.
+
+  - `x` is a `RigidBodyState` (NED position/velocity, body→NED quaternion, body rates).
+  - `u` is vehicle-specific. For multirotors it is typically `Propulsion.RotorOutput{N}`
+    (thrust + shaft torques).
+  - `wind_ned` must come from the **runtime bus** (sample-and-hold). Vehicle dynamics
+    should not read `env.wind` directly, so record/replay uses identical forcing.
 
 ## Caveats
 
-- The Iris model is intentionally low fidelity (simple drag and damping) and is not a
-  validated aero model.
-- Rigid-body inertia is modeled as **diagonal only** (`inertia_diag`); off-diagonal products
-  of inertia are not represented.
-- Rotor inertia is modeled inside the propulsion units (`BLDCMotorParams.J`) for rotor
-  speed dynamics, but **gyroscopic coupling into the rigid body is not modeled** (no rotor
+- The multirotor model is intentionally low fidelity (simple drag and damping) and is
+  not a validated aero model.
+- Rigid-body inertia is modeled as **diagonal only** (`inertia_diag`); off-diagonal
+  products of inertia are not represented.
+- Rotor inertia is modeled inside propulsion units (`BLDCMotorParams.J`) for rotor-speed
+  dynamics, but **gyroscopic coupling into the rigid body is not modeled** (no rotor
   angular momentum effects on body rates).
 - Second-order actuator dynamics use a semi-implicit Euler step; large `dt` can reduce
   accuracy or stability.
-- Non-quadrotor or aerodynamic models require new `dynamics` implementations and
-  parameter sets.

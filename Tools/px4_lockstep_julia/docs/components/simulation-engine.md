@@ -48,5 +48,5 @@ The engine runs in one of three modes:
 ## Caveats
 
 - Contact modeling is penalty-force; there is no continuous-time root finding.
-- Scenario `When` conditions are evaluated only at event boundaries.
+- Scenario `When` conditions are evaluated only when the scenario is stepped (typically at `timeline.scn` boundaries).
 - Tier-0 recordings do not embed model parameters; replay assumes the model configuration matches the recording context.

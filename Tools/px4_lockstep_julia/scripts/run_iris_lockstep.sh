@@ -27,6 +27,9 @@ UORB_OUT=${UORB_OUT:-${UORB_OUT_DEFAULT}}
 UORB_CODEGEN_SCRIPT=${UORB_CODEGEN_SCRIPT:-${UORB_CODEGEN_SCRIPT_DEFAULT}}
 UORB_TOPICS=${UORB_TOPICS:-"battery_status,vehicle_attitude,vehicle_local_position,vehicle_global_position,vehicle_angular_velocity,vehicle_land_detected,vehicle_status,vehicle_control_mode,actuator_armed,home_position,geofence_status,vehicle_torque_setpoint,vehicle_thrust_setpoint,actuator_motors,actuator_servos,vehicle_attitude_setpoint,vehicle_rates_setpoint,mission_result,trajectory_setpoint"}
 
+# Create the depot on demand (we don't keep it in the repo).
+mkdir -p "${JULIA_DEPOT_PATH}"
+
 if [[ ! -d "${UORB_HEADERS_DIR}" ]]; then
   echo "uORB headers not found at ${UORB_HEADERS_DIR}; skipping codegen" >&2
 elif [[ ! -f "${UORB_OUT}" ]] || [[ "${UORB_CODEGEN_SCRIPT}" -nt "${UORB_OUT}" ]] || find "${UORB_HEADERS_DIR}" -type f -name '*.h' -newer "${UORB_OUT}" -print -quit | grep -q .; then

@@ -1,224 +1,130 @@
 # PX4Lockstep.jl
 
-This directory contains two layers:
+Deterministic PX4 lockstep SITL **with the plant, scheduling, and logging owned by Julia**.
 
-1) **`PX4Lockstep`** – a small, dependency-light Julia wrapper around the `libpx4_lockstep` C ABI.
-2) **`PX4Lockstep.Sim`** – a deterministic, single-threaded simulation framework designed for PX4-in-the-loop lockstep SITL.
+This repo has two layers:
 
-The goal is to keep the lockstep bridge thin and deterministic, while the Julia side owns:
+1. **`PX4Lockstep`** — a small, dependency-light Julia wrapper around `libpx4_lockstep` (C ABI).
+2. **`PX4Lockstep.Sim`** — a single-threaded, event-driven simulation framework (truth dynamics, environment, powertrain, scenarios, logs) designed to run PX4 *in the loop*.
 
-* vehicle truth dynamics
-* environment models
-* battery / powertrain models
-* logging, scenarios, and analysis
+The guiding idea: keep the C boundary minimal and deterministic, and build everything else (models + runtime semantics) as reviewable Julia code.
 
-## Quick start
+## What you can do with it
 
-Public entrypoints are documented in `docs/API.md`.
+- Run PX4 SITL in **lockstep** with a deterministic Julia plant.
+- Record a PX4 run, then **replay the exact same inputs** to compare integrators/models without closed-loop divergence.
+- Run standalone **verification problems** (analytic + invariants) to catch numerical regressions.
 
-1. Build `libpx4_lockstep` in your PX4 tree.
-2. Set environment variables (optional, `PX4Lockstep.jl` will also search the build tree):
+## Quickstart (recommended: from a PX4 tree)
+
+These scripts assume this repo lives at `PX4-Autopilot/Tools/px4_lockstep_julia`.
+
+1) Build lockstep SITL in your PX4 tree (example):
 
 ```bash
-export PX4_LOCKSTEP_LIB=/path/to/libpx4_lockstep.so  # or .dylib on macOS
-export PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints
+cd /path/to/PX4-Autopilot
+make px4_sitl_lockstep
 ```
 
-3. Install dependencies (note the command has no trailing `.`):
+2) Instantiate the Julia environment:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 ```
 
-4. Run the example:
+3) Run the Iris mission (auto-regenerates `src/UORBGenerated.jl` if needed):
 
 ```bash
-IRIS_T_END_S=70 \
-PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 ```
 
-5. Recommended: run the **record → replay integrator comparison** (PX4 live, then plant-only replay sweep):
+This produces `sim_log.csv` in your current directory.
+
+4) (Highly recommended) Do a **record → replay** integrator sweep:
 
 ```bash
-PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
+Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh 20
 ```
 
-Outputs:
+Outputs are written under `Tools/px4_lockstep_julia/examples/replay/out/`.
 
-* `sim_log.csv`
-  * includes position/velocity setpoints for tracking plots
-  * includes air-relative velocity in body axes (`air_bx/air_by/air_bz`) for inflow-aware propulsion debugging
+## Architecture in one picture
 
-Notes:
+```mermaid
+flowchart LR
+  subgraph Discrete[Discrete-time boundary updates (event-driven)]
+    Scn[Scenario] --> Bus[(SimBus)]
+    Wind[Wind source] --> Bus
+    Est[Estimator source] --> Bus
+    AP[PX4 lockstep autopilot] --> Bus
+  end
 
-* `libpx4_lockstep` is not re-entrant; by default only one lockstep handle is allowed per
-  process. For Monte Carlo, launch separate processes or pass
-  `allow_multiple_handles=true` when calling `PX4Lockstep.create` / `Sim.Autopilots.init!`.
+  subgraph Continuous[Continuous-time plant integration]
+    Bus -->|sample-and-hold inputs| Int[Integrator]
+    Int --> X[PlantState]
+    X -->|derived outputs| Bus
+  end
 
-## Python plotting
+  Bus --> Log[Log sinks / recorder]
+```
 
-Lightweight Python scripts live in `Tools/px4_lockstep_julia/scripts`.
-See `Tools/px4_lockstep_julia/scripts/README.md` for setup and usage.
+Key invariants:
+
+- **Single authoritative run loop**: `PX4Lockstep.Sim.Runtime.Engine`.
+- **Integer microsecond timebase** everywhere (`UInt64`) to avoid drift.
+- No RNG inside the ODE RHS; randomness only at discrete boundaries.
+
+## Documentation
+
+- **Docs home:** `docs/README.md`
+- **Getting started:** `docs/getting-started.md`
+- **Architecture & design:** `docs/architecture.md`
+- **Workflows (Iris, record/replay, verification):** `docs/workflows.md`
+- **Frames & sign conventions:** `docs/reference/conventions.md`
+- **Reference API entrypoints:** `docs/reference/api.md`
+
+## Standalone usage (not in a PX4 tree)
+
+If you check this repo out standalone, set the library path explicitly:
+
+```bash
+export PX4_LOCKSTEP_LIB=/path/to/libpx4_lockstep.(so|dylib)
+export PX4_LOCKSTEP_MISSION=/path/to/simple_mission.waypoints
+
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project=. -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+```
 
 ## Verification problems (integrator correctness)
 
-This repo includes a small set of deterministic verification problems with analytic
-solutions and/or conserved quantities. These are intended to catch numerical regressions
-and enable solver configuration comparisons without requiring PX4 in the loop.
-
-Run them from the repo root:
+Run deterministic reference problems without PX4:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/sho.jl
 julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/pendulum.jl
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/kepler_circular.jl
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/torque_free_rigid_body.jl
-
-# Reference-trajectory comparison (RK45 "truth"; no analytic solution required)
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/reference_compare_pendulum_large_angle.jl
 ```
 
-## Developer tooling
+More: `Tools/px4_lockstep_julia/examples/verification/README.md`.
 
-Install tooling deps (once):
+## Plotting & analysis
+
+Python helpers live in `scripts/`.
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
+python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv --output sim_plot.png
 ```
 
-Format Julia source:
+See `scripts/README.md` for setup and additional plotting options.
+
+## Development
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
+julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.test()'
 ```
 
-Run Aqua checks (project hygiene + method ambiguities). The `stale_deps` check is
-disabled because tooling packages are kept as direct dependencies for convenience:
+Formatting, static analysis, and uORB codegen are documented in `docs/development.md`.
 
-```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep; stale_deps=false)'
-```
+## Notes / constraints
 
-Run JET static analysis (disable `analyze_from_definitions` for Julia 1.12 compatibility):
-
-```bash
-julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep"; analyze_from_definitions=false)'
-```
-
-## Architecture
-
-<img width="1958" height="1760" alt="runtime_flowchart" src="https://github.com/user-attachments/assets/bdb7eb1c-dfd3-4b9f-9fa3-31c3fbbbd48b" />
-
-
-The simulation framework is organized as composable modules:
-
-* `PX4Lockstep.Sim.Environment`
-  * atmosphere (ISA1976), wind models (incl. OU turbulence + gusts), gravity models
-* `PX4Lockstep.Sim.Vehicles`
-  * rigid-body 6DOF baseline model (Iris quad)
-  * actuator dynamics (`DirectActuators`, `FirstOrderActuators`, `SecondOrderActuators`)
-* `PX4Lockstep.Sim.Plant`
-  * `PlantState` / `PlantDeriv` for full continuous plant state (rigid body + actuators + rotors + battery)
-  * `PlantInput` / `PlantOutputs` glue for variable-step integration
-* `PX4Lockstep.Sim.Powertrain`
-  * `IdealBattery` baseline
-  * `TheveninBattery` (OCV + R0 + RC) for better voltage sag realism
-* `PX4Lockstep.Sim.Propulsion`
-  * motor+ESC+prop split: duty → current/torque → ω → thrust/drag torque
-  * inflow-aware thrust/torque correction (vertical descent + wind projection reduce thrust for a given ω)
-* `PX4Lockstep.Sim.Contacts`
-  * pluggable contact model (`NoContact` by default; `FlatGroundContact` optional)
-* `PX4Lockstep.Sim.Events` / `PX4Lockstep.Sim.Scenario`
-  * deterministic event scheduler (arm at t, gust injection, motor failure, SOC triggers, ...)
-* `PX4Lockstep.Sim.Noise`
-  * AR(1) bias + Gaussian noise utilities
-* `PX4Lockstep.Sim.Estimators`
-  * truth → estimated state (noise, bias, delay) feeding PX4 without EKF2
-* `PX4Lockstep.Sim.Integrators`
-  * fixed-step Euler and RK4 (default)
-  * adaptive (variable-step) RK23 and RK45 (Dormand–Prince) integrators (optional)
-* `PX4Lockstep.Sim.Autopilots`
-  * thin bridge from sim truth → PX4 lockstep inputs
-* `PX4Lockstep.Sim.Logging`
-  * `SimLog` in-memory logging and `CSVLogSink` streaming logs
-* `PX4Lockstep.Sim.Runtime`
-  * deterministic multi-rate scheduling via integer-microsecond timeline axes (`Timeline` + `Scheduler`)
-  * **canonical** event-driven engine (live / record / replay)
-  * integrates full plant between event boundaries using fixed or adaptive integrators
-* `PX4Lockstep.Sim.Recording` / `PX4Lockstep.Sim.Sources`
-  * traces, recorders, and live/replay sources feeding the runtime engine
-* `PX4Lockstep.Sim.PlantModels`
-  * plant RHS functors and bus-coupled plant output evaluation (`plant_outputs`)
-
-### Estimator injection (noise + delay)
-
-Estimator injection (noise, bias, and delay) is provided by discrete **sources**.
-
-- Live runs typically use `Sim.Sources.LiveEstimatorSource(estimator_model, rng; dt_est_s=...)`.
-- Replay runs can use `Sim.Sources.ReplayEstimatorSource(trace)`.
-
-See `src/sim/Workflows/Iris.jl` for an end-to-end configuration (it wires a noisy + delayed estimator into the runtime engine at the autopilot cadence).
-
-### Multi-rate stepping
-
-The simulator is event-driven. You configure cadences via a `Sim.Runtime.Timeline`:
-
-- `ap` axis: PX4 lockstep ticks
-- `wind` axis: wind sample-and-hold updates
-- `log` axis: logging samples
-- optional `phys` axis: fixed physics step boundaries (for strict fixed-step integration)
-
-Example:
-
-```julia
-using PX4Lockstep.Sim
-
-RT = Sim.Runtime
-
-t0_us = UInt64(0)
-t_end_us = RT.dt_to_us(20.0)
-
-timeline = RT.build_timeline(
-    t0_us,
-    t_end_us;
-    dt_ap_us = RT.dt_to_us(0.004),
-    dt_wind_us = RT.dt_to_us(0.004),
-    dt_log_us = RT.dt_to_us(0.01),
-    dt_phys_us = RT.dt_to_us(0.002),  # optional
-)
-```
-
-The runtime engine integrates the full plant between the **next** boundaries in the union axis.
-Between boundaries, inputs are held constant (ZOH).
-
-For PX4 lockstep, the autopilot cadence must be compatible with the PX4 internal scheduling. The autopilot bridge enforces this by default.
-
-### Extending
-
-To add a new aircraft model, implement a new `AbstractVehicleModel` and a corresponding `dynamics(model, env, t, state, u)` method that returns a `RigidBodyDeriv`.
-
-To add a new integrator, implement `step_integrator(::YourIntegrator, f, t, x, u, dt)`.
-
-To add new worlds, compose new `EnvironmentModel(atmosphere=..., wind=..., gravity=...)` types.
-
-## Notes
-
-* The framework uses NED as the world frame to match PX4.
-* Controller outputs are treated as piecewise-constant over each sim `dt`, which is the standard assumption for fixed-step closed-loop simulation.
-* Wind turbulence is advanced once per tick (seeded RNG) and held constant over the integration step for determinism.
-* CSV logs include `time_us` (exact lockstep microsecond time) as of `schema_version=3`.
-
-## Example Run
-```bash
-IRIS_T_END_S=70 \
-PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live, log_sinks=Sim.Logging.CSVLogSink("sim_log.csv"))'
-
-python Tools/px4_lockstep_julia/scripts/plot_sim_log.py \
-  --log sim_log.csv \
-  --output sim_plot.png \
-  --inflow-output sim_inflow.png
-```
-<img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/f7fede13-1ced-49a6-825f-605dc3c274fc" />
+- `libpx4_lockstep` is not re-entrant by default; run Monte Carlo in separate processes, or pass `allow_multiple_handles=true` (unsafe).
+- The world frame is **NED** to match PX4 conventions.

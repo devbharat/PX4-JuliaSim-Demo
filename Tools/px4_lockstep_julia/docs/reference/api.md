@@ -57,7 +57,7 @@ Convenience wrapper for a replay run. Equivalent to `Sim.simulate(mode=:replay, 
 *Location*: `src/sim/API.jl`
 
 This expects you to construct replay sources explicitly (wind, scenario, autopilot) from traces.
-See `docs/components/record-replay.md` for the current record/replay workflow.
+See [`../components/record-replay.md`](../components/record-replay.md) for the current record/replay workflow.
 
 ### `Sim.Workflows.simulate_iris_mission`
 

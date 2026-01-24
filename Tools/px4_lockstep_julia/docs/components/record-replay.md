@@ -33,6 +33,8 @@ Required streams (sufficient for deterministic plant replay):
 - `:wind_ned` — wind sample, **sample/hold** on the wind axis
 - `:plant` — plant state snapshots, **sampled** on the log axis
 - `:battery` and `:batteries` — battery telemetry snapshots, **sampled** on the log axis
+  - `:batteries` is the full vector (deterministic order)
+  - `:battery` is a legacy primary snapshot (`batteries[1]`)
 
 Optional streams:
 

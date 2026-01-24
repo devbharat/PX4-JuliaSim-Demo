@@ -140,7 +140,7 @@ Location:
 Consumes:
 
 * `bus.est` (estimated state)
-* `bus.batteries` (battery 1 is treated as the primary battery)
+* `bus.batteries` (full vector; `batteries[1]` is the legacy primary)
 * `bus.ap_cmd`, `bus.landed`
 
 Notes:

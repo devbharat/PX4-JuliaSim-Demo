@@ -43,7 +43,7 @@ Order at `t_k`:
 
 1. Scenario updates bus (`faults`, `ap_cmd`, `landed`) if `t_k ∈ timeline.scn`
 2. Wind updates bus (`wind_ned`) if `t_k ∈ timeline.wind`
-3. Plant-derived telemetry updates bus (battery, env cache) via `plant_outputs`
+3. Plant-derived telemetry updates bus (battery vector, env cache) via `plant_outputs`
 4. Estimator updates bus (`est`) if `t_k ∈ timeline.ap`
 5. Telemetry hooks run (optional, read-only) if `t_k ∈ timeline.ap`
 6. Autopilot updates bus (`cmd`) if `t_k ∈ timeline.ap`

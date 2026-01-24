@@ -35,7 +35,7 @@ and optional injection scheduling) lives in:
 - `autopilot_step` is called at `timeline.ap` boundaries with the scheduler’s integer
   `time_us` (no float time conversion on the call boundary).
 - Inputs are sourced from the runtime bus (`SimBus`): estimated state (`bus.est`),
-  `bus.ap_cmd`, `bus.landed`, and `bus.batteries`.
+  `bus.ap_cmd`, `bus.landed`, and `bus.batteries` (vector; `batteries[1]` is the legacy primary).
 - Outputs are treated as sample-and-hold until the next autopilot tick.
 - Home/reference fields:
   - When `LockstepConfig.enable_commander == 0`, the bridge publishes `home_position`

@@ -240,7 +240,7 @@ At each boundary time `t_k` (in microseconds):
 
 1. Scenario publishes (`faults`, `ap_cmd`, `landed`).
 2. Wind publishes (`wind_ned`).
-3. Plant-derived telemetry updates the bus (`battery`, etc) via `plant_outputs`.
+3. Plant-derived telemetry updates the bus (battery vector, etc) via `plant_outputs`.
 4. Estimator publishes (`est`).
 5. Telemetry hooks run (optional, read-only).
 6. Autopilot publishes (`cmd`).

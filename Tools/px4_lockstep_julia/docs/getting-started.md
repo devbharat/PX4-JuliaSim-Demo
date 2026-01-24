@@ -48,25 +48,34 @@ Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 
 This produces `sim_log.csv` in your current working directory.
 
-## Configuration knobs
+## Sysimage (optional, opt-in)
 
-You can override the defaults with environment variables:
+To speed up Julia startup, the helper scripts can build and use a sysimage.
+Enable it explicitly:
 
-- `PX4_LOCKSTEP_LIB`: path to `libpx4_lockstep.(so|dylib)`
-- `PX4_LOCKSTEP_MISSION`: path to a QGC `.waypoints` file
-- `JULIA_DEPOT_PATH`: Julia depot path (useful to keep PX4 tooling isolated)
+```bash
+PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+```
 
-uORB codegen (optional; the scripts handle this automatically):
+The first run will be slower while the sysimage is built (often around a minute);
+subsequent runs are faster. The sysimage is rebuilt automatically when Julia sources,
+`Project.toml`, `Manifest.toml`, or `UORBGenerated.jl` change, so frequent edits will
+trigger slow rebuilds.
 
-- `UORB_HEADERS_DIR`: directory containing generated uORB topic headers
-- `UORB_TOPICS`: comma-separated topic list to generate
-- `UORB_OUT`: output path for `UORBGenerated.jl`
+Use this primarily for CI or analysis workflows that run the same build many times,
+not for rapid edit‑run iteration during development.
+
+## Configuration notes
+
+The helper scripts assume the **standard PX4 tree layout** and do not accept path overrides.
+If you need custom paths (e.g., a different `libpx4_lockstep` location), run Julia directly
+and set `PX4_LOCKSTEP_LIB` / `PX4_LOCKSTEP_MISSION` yourself (see below).
 
 ## Troubleshooting
 
 ### “PX4 lockstep library not found”
 
-Set `PX4_LOCKSTEP_LIB` to the built shared library:
+If you are running **without** the helper scripts, set `PX4_LOCKSTEP_LIB` to the built shared library:
 
 ```bash
 export PX4_LOCKSTEP_LIB=/absolute/path/to/libpx4_lockstep.so

@@ -51,8 +51,24 @@ Run the live Iris mission with uORB injection flags (defaults to 70s):
 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 ```
 
-Override paths/flags by exporting `PX4_LOCKSTEP_LIB`, `PX4_LOCKSTEP_MISSION`,
-or `JULIA_DEPOT_PATH`.
+The helper assumes the standard PX4 tree layout. For custom library or mission
+paths, run Julia directly and set `PX4_LOCKSTEP_LIB` / `PX4_LOCKSTEP_MISSION`
+in your environment.
+
+### Sysimage (optional, opt-in)
+
+To speed up Julia startup, enable sysimage building and usage:
+
+```bash
+PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+```
+
+The first build can take about a minute. The sysimage is rebuilt automatically when
+Julia sources, `Project.toml`, `Manifest.toml`, or `UORBGenerated.jl` change, so
+active development will trigger slow rebuilds.
+
+This is best for CI or analysis workflows that run many times on the same build,
+not for rapid local iteration.
 
 ## Iris multi-altitude sweep helper
 

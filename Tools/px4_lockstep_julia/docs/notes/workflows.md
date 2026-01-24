@@ -12,9 +12,14 @@ Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
 
 This helper:
 
-1. Locates `libpx4_lockstep` (or uses `PX4_LOCKSTEP_LIB` if set).
+1. Locates `libpx4_lockstep` in the standard PX4 build output.
 2. Regenerates `src/UORBGenerated.jl` when uORB headers have changed.
-3. Runs `PX4Lockstep.Sim.Workflows.simulate_iris_mission(...; mode=:live)`.
+3. Optionally builds/uses a sysimage when `PX4_LOCKSTEP_SYSIMAGE=1`.
+4. Runs `PX4Lockstep.Sim.Workflows.simulate_iris_mission(...; mode=:live)`.
+
+Note: sysimage builds can take around a minute the first time, and any Julia code
+change triggers a rebuild. It’s intended for CI or analysis runs with many repeats,
+not for rapid edit‑run iteration.
 
 Output:
 

@@ -219,9 +219,12 @@ Base.@kwdef struct PX4ParamSpec
 end
 
 PX4ParamSpec(name::Symbol, value::Integer) = PX4ParamSpec(String(name), Int32(value))
-PX4ParamSpec(name::Symbol, value::AbstractFloat) = PX4ParamSpec(String(name), Float32(value))
-PX4ParamSpec(name::AbstractString, value::Integer) = PX4ParamSpec(String(name), Int32(value))
-PX4ParamSpec(name::AbstractString, value::AbstractFloat) = PX4ParamSpec(String(name), Float32(value))
+PX4ParamSpec(name::Symbol, value::AbstractFloat) =
+    PX4ParamSpec(String(name), Float32(value))
+PX4ParamSpec(name::AbstractString, value::Integer) =
+    PX4ParamSpec(String(name), Int32(value))
+PX4ParamSpec(name::AbstractString, value::AbstractFloat) =
+    PX4ParamSpec(String(name), Float32(value))
 
 
 Base.@kwdef struct RadarSpec <: AbstractSensorSpec
@@ -245,7 +248,8 @@ Base.@kwdef struct PX4Spec
     lockstep_config::LockstepConfig = _SIM.iris_default_lockstep_config()
 
     """uORB pub/sub contract used by the PX4 bridge."""
-    uorb_cfg::Autopilots.PX4UORBInterfaceConfig = Autopilots.iris_state_injection_interface()
+    uorb_cfg::Autopilots.PX4UORBInterfaceConfig =
+        Autopilots.iris_state_injection_interface()
 
     """Optional PX4 parameter overrides applied at init-time."""
     params::Vector{PX4ParamSpec} = PX4ParamSpec[]
@@ -317,7 +321,7 @@ end
 
 This is a thin data wrapper: it does not run any simulation.
 """
-function iris_spec(; 
+function iris_spec(;
     mission_path::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_MISSION", nothing),
     libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
     lockstep_config = _SIM.iris_default_lockstep_config(),
@@ -367,31 +371,27 @@ function iris_spec(;
         servo_actuators = DirectActuatorSpec(),
     )
 
-    batteries = BatterySpec[
-        BatterySpec(
-            id = :bat1,
-            model = :thevenin,
-            capacity_ah = 5.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [10.8, 12.6],
-            r0 = 0.020,
-            r1 = 0.010,
-            c1 = 2000.0,
-            v1_0 = 0.0,
-            min_voltage_v = 9.9,
-        ),
-    ]
+    batteries = BatterySpec[BatterySpec(
+        id = :bat1,
+        model = :thevenin,
+        capacity_ah = 5.0,
+        soc0 = 1.0,
+        ocv_soc = [0.0, 1.0],
+        ocv_v = [10.8, 12.6],
+        r0 = 0.020,
+        r1 = 0.010,
+        c1 = 2000.0,
+        v1_0 = 0.0,
+        min_voltage_v = 9.9,
+    ),]
 
-    buses = PowerBusSpec[
-        PowerBusSpec(
-            id = :main,
-            battery_ids = BatteryId[:bat1],
-            motor_ids = MotorId[:motor1, :motor2, :motor3, :motor4],
-            servo_ids = ServoId[],
-            avionics_load_w = 0.0,
-        ),
-    ]
+    buses = PowerBusSpec[PowerBusSpec(
+        id = :main,
+        battery_ids = BatteryId[:bat1],
+        motor_ids = MotorId[:motor1, :motor2, :motor3, :motor4],
+        servo_ids = ServoId[],
+        avionics_load_w = 0.0,
+    ),]
 
     power = PowerSpec(batteries = batteries, buses = buses)
 
@@ -487,9 +487,7 @@ function octa_spec(;
 
     plant = PlantSpec(integrator = integrator, contact = contact)
 
-    motors = MotorSpec[
-        MotorSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8
-    ]
+    motors = MotorSpec[MotorSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8]
 
     actuation = ActuationSpec(
         motors = motors,
@@ -498,35 +496,28 @@ function octa_spec(;
         servo_actuators = DirectActuatorSpec(),
     )
 
-    batteries = BatterySpec[
-        BatterySpec(
-            id = :bat1,
-            model = :thevenin,
-            capacity_ah = 5.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [10.8, 12.6],
-            r0 = 0.020,
-            r1 = 0.010,
-            c1 = 2000.0,
-            v1_0 = 0.0,
-            min_voltage_v = 9.9,
-        ),
-    ]
+    batteries = BatterySpec[BatterySpec(
+        id = :bat1,
+        model = :thevenin,
+        capacity_ah = 5.0,
+        soc0 = 1.0,
+        ocv_soc = [0.0, 1.0],
+        ocv_v = [10.8, 12.6],
+        r0 = 0.020,
+        r1 = 0.010,
+        c1 = 2000.0,
+        v1_0 = 0.0,
+        min_voltage_v = 9.9,
+    ),]
 
-    buses = PowerBusSpec[
-        PowerBusSpec(
-            id = :main,
-            battery_ids = BatteryId[:bat1],
-            motor_ids = MotorId[m.id for m in motors],
-            avionics_load_w = 15.0,
-        ),
-    ]
+    buses = PowerBusSpec[PowerBusSpec(
+        id = :main,
+        battery_ids = BatteryId[:bat1],
+        motor_ids = MotorId[m.id for m in motors],
+        avionics_load_w = 15.0,
+    ),]
 
-    power = PowerSpec(
-        batteries = batteries,
-        buses = buses,
-    )
+    power = PowerSpec(batteries = batteries, buses = buses)
 
     rotor_pos_body_m = Vec3[
         vec3(

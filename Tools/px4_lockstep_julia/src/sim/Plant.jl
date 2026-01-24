@@ -124,15 +124,7 @@ function PlantState{N,B}(;
     rotor_ω::SVector{N,Float64} = zero(SVector{N,Float64}),
     power::PowerState{B} = PowerState{B}(),
 ) where {N,B}
-    return PlantState{N,B}(
-        rb,
-        motors_y,
-        motors_ydot,
-        servos_y,
-        servos_ydot,
-        rotor_ω,
-        power,
-    )
+    return PlantState{N,B}(rb, motors_y, motors_ydot, servos_y, servos_ydot, rotor_ω, power)
 end
 
 """Continuous-time plant derivative."""
@@ -194,10 +186,8 @@ Base.@kwdef struct PlantOutputs{N,B,K}
     rotors::Union{Nothing,Propulsion.RotorOutput{N}} = nothing
 
     # Electrical bus (positive current = discharge).
-    bus_current_a::SVector{K,Float64} =
-        SVector{K,Float64}(ntuple(_ -> 0.0, K))
-    bus_voltage_v::SVector{K,Float64} =
-        SVector{K,Float64}(ntuple(_ -> NaN, K))
+    bus_current_a::SVector{K,Float64} = SVector{K,Float64}(ntuple(_ -> 0.0, K))
+    bus_voltage_v::SVector{K,Float64} = SVector{K,Float64}(ntuple(_ -> NaN, K))
 
     # Atmosphere + local relative flow at the vehicle.
     rho_kgm3::Float64 = NaN
@@ -240,8 +230,12 @@ end
     # Mirrors `RigidBody.rb_scale_add` (classic RK4 combination).
     w = h / 6.0
     p = PowerState{B}(
-        soc = x.power.soc + (k1.power.soc_dot + 2k2.power.soc_dot + 2k3.power.soc_dot + k4.power.soc_dot) * w,
-        v1 = x.power.v1 + (k1.power.v1_dot + 2k2.power.v1_dot + 2k3.power.v1_dot + k4.power.v1_dot) * w,
+        soc = x.power.soc +
+              (
+            k1.power.soc_dot + 2k2.power.soc_dot + 2k3.power.soc_dot + k4.power.soc_dot
+        ) * w,
+        v1 = x.power.v1 +
+             (k1.power.v1_dot + 2k2.power.v1_dot + 2k3.power.v1_dot + k4.power.v1_dot) * w,
     )
     return PlantState{N,B}(
         rb = rb_scale_add(x.rb, k1.rb, k2.rb, k3.rb, k4.rb, h),

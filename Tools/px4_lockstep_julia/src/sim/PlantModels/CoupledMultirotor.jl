@@ -702,7 +702,10 @@ function _eval_propulsion_and_power_network(
     fstate = u.faults
     duties_cmd = Vehicles.map_motors(motor_map, x.motors_y)
     duties = SVector{N,Float64}(
-        ntuple(i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(duties_cmd[i], 0.0, 1.0)), N),
+        ntuple(
+            i -> (is_motor_disabled(fstate, i) ? 0.0 : clamp(duties_cmd[i], 0.0, 1.0)),
+            N,
+        ),
     )
 
     # Phase 5.2: multi-bus, multi-battery algebraic power network.
@@ -793,7 +796,8 @@ function _eval_propulsion_and_power_network(
         # Axial inflow component along the propulsor thrust direction (Phase 4).
         # Convention: axis_b points along the propulsor axis such that F = -T * axis_b.
         ai = axis_b[i]
-        Vax_i = -Float64(v_air_body[1] * ai[1] + v_air_body[2] * ai[2] + v_air_body[3] * ai[3])
+        Vax_i =
+            -Float64(v_air_body[1] * ai[1] + v_air_body[2] * ai[2] + v_air_body[3] * ai[3])
         k = net.bus_for_motor[i]
         V_i = (1 <= k <= K) ? V_bus[k] : 0.0
         Ti, Qi, ωdot_i, Ii, Ibus_i =
@@ -827,8 +831,9 @@ function _eval_propulsion_and_power_network(
     I_bus_total = MVector{K,Float64}(undef)
     @inbounds for k = 1:K
         V_k = V_bus[k]
-        I_av = (fstate.battery_connected && V_k > 1e-6 && net.avionics_load_w[k] > 0.0) ?
-               (net.avionics_load_w[k] / V_k) : 0.0
+        I_av =
+            (fstate.battery_connected && V_k > 1e-6 && net.avionics_load_w[k] > 0.0) ?
+            (net.avionics_load_w[k] / V_k) : 0.0
         I_bus_total[k] = I_bus_motors[k] + I_av
     end
 
@@ -913,19 +918,24 @@ function plant_outputs(
         )
 
     # Compute per-battery telemetry (Phase 5.3).
-    batt_all = SVector{B,BatteryStatus}(ntuple(i -> begin
-        k = f.power_net.bus_for_battery[i]
-        V_i = (1 <= k <= length(V_bus)) ? V_bus[k] : 0.0
-        I_i = I_batt[i]
-        _battery_status_from_state(
-            f.batteries[i],
-            x.power.soc[i],
-            x.power.v1[i],
-            I_i,
-            V_i;
-            connected = u.faults.battery_connected,
-        )
-    end, B))
+    batt_all = SVector{B,BatteryStatus}(
+        ntuple(
+            i -> begin
+                k = f.power_net.bus_for_battery[i]
+                V_i = (1 <= k <= length(V_bus)) ? V_bus[k] : 0.0
+                I_i = I_batt[i]
+                _battery_status_from_state(
+                    f.batteries[i],
+                    x.power.soc[i],
+                    x.power.v1[i],
+                    I_i,
+                    V_i;
+                    connected = u.faults.battery_connected,
+                )
+            end,
+            B,
+        ),
+    )
 
     # Atmosphere expects MSL altitude (consistent with density in propulsion eval).
     alt_msl_m = f.env.origin.alt_msl_m - x.rb.pos_ned[3]
@@ -946,7 +956,11 @@ end
 # RHS functor
 ############################
 
-function (f::CoupledMultirotorModel)(t::Float64, x::PlantState{N,B}, u::PlantInput) where {N,B}
+function (f::CoupledMultirotorModel)(
+    t::Float64,
+    x::PlantState{N,B},
+    u::PlantInput,
+) where {N,B}
     # Actuator dynamics (pure; no mutation of actuator model objects).
     my_dot, mydot_dot =
         _actuator_derivs(f.motor_actuators, x.motors_y, x.motors_ydot, u.cmd.motors)

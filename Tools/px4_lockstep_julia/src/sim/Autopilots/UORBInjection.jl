@@ -91,7 +91,12 @@ uorb_name(::AbstractUORBInjectionSource) = :uorb_injection
 
 const EVERY_STEP_US = UInt64(0)
 
-@inline function _is_due(time_us::UInt64, t0_us::UInt64, period_us::UInt64, phase_us::UInt64)
+@inline function _is_due(
+    time_us::UInt64,
+    t0_us::UInt64,
+    period_us::UInt64,
+    phase_us::UInt64,
+)
     period_us == 0 && return true
     time_us < t0_us + phase_us && return false
     return ((time_us - t0_us - phase_us) % period_us) == 0
@@ -101,7 +106,8 @@ end
 
 `builder` must be callable as `builder(ctx)::T` and should be allocation-free.
 """
-Base.@kwdef mutable struct PeriodicUORBInjection{T<:UORBMsg,F} <: AbstractUORBInjectionSource
+Base.@kwdef mutable struct PeriodicUORBInjection{T<:UORBMsg,F} <:
+                           AbstractUORBInjectionSource
     name::Symbol = :uorb_injection
     pub::UORBPublisher{T}
     period_us::UInt64 = UInt64(0)
@@ -249,45 +255,59 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
             inst = entries[1][2]
             inst >= -1 || error("battery_status instance must be -1 or >=0 (got $(inst))")
             bidx0 = inst >= 0 ? Int(inst) : 0
-            add_source!(inj, PeriodicUORBInjection(
-                name = :battery_status,
-                pub = pub,
-                period_us = EVERY_STEP_US,
-                builder = ctx -> begin
-                    length(ctx.batteries) > bidx0 ||
-                        error("battery_status instance $(bidx0) requires ctx.batteries length >= $(bidx0 + 1)")
-                    _battery_status_msg(ctx.time_us, ctx.batteries[bidx0 + 1]; id = UInt8(bidx0))
-                end,
-            ))
+            add_source!(
+                inj,
+                PeriodicUORBInjection(
+                    name = :battery_status,
+                    pub = pub,
+                    period_us = EVERY_STEP_US,
+                    builder = ctx -> begin
+                        length(ctx.batteries) > bidx0 || error(
+                            "battery_status instance $(bidx0) requires ctx.batteries length >= $(bidx0 + 1)",
+                        )
+                        _battery_status_msg(
+                            ctx.time_us,
+                            ctx.batteries[bidx0+1];
+                            id = UInt8(bidx0),
+                        )
+                    end,
+                ),
+            )
         else
             # Phase 5.3: publish one battery_status per configured publisher instance.
             bidx0s = Int[]
             for (j, (_pub_any, inst)) in enumerate(entries)
-                inst >= -1 || error("battery_status instance must be -1 or >=0 (got $(inst))")
+                inst >= -1 ||
+                    error("battery_status instance must be -1 or >=0 (got $(inst))")
                 bidx0 = inst >= 0 ? Int(inst) : (j - 1)  # 0-based battery index
                 push!(bidx0s, bidx0)
             end
-            length(unique(bidx0s)) == length(bidx0s) ||
-                error("battery_status publishers map to duplicate battery indices: $(bidx0s)")
+            length(unique(bidx0s)) == length(bidx0s) || error(
+                "battery_status publishers map to duplicate battery indices: $(bidx0s)",
+            )
 
             for (j, (pub_any, inst)) in enumerate(entries)
                 pub = pub_any::UORBPublisher{BatteryStatusMsg}
                 bidx0 = inst >= 0 ? Int(inst) : (j - 1)  # 0-based battery index
                 let bidx0 = bidx0
-                    add_source!(inj, PeriodicUORBInjection(
-                        name = Symbol("battery_status_$(bidx0)"),
-                        pub = pub,
-                        period_us = EVERY_STEP_US,
-                        builder = ctx -> begin
-                            length(ctx.batteries) > bidx0 ||
-                                error("battery_status instance $(bidx0) requires ctx.batteries length >= $(bidx0 + 1)")
-                            _battery_status_msg(
-                                ctx.time_us,
-                                ctx.batteries[bidx0 + 1];
-                                id = UInt8(bidx0),
-                            )
-                        end,
-                    ))
+                    add_source!(
+                        inj,
+                        PeriodicUORBInjection(
+                            name = Symbol("battery_status_$(bidx0)"),
+                            pub = pub,
+                            period_us = EVERY_STEP_US,
+                            builder = ctx -> begin
+                                length(ctx.batteries) > bidx0 || error(
+                                    "battery_status instance $(bidx0) requires ctx.batteries length >= $(bidx0 + 1)",
+                                )
+                                _battery_status_msg(
+                                    ctx.time_us,
+                                    ctx.batteries[bidx0+1];
+                                    id = UInt8(bidx0),
+                                )
+                            end,
+                        ),
+                    )
                 end
             end
         end
@@ -299,101 +319,133 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
 
     if haskey(bridge.pubs, :vehicle_attitude)
         pub = bridge.pubs[:vehicle_attitude][1][1]::UORBPublisher{VehicleAttitudeMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_attitude,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_attitude_msg(ctx.time_us, ctx.q_bn),
-        ))
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_attitude,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_attitude_msg(ctx.time_us, ctx.q_bn),
+            ),
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_local_position)
-        pub = bridge.pubs[:vehicle_local_position][1][1]::UORBPublisher{VehicleLocalPositionMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_local_position,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_local_position_msg(
-                ctx.time_us,
-                ctx.pos_ned,
-                ctx.vel_ned,
-                ctx.yaw_rad,
-                ctx.ref_lat_deg,
-                ctx.ref_lon_deg,
-                ctx.ref_alt_m,
+        pub = bridge.pubs[:vehicle_local_position][1][1]::UORBPublisher{
+            VehicleLocalPositionMsg,
+        }
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_local_position,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_local_position_msg(
+                    ctx.time_us,
+                    ctx.pos_ned,
+                    ctx.vel_ned,
+                    ctx.yaw_rad,
+                    ctx.ref_lat_deg,
+                    ctx.ref_lon_deg,
+                    ctx.ref_alt_m,
+                ),
             ),
-        ))
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_global_position)
-        pub = bridge.pubs[:vehicle_global_position][1][1]::UORBPublisher{VehicleGlobalPositionMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_global_position,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_global_position_msg(
-                ctx.time_us,
-                ctx.lat_deg,
-                ctx.lon_deg,
-                ctx.alt_msl_m,
+        pub = bridge.pubs[:vehicle_global_position][1][1]::UORBPublisher{
+            VehicleGlobalPositionMsg,
+        }
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_global_position,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_global_position_msg(
+                    ctx.time_us,
+                    ctx.lat_deg,
+                    ctx.lon_deg,
+                    ctx.alt_msl_m,
+                ),
             ),
-        ))
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_angular_velocity)
-        pub = bridge.pubs[:vehicle_angular_velocity][1][1]::UORBPublisher{VehicleAngularVelocityMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_angular_velocity,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_angular_velocity_msg(ctx.time_us, ctx.ω_body),
-        ))
+        pub = bridge.pubs[:vehicle_angular_velocity][1][1]::UORBPublisher{
+            VehicleAngularVelocityMsg,
+        }
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_angular_velocity,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_angular_velocity_msg(ctx.time_us, ctx.ω_body),
+            ),
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_land_detected)
-        pub = bridge.pubs[:vehicle_land_detected][1][1]::UORBPublisher{VehicleLandDetectedMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_land_detected,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_land_detected_msg(ctx.time_us, ctx.landed),
-        ))
+        pub =
+            bridge.pubs[:vehicle_land_detected][1][1]::UORBPublisher{VehicleLandDetectedMsg}
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_land_detected,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_land_detected_msg(ctx.time_us, ctx.landed),
+            ),
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_status)
         pub = bridge.pubs[:vehicle_status][1][1]::UORBPublisher{VehicleStatusMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_status,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_status_msg(ctx.time_us, ctx.nav_state, ctx.arming_state),
-        ))
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_status,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx ->
+                    _vehicle_status_msg(ctx.time_us, ctx.nav_state, ctx.arming_state),
+            ),
+        )
     end
 
     if haskey(bridge.pubs, :vehicle_control_mode)
         pub = bridge.pubs[:vehicle_control_mode][1][1]::UORBPublisher{VehicleControlModeMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :vehicle_control_mode,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _vehicle_control_mode_msg(
-                ctx.time_us,
-                ctx.cmd,
-                ctx.auto_mode,
-                ctx.nav_state,
-                ctx.control_allocator_enabled,
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :vehicle_control_mode,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _vehicle_control_mode_msg(
+                    ctx.time_us,
+                    ctx.cmd,
+                    ctx.auto_mode,
+                    ctx.nav_state,
+                    ctx.control_allocator_enabled,
+                ),
             ),
-        ))
+        )
     end
 
     if haskey(bridge.pubs, :actuator_armed)
         pub = bridge.pubs[:actuator_armed][1][1]::UORBPublisher{ActuatorArmedMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :actuator_armed,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _actuator_armed_msg(ctx.time_us, ctx.cmd),
-        ))
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :actuator_armed,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _actuator_armed_msg(ctx.time_us, ctx.cmd),
+            ),
+        )
     end
 
     if haskey(bridge.pubs, :home_position)
@@ -403,12 +455,15 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
 
     if haskey(bridge.pubs, :geofence_status)
         pub = bridge.pubs[:geofence_status][1][1]::UORBPublisher{GeofenceStatusMsg}
-        add_source!(inj, PeriodicUORBInjection(
-            name = :geofence_status,
-            pub = pub,
-            period_us = EVERY_STEP_US,
-            builder = ctx -> _geofence_status_msg(ctx.time_us),
-        ))
+        add_source!(
+            inj,
+            PeriodicUORBInjection(
+                name = :geofence_status,
+                pub = pub,
+                period_us = EVERY_STEP_US,
+                builder = ctx -> _geofence_status_msg(ctx.time_us),
+            ),
+        )
     end
 
     return inj

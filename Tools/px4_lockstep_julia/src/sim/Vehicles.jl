@@ -399,7 +399,8 @@ function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
             vec3(-0.1515, 0.1875, 0.0),
         )
         rotor_axis = SVector{4,Vec3}(ntuple(_ -> vec3(0.0, 0.0, 1.0), 4))
-        params = QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_axis_body = rotor_axis)
+        params =
+            QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_axis_body = rotor_axis)
     end
     return IrisQuadrotor(params)
 end

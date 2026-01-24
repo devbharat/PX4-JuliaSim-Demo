@@ -87,7 +87,7 @@ Parameters
 function SimBus(; time_us::UInt64 = 0, n_batteries::Integer = 1)
     nb = Int(n_batteries)
     nb >= 1 || error("SimBus(n_batteries=$nb) must be >= 1")
-    bats = [BatteryTelemetry() for _ in 1:nb]
+    bats = [BatteryTelemetry() for _ = 1:nb]
 
     return SimBus(
         BUS_SCHEMA_VERSION,

@@ -14,11 +14,7 @@ Later phases will extend this to validate:
 
 Throws an ErrorException / ArgumentError on failure.
 """
-function validate_spec(
-    spec::AircraftSpec;
-    mode::Symbol = :live,
-    recording_in = nothing,
-)
+function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = nothing)
     mode in (:live, :record, :replay) ||
         throw(ArgumentError("Unknown mode=$mode (expected :live|:record|:replay)"))
 
@@ -42,13 +38,20 @@ function validate_spec(
     length(unique(motor_ids)) == length(motor_ids) ||
         throw(ArgumentError("Duplicate motor IDs in actuation.motors"))
     motor_channels = [m.channel for m in motors]
-    length(unique(motor_channels)) == length(motor_channels) ||
-        throw(ArgumentError("Duplicate motor channels in actuation.motors (each motor should have a unique PX4 output channel)"))
+    length(unique(motor_channels)) == length(motor_channels) || throw(
+        ArgumentError(
+            "Duplicate motor channels in actuation.motors (each motor should have a unique PX4 output channel)",
+        ),
+    )
     for m in motors
         (1 <= m.channel <= 12) ||
             throw(ArgumentError("Motor $(m.id) has channel=$(m.channel) (expected 1..12)"))
     end
-    length(motors) <= 12 || throw(ArgumentError("actuation.motors length=$(length(motors)) exceeds PX4 ABI motor channels (12)"))
+    length(motors) <= 12 || throw(
+        ArgumentError(
+            "actuation.motors length=$(length(motors)) exceeds PX4 ABI motor channels (12)",
+        ),
+    )
 
     # Servos (optional)
     servos = spec.actuation.servos
@@ -56,8 +59,11 @@ function validate_spec(
     length(unique(servo_ids)) == length(servo_ids) ||
         throw(ArgumentError("Duplicate servo IDs in actuation.servos"))
     servo_channels = [s.channel for s in servos]
-    length(unique(servo_channels)) == length(servo_channels) ||
-        throw(ArgumentError("Duplicate servo channels in actuation.servos (each servo should have a unique PX4 output channel)"))
+    length(unique(servo_channels)) == length(servo_channels) || throw(
+        ArgumentError(
+            "Duplicate servo channels in actuation.servos (each servo should have a unique PX4 output channel)",
+        ),
+    )
     for s in servos
         (1 <= s.channel <= 8) ||
             throw(ArgumentError("Servo $(s.id) has channel=$(s.channel) (expected 1..8)"))
@@ -75,28 +81,30 @@ function validate_spec(
         length(spec.airframe.rotor_axis_body_m) == 4 ||
             throw(ArgumentError("Iris spec requires 4 rotor_axis_body_m entries"))
     else
-        spec.airframe.kind === :multirotor ||
-            throw(ArgumentError("Non-Iris specs require airframe.kind=:multirotor (Phase 2 supports multirotor only)"))
-        length(spec.airframe.rotor_pos_body_m) == length(motors) ||
-            throw(
-                ArgumentError(
-                    "airframe.rotor_pos_body_m length=$(length(spec.airframe.rotor_pos_body_m)) must match actuation.motors length=$(length(motors))",
-                ),
-            )
+        spec.airframe.kind === :multirotor || throw(
+            ArgumentError(
+                "Non-Iris specs require airframe.kind=:multirotor (Phase 2 supports multirotor only)",
+            ),
+        )
+        length(spec.airframe.rotor_pos_body_m) == length(motors) || throw(
+            ArgumentError(
+                "airframe.rotor_pos_body_m length=$(length(spec.airframe.rotor_pos_body_m)) must match actuation.motors length=$(length(motors))",
+            ),
+        )
 
         # Per-rotor axes (Phase 4)
-        length(spec.airframe.rotor_axis_body_m) == length(motors) ||
-            throw(
-                ArgumentError(
-                    "airframe.rotor_axis_body_m length=$(length(spec.airframe.rotor_axis_body_m)) must match actuation.motors length=$(length(motors))",
-                ),
-            )
+        length(spec.airframe.rotor_axis_body_m) == length(motors) || throw(
+            ArgumentError(
+                "airframe.rotor_axis_body_m length=$(length(spec.airframe.rotor_axis_body_m)) must match actuation.motors length=$(length(motors))",
+            ),
+        )
     end
 
     # Axis sanity (Phase 4): if provided, must be non-zero and finite.
     for (i, a) in enumerate(spec.airframe.rotor_axis_body_m)
-        (isfinite(a[1]) && isfinite(a[2]) && isfinite(a[3])) ||
-            throw(ArgumentError("airframe.rotor_axis_body_m[$i] contains non-finite values: $a"))
+        (isfinite(a[1]) && isfinite(a[2]) && isfinite(a[3])) || throw(
+            ArgumentError("airframe.rotor_axis_body_m[$i] contains non-finite values: $a"),
+        )
         n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
         n2 > 1e-12 ||
             throw(ArgumentError("airframe.rotor_axis_body_m[$i] is near-zero: $a"))
@@ -141,11 +149,15 @@ function validate_spec(
 
     for mid in motor_ids
         c = get(motor_bus_count, mid, 0)
-        c == 1 || throw(ArgumentError("Motor id=$mid must be assigned to exactly one bus (got $c)"))
+        c == 1 || throw(
+            ArgumentError("Motor id=$mid must be assigned to exactly one bus (got $c)"),
+        )
     end
     for bid in bat_ids
         c = get(bat_bus_count, bid, 0)
-        c == 1 || throw(ArgumentError("Battery id=$bid must be assigned to exactly one bus (got $c)"))
+        c == 1 || throw(
+            ArgumentError("Battery id=$bid must be assigned to exactly one bus (got $c)"),
+        )
     end
 
     if mode === :replay
@@ -160,7 +172,8 @@ function validate_spec(
         names = String[]
         for p in spec.px4.params
             nm = strip(p.name)
-            isempty(nm) && throw(ArgumentError("px4.params contains an empty parameter name"))
+            isempty(nm) &&
+                throw(ArgumentError("px4.params contains an empty parameter name"))
             push!(names, nm)
         end
         length(unique(names)) == length(names) ||

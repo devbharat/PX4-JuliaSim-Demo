@@ -56,7 +56,9 @@ uorb_topic(::Type{BatteryStatusMsg}) = "battery_status"
 uorb_queue_length(::Type{BatteryStatusMsg}) = 1
 uorb_fields_hash(::Type{BatteryStatusMsg}) = 0x5754359606b9fa8e
 uorb_message_hash(::Type{BatteryStatusMsg}) = 0xfd330964
-uorb_fields(::Type{BatteryStatusMsg}) = "uint64_t timestamp;float voltage_v;float current_a;float current_average_a;float discharged_mah;float remaining;float scale;float time_remaining_s;float temperature;float[14] voltage_cell_v;float max_cell_voltage_delta;float full_charge_capacity_wh;float remaining_capacity_wh;float nominal_voltage;float internal_resistance_estimate;float ocv_estimate;float ocv_estimate_filtered;float volt_based_soc_estimate;float voltage_prediction;float prediction_error;float estimation_covariance_norm;uint16_t capacity;uint16_t cycle_count;uint16_t average_time_to_empty;uint16_t manufacture_date;uint16_t state_of_health;uint16_t max_error;uint16_t interface_error;uint16_t faults;uint16_t over_discharge_count;bool connected;uint8_t cell_count;uint8_t source;uint8_t priority;uint8_t id;bool is_powering_off;bool is_required;uint8_t warning"
+uorb_fields(
+    ::Type{BatteryStatusMsg},
+) = "uint64_t timestamp;float voltage_v;float current_a;float current_average_a;float discharged_mah;float remaining;float scale;float time_remaining_s;float temperature;float[14] voltage_cell_v;float max_cell_voltage_delta;float full_charge_capacity_wh;float remaining_capacity_wh;float nominal_voltage;float internal_resistance_estimate;float ocv_estimate;float ocv_estimate_filtered;float volt_based_soc_estimate;float voltage_prediction;float prediction_error;float estimation_covariance_norm;uint16_t capacity;uint16_t cycle_count;uint16_t average_time_to_empty;uint16_t manufacture_date;uint16_t state_of_health;uint16_t max_error;uint16_t interface_error;uint16_t faults;uint16_t over_discharge_count;bool connected;uint8_t cell_count;uint8_t source;uint8_t priority;uint8_t id;bool is_powering_off;bool is_required;uint8_t warning"
 
 struct VehicleAttitudeMsg <: UORBMsg
     timestamp::UInt64
@@ -71,7 +73,9 @@ uorb_topic(::Type{VehicleAttitudeMsg}) = "vehicle_attitude"
 uorb_queue_length(::Type{VehicleAttitudeMsg}) = 1
 uorb_fields_hash(::Type{VehicleAttitudeMsg}) = 0xb93173293a570a66
 uorb_message_hash(::Type{VehicleAttitudeMsg}) = 0x0ac1f7cd
-uorb_fields(::Type{VehicleAttitudeMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[4] q;float[4] delta_q_reset;uint8_t quat_reset_counter"
+uorb_fields(
+    ::Type{VehicleAttitudeMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[4] q;float[4] delta_q_reset;uint8_t quat_reset_counter"
 
 struct VehicleLocalPositionMsg <: UORBMsg
     timestamp::UInt64
@@ -133,7 +137,9 @@ uorb_topic(::Type{VehicleLocalPositionMsg}) = "vehicle_local_position"
 uorb_queue_length(::Type{VehicleLocalPositionMsg}) = 1
 uorb_fields_hash(::Type{VehicleLocalPositionMsg}) = 0x9d02f99b80089def
 uorb_message_hash(::Type{VehicleLocalPositionMsg}) = 0x5141d2f7
-uorb_fields(::Type{VehicleLocalPositionMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;uint64_t ref_timestamp;double ref_lat;double ref_lon;float x;float y;float z;float[2] delta_xy;float delta_z;float vx;float vy;float vz;float z_deriv;float[2] delta_vxy;float delta_vz;float ax;float ay;float az;float heading;float heading_var;float unaided_heading;float delta_heading;float tilt_var;float ref_alt;float dist_bottom;float dist_bottom_var;float delta_dist_bottom;float eph;float epv;float evh;float evv;float vxy_max;float vz_max;float hagl_min;float hagl_max_z;float hagl_max_xy;bool xy_valid;bool z_valid;bool v_xy_valid;bool v_z_valid;uint8_t xy_reset_counter;uint8_t z_reset_counter;uint8_t vxy_reset_counter;uint8_t vz_reset_counter;uint8_t heading_reset_counter;bool heading_good_for_control;bool xy_global;bool z_global;bool dist_bottom_valid;uint8_t dist_bottom_reset_counter;uint8_t dist_bottom_sensor_bitfield;bool dead_reckoning"
+uorb_fields(
+    ::Type{VehicleLocalPositionMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;uint64_t ref_timestamp;double ref_lat;double ref_lon;float x;float y;float z;float[2] delta_xy;float delta_z;float vx;float vy;float vz;float z_deriv;float[2] delta_vxy;float delta_vz;float ax;float ay;float az;float heading;float heading_var;float unaided_heading;float delta_heading;float tilt_var;float ref_alt;float dist_bottom;float dist_bottom_var;float delta_dist_bottom;float eph;float epv;float evh;float evv;float vxy_max;float vz_max;float hagl_min;float hagl_max_z;float hagl_max_xy;bool xy_valid;bool z_valid;bool v_xy_valid;bool v_z_valid;uint8_t xy_reset_counter;uint8_t z_reset_counter;uint8_t vxy_reset_counter;uint8_t vz_reset_counter;uint8_t heading_reset_counter;bool heading_good_for_control;bool xy_global;bool z_global;bool dist_bottom_valid;uint8_t dist_bottom_reset_counter;uint8_t dist_bottom_sensor_bitfield;bool dead_reckoning"
 
 struct VehicleGlobalPositionMsg <: UORBMsg
     timestamp::UInt64
@@ -161,7 +167,9 @@ uorb_topic(::Type{VehicleGlobalPositionMsg}) = "vehicle_global_position"
 uorb_queue_length(::Type{VehicleGlobalPositionMsg}) = 1
 uorb_fields_hash(::Type{VehicleGlobalPositionMsg}) = 0x9a21194e115e9cc2
 uorb_message_hash(::Type{VehicleGlobalPositionMsg}) = 0x923ca365
-uorb_fields(::Type{VehicleGlobalPositionMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;double lat;double lon;float alt;float alt_ellipsoid;float delta_alt;float delta_terrain;float eph;float epv;float terrain_alt;bool lat_lon_valid;bool alt_valid;uint8_t lat_lon_reset_counter;uint8_t alt_reset_counter;uint8_t terrain_reset_counter;bool terrain_alt_valid;bool dead_reckoning"
+uorb_fields(
+    ::Type{VehicleGlobalPositionMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;double lat;double lon;float alt;float alt_ellipsoid;float delta_alt;float delta_terrain;float eph;float epv;float terrain_alt;bool lat_lon_valid;bool alt_valid;uint8_t lat_lon_reset_counter;uint8_t alt_reset_counter;uint8_t terrain_reset_counter;bool terrain_alt_valid;bool dead_reckoning"
 
 struct VehicleAngularVelocityMsg <: UORBMsg
     timestamp::UInt64
@@ -174,7 +182,9 @@ uorb_topic(::Type{VehicleAngularVelocityMsg}) = "vehicle_angular_velocity"
 uorb_queue_length(::Type{VehicleAngularVelocityMsg}) = 1
 uorb_fields_hash(::Type{VehicleAngularVelocityMsg}) = 0x504cdc5c34d66ba5
 uorb_message_hash(::Type{VehicleAngularVelocityMsg}) = 0x48cb9568
-uorb_fields(::Type{VehicleAngularVelocityMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz;float[3] xyz_derivative"
+uorb_fields(
+    ::Type{VehicleAngularVelocityMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz;float[3] xyz_derivative"
 
 struct VehicleLandDetectedMsg <: UORBMsg
     timestamp::UInt64
@@ -197,7 +207,9 @@ uorb_topic(::Type{VehicleLandDetectedMsg}) = "vehicle_land_detected"
 uorb_queue_length(::Type{VehicleLandDetectedMsg}) = 1
 uorb_fields_hash(::Type{VehicleLandDetectedMsg}) = 0x65d2467c593573a0
 uorb_message_hash(::Type{VehicleLandDetectedMsg}) = 0x4c30e23f
-uorb_fields(::Type{VehicleLandDetectedMsg}) = "uint64_t timestamp;bool freefall;bool ground_contact;bool maybe_landed;bool landed;bool in_ground_effect;bool in_descend;bool has_low_throttle;bool vertical_movement;bool horizontal_movement;bool rotational_movement;bool close_to_ground_or_skipped_check;bool at_rest"
+uorb_fields(
+    ::Type{VehicleLandDetectedMsg},
+) = "uint64_t timestamp;bool freefall;bool ground_contact;bool maybe_landed;bool landed;bool in_ground_effect;bool in_descend;bool has_low_throttle;bool vertical_movement;bool horizontal_movement;bool rotational_movement;bool close_to_ground_or_skipped_check;bool at_rest"
 
 struct VehicleStatusMsg <: UORBMsg
     timestamp::UInt64
@@ -246,7 +258,9 @@ uorb_topic(::Type{VehicleStatusMsg}) = "vehicle_status"
 uorb_queue_length(::Type{VehicleStatusMsg}) = 1
 uorb_fields_hash(::Type{VehicleStatusMsg}) = 0xef9369299929c0f5
 uorb_message_hash(::Type{VehicleStatusMsg}) = 0xf779fa65
-uorb_fields(::Type{VehicleStatusMsg}) = "uint64_t timestamp;uint64_t armed_time;uint64_t takeoff_time;uint64_t nav_state_timestamp;uint32_t valid_nav_states_mask;uint32_t can_set_nav_states_mask;uint16_t failure_detector_status;uint8_t arming_state;uint8_t latest_arming_reason;uint8_t latest_disarming_reason;uint8_t nav_state_user_intention;uint8_t nav_state;uint8_t executor_in_charge;uint8_t hil_state;uint8_t vehicle_type;bool failsafe;bool failsafe_and_user_took_over;uint8_t failsafe_defer_state;bool gcs_connection_lost;uint8_t gcs_connection_lost_counter;bool high_latency_data_link_lost;bool is_vtol;bool is_vtol_tailsitter;bool in_transition_mode;bool in_transition_to_fw;uint8_t system_type;uint8_t system_id;uint8_t component_id;bool safety_button_available;bool safety_off;bool power_input_valid;bool usb_connected;bool open_drone_id_system_present;bool open_drone_id_system_healthy;bool parachute_system_present;bool parachute_system_healthy;bool rc_calibration_in_progress;bool calibration_enabled;bool pre_flight_checks_pass"
+uorb_fields(
+    ::Type{VehicleStatusMsg},
+) = "uint64_t timestamp;uint64_t armed_time;uint64_t takeoff_time;uint64_t nav_state_timestamp;uint32_t valid_nav_states_mask;uint32_t can_set_nav_states_mask;uint16_t failure_detector_status;uint8_t arming_state;uint8_t latest_arming_reason;uint8_t latest_disarming_reason;uint8_t nav_state_user_intention;uint8_t nav_state;uint8_t executor_in_charge;uint8_t hil_state;uint8_t vehicle_type;bool failsafe;bool failsafe_and_user_took_over;uint8_t failsafe_defer_state;bool gcs_connection_lost;uint8_t gcs_connection_lost_counter;bool high_latency_data_link_lost;bool is_vtol;bool is_vtol_tailsitter;bool in_transition_mode;bool in_transition_to_fw;uint8_t system_type;uint8_t system_id;uint8_t component_id;bool safety_button_available;bool safety_off;bool power_input_valid;bool usb_connected;bool open_drone_id_system_present;bool open_drone_id_system_healthy;bool parachute_system_present;bool parachute_system_healthy;bool rc_calibration_in_progress;bool calibration_enabled;bool pre_flight_checks_pass"
 
 struct VehicleControlModeMsg <: UORBMsg
     timestamp::UInt64
@@ -272,7 +286,9 @@ uorb_topic(::Type{VehicleControlModeMsg}) = "vehicle_control_mode"
 uorb_queue_length(::Type{VehicleControlModeMsg}) = 1
 uorb_fields_hash(::Type{VehicleControlModeMsg}) = 0x02d9a65bb7015a29
 uorb_message_hash(::Type{VehicleControlModeMsg}) = 0x25a90612
-uorb_fields(::Type{VehicleControlModeMsg}) = "uint64_t timestamp;bool flag_armed;bool flag_multicopter_position_control_enabled;bool flag_control_manual_enabled;bool flag_control_auto_enabled;bool flag_control_offboard_enabled;bool flag_control_position_enabled;bool flag_control_velocity_enabled;bool flag_control_altitude_enabled;bool flag_control_climb_rate_enabled;bool flag_control_acceleration_enabled;bool flag_control_attitude_enabled;bool flag_control_rates_enabled;bool flag_control_allocation_enabled;bool flag_control_termination_enabled;uint8_t source_id"
+uorb_fields(
+    ::Type{VehicleControlModeMsg},
+) = "uint64_t timestamp;bool flag_armed;bool flag_multicopter_position_control_enabled;bool flag_control_manual_enabled;bool flag_control_auto_enabled;bool flag_control_offboard_enabled;bool flag_control_position_enabled;bool flag_control_velocity_enabled;bool flag_control_altitude_enabled;bool flag_control_climb_rate_enabled;bool flag_control_acceleration_enabled;bool flag_control_attitude_enabled;bool flag_control_rates_enabled;bool flag_control_allocation_enabled;bool flag_control_termination_enabled;uint8_t source_id"
 
 struct ActuatorArmedMsg <: UORBMsg
     timestamp::UInt64
@@ -290,7 +306,9 @@ uorb_topic(::Type{ActuatorArmedMsg}) = "actuator_armed"
 uorb_queue_length(::Type{ActuatorArmedMsg}) = 1
 uorb_fields_hash(::Type{ActuatorArmedMsg}) = 0x0b7e9d8276720dc7
 uorb_message_hash(::Type{ActuatorArmedMsg}) = 0x77773c05
-uorb_fields(::Type{ActuatorArmedMsg}) = "uint64_t timestamp;bool armed;bool prearmed;bool ready_to_arm;bool lockdown;bool kill;bool termination;bool in_esc_calibration_mode"
+uorb_fields(
+    ::Type{ActuatorArmedMsg},
+) = "uint64_t timestamp;bool armed;bool prearmed;bool ready_to_arm;bool lockdown;bool kill;bool termination;bool in_esc_calibration_mode"
 
 struct HomePositionMsg <: UORBMsg
     timestamp::UInt64
@@ -315,7 +333,9 @@ uorb_topic(::Type{HomePositionMsg}) = "home_position"
 uorb_queue_length(::Type{HomePositionMsg}) = 1
 uorb_fields_hash(::Type{HomePositionMsg}) = 0x9d7c8e4fdf3e3e5d
 uorb_message_hash(::Type{HomePositionMsg}) = 0x159bab7e
-uorb_fields(::Type{HomePositionMsg}) = "uint64_t timestamp;double lat;double lon;float alt;float x;float y;float z;float roll;float pitch;float yaw;uint32_t update_count;bool valid_alt;bool valid_hpos;bool valid_lpos;bool manual_home"
+uorb_fields(
+    ::Type{HomePositionMsg},
+) = "uint64_t timestamp;double lat;double lon;float alt;float x;float y;float z;float roll;float pitch;float yaw;uint32_t update_count;bool valid_alt;bool valid_hpos;bool valid_lpos;bool manual_home"
 
 struct GeofenceStatusMsg <: UORBMsg
     timestamp::UInt64
@@ -328,7 +348,9 @@ uorb_topic(::Type{GeofenceStatusMsg}) = "geofence_status"
 uorb_queue_length(::Type{GeofenceStatusMsg}) = 1
 uorb_fields_hash(::Type{GeofenceStatusMsg}) = 0xfd44f1dd8785a29d
 uorb_message_hash(::Type{GeofenceStatusMsg}) = 0x5e9910da
-uorb_fields(::Type{GeofenceStatusMsg}) = "uint64_t timestamp;uint32_t geofence_id;uint8_t status"
+uorb_fields(
+    ::Type{GeofenceStatusMsg},
+) = "uint64_t timestamp;uint32_t geofence_id;uint8_t status"
 
 struct VehicleTorqueSetpointMsg <: UORBMsg
     timestamp::UInt64
@@ -341,7 +363,9 @@ uorb_topic(::Type{VehicleTorqueSetpointMsg}) = "vehicle_torque_setpoint"
 uorb_queue_length(::Type{VehicleTorqueSetpointMsg}) = 1
 uorb_fields_hash(::Type{VehicleTorqueSetpointMsg}) = 0x0bedf2b08526d772
 uorb_message_hash(::Type{VehicleTorqueSetpointMsg}) = 0x67088e65
-uorb_fields(::Type{VehicleTorqueSetpointMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz"
+uorb_fields(
+    ::Type{VehicleTorqueSetpointMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz"
 
 struct VehicleThrustSetpointMsg <: UORBMsg
     timestamp::UInt64
@@ -354,7 +378,9 @@ uorb_topic(::Type{VehicleThrustSetpointMsg}) = "vehicle_thrust_setpoint"
 uorb_queue_length(::Type{VehicleThrustSetpointMsg}) = 1
 uorb_fields_hash(::Type{VehicleThrustSetpointMsg}) = 0x0bedf2b08526d772
 uorb_message_hash(::Type{VehicleThrustSetpointMsg}) = 0x67088e65
-uorb_fields(::Type{VehicleThrustSetpointMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz"
+uorb_fields(
+    ::Type{VehicleThrustSetpointMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[3] xyz"
 
 struct ActuatorMotorsMsg <: UORBMsg
     timestamp::UInt64
@@ -368,7 +394,9 @@ uorb_topic(::Type{ActuatorMotorsMsg}) = "actuator_motors"
 uorb_queue_length(::Type{ActuatorMotorsMsg}) = 1
 uorb_fields_hash(::Type{ActuatorMotorsMsg}) = 0xadc2b527fbb92c8e
 uorb_message_hash(::Type{ActuatorMotorsMsg}) = 0xcabc4d45
-uorb_fields(::Type{ActuatorMotorsMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[12] control;uint16_t reversible_flags"
+uorb_fields(
+    ::Type{ActuatorMotorsMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[12] control;uint16_t reversible_flags"
 
 struct ActuatorServosMsg <: UORBMsg
     timestamp::UInt64
@@ -380,7 +408,9 @@ uorb_topic(::Type{ActuatorServosMsg}) = "actuator_servos"
 uorb_queue_length(::Type{ActuatorServosMsg}) = 1
 uorb_fields_hash(::Type{ActuatorServosMsg}) = 0x71978c93f3352e79
 uorb_message_hash(::Type{ActuatorServosMsg}) = 0xc5d59a9e
-uorb_fields(::Type{ActuatorServosMsg}) = "uint64_t timestamp;uint64_t timestamp_sample;float[8] control"
+uorb_fields(
+    ::Type{ActuatorServosMsg},
+) = "uint64_t timestamp;uint64_t timestamp_sample;float[8] control"
 
 struct VehicleAttitudeSetpointMsg <: UORBMsg
     timestamp::UInt64
@@ -393,7 +423,9 @@ uorb_topic(::Type{VehicleAttitudeSetpointMsg}) = "vehicle_attitude_setpoint"
 uorb_queue_length(::Type{VehicleAttitudeSetpointMsg}) = 1
 uorb_fields_hash(::Type{VehicleAttitudeSetpointMsg}) = 0x07e58c36d4e5c5f7
 uorb_message_hash(::Type{VehicleAttitudeSetpointMsg}) = 0x0591bb5a
-uorb_fields(::Type{VehicleAttitudeSetpointMsg}) = "uint64_t timestamp;float yaw_sp_move_rate;float[4] q_d;float[3] thrust_body"
+uorb_fields(
+    ::Type{VehicleAttitudeSetpointMsg},
+) = "uint64_t timestamp;float yaw_sp_move_rate;float[4] q_d;float[3] thrust_body"
 
 struct VehicleRatesSetpointMsg <: UORBMsg
     timestamp::UInt64
@@ -409,7 +441,9 @@ uorb_topic(::Type{VehicleRatesSetpointMsg}) = "vehicle_rates_setpoint"
 uorb_queue_length(::Type{VehicleRatesSetpointMsg}) = 1
 uorb_fields_hash(::Type{VehicleRatesSetpointMsg}) = 0xbd6244bc0d3fcb0d
 uorb_message_hash(::Type{VehicleRatesSetpointMsg}) = 0x79992167
-uorb_fields(::Type{VehicleRatesSetpointMsg}) = "uint64_t timestamp;float roll;float pitch;float yaw;float[3] thrust_body;bool reset_integral"
+uorb_fields(
+    ::Type{VehicleRatesSetpointMsg},
+) = "uint64_t timestamp;float roll;float pitch;float yaw;float[3] thrust_body;bool reset_integral"
 
 struct MissionResultMsg <: UORBMsg
     timestamp::UInt64
@@ -434,7 +468,9 @@ uorb_topic(::Type{MissionResultMsg}) = "mission_result"
 uorb_queue_length(::Type{MissionResultMsg}) = 1
 uorb_fields_hash(::Type{MissionResultMsg}) = 0xb192f0a8df4e74b2
 uorb_message_hash(::Type{MissionResultMsg}) = 0x70caef92
-uorb_fields(::Type{MissionResultMsg}) = "uint64_t timestamp;uint32_t mission_id;uint32_t geofence_id;uint32_t home_position_counter;int32_t seq_reached;uint16_t seq_current;uint16_t seq_total;uint16_t item_changed_index;uint16_t item_do_jump_remaining;bool valid;bool warning;bool finished;bool failure;bool item_do_jump_changed;uint8_t execution_mode"
+uorb_fields(
+    ::Type{MissionResultMsg},
+) = "uint64_t timestamp;uint32_t mission_id;uint32_t geofence_id;uint32_t home_position_counter;int32_t seq_reached;uint16_t seq_current;uint16_t seq_total;uint16_t item_changed_index;uint16_t item_do_jump_remaining;bool valid;bool warning;bool finished;bool failure;bool item_do_jump_changed;uint8_t execution_mode"
 
 struct TrajectorySetpointMsg <: UORBMsg
     timestamp::UInt64
@@ -450,6 +486,28 @@ uorb_topic(::Type{TrajectorySetpointMsg}) = "trajectory_setpoint"
 uorb_queue_length(::Type{TrajectorySetpointMsg}) = 1
 uorb_fields_hash(::Type{TrajectorySetpointMsg}) = 0x3e78725f04131b37
 uorb_message_hash(::Type{TrajectorySetpointMsg}) = 0xf614acde
-uorb_fields(::Type{TrajectorySetpointMsg}) = "uint64_t timestamp;float[3] position;float[3] velocity;float[3] acceleration;float[3] jerk;float yaw;float yawspeed"
+uorb_fields(
+    ::Type{TrajectorySetpointMsg},
+) = "uint64_t timestamp;float[3] position;float[3] velocity;float[3] acceleration;float[3] jerk;float yaw;float yawspeed"
 
-const UORB_ALL_TYPES = (BatteryStatusMsg, VehicleAttitudeMsg, VehicleLocalPositionMsg, VehicleGlobalPositionMsg, VehicleAngularVelocityMsg, VehicleLandDetectedMsg, VehicleStatusMsg, VehicleControlModeMsg, ActuatorArmedMsg, HomePositionMsg, GeofenceStatusMsg, VehicleTorqueSetpointMsg, VehicleThrustSetpointMsg, ActuatorMotorsMsg, ActuatorServosMsg, VehicleAttitudeSetpointMsg, VehicleRatesSetpointMsg, MissionResultMsg, TrajectorySetpointMsg)
+const UORB_ALL_TYPES = (
+    BatteryStatusMsg,
+    VehicleAttitudeMsg,
+    VehicleLocalPositionMsg,
+    VehicleGlobalPositionMsg,
+    VehicleAngularVelocityMsg,
+    VehicleLandDetectedMsg,
+    VehicleStatusMsg,
+    VehicleControlModeMsg,
+    ActuatorArmedMsg,
+    HomePositionMsg,
+    GeofenceStatusMsg,
+    VehicleTorqueSetpointMsg,
+    VehicleThrustSetpointMsg,
+    ActuatorMotorsMsg,
+    ActuatorServosMsg,
+    VehicleAttitudeSetpointMsg,
+    VehicleRatesSetpointMsg,
+    MissionResultMsg,
+    TrajectorySetpointMsg,
+)

@@ -319,7 +319,11 @@ function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
     return out
 end
 
-@inline function _battery_status_msg(time_us::UInt64, battery::BatteryStatus; id::UInt8 = UInt8(0))
+@inline function _battery_status_msg(
+    time_us::UInt64,
+    battery::BatteryStatus;
+    id::UInt8 = UInt8(0),
+)
     return BatteryStatusMsg(
         time_us,
         Float32(battery.voltage_v),

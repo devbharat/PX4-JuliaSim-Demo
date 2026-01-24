@@ -24,7 +24,8 @@ export PX4Spec, PX4ParamSpec, TimelineSpec, PlantSpec, AircraftSpec
 export AirframeSpec, PropulsionSpec
 export ActuationSpec, MotorSpec, ServoSpec
 export PowerSpec, PowerBusSpec, BatterySpec
-export AbstractActuatorModelSpec, DirectActuatorSpec, FirstOrderActuatorSpec, SecondOrderActuatorSpec
+export AbstractActuatorModelSpec,
+    DirectActuatorSpec, FirstOrderActuatorSpec, SecondOrderActuatorSpec
 export AbstractSensorSpec, GpsSpec, RangefinderSpec, RadarSpec
 
 export iris_spec, octa_spec, validate_spec, build_engine

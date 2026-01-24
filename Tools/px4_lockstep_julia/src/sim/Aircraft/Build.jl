@@ -34,11 +34,7 @@ using ..Integrators
 using ..Contacts
 
 using PX4Lockstep:
-    param_set!,
-    param_notify!,
-    param_get,
-    param_preinit_set!,
-    control_alloc_update_params!
+    param_set!, param_notify!, param_get, param_preinit_set!, control_alloc_update_params!
 
 
 """Internal build output.
@@ -171,30 +167,38 @@ function _build_power_network(spec::AircraftSpec)
         for bid in bus.battery_ids
             i = get(bat_idx, bid, 0)
             i != 0 || error("Bus $(bus.id) references unknown battery id=$bid")
-            bus_for_battery[i] == 0 || error("Battery id=$bid is assigned to multiple buses")
+            bus_for_battery[i] == 0 ||
+                error("Battery id=$bid is assigned to multiple buses")
             bus_for_battery[i] = k
         end
     end
 
     any(x -> x == 0, bus_for_motor) &&
         error("Every motor must be assigned to a power bus (missing assignments detected)")
-    any(x -> x == 0, bus_for_battery) &&
-        error("Every battery must be assigned to a power bus (missing assignments detected)")
+    any(x -> x == 0, bus_for_battery) && error(
+        "Every battery must be assigned to a power bus (missing assignments detected)",
+    )
 
     return PowerNetwork{N,B,K}(
         bus_for_motor = SVector{N,Int}(ntuple(i -> bus_for_motor[i], N)),
         bus_for_battery = SVector{B,Int}(ntuple(i -> bus_for_battery[i], B)),
-        avionics_load_w = SVector{K,Float64}(ntuple(i -> Float64(spec.power.buses[i].avionics_load_w), K)),
+        avionics_load_w = SVector{K,Float64}(
+            ntuple(i -> Float64(spec.power.buses[i].avionics_load_w), K),
+        ),
         share_mode = :inv_r0,
     )
 end
 
-function _build_vehicle(spec::AircraftSpec; x0_override::Union{Nothing,RigidBodyState} = nothing)
+function _build_vehicle(
+    spec::AircraftSpec;
+    x0_override::Union{Nothing,RigidBodyState} = nothing,
+)
     a = spec.airframe
 
     # Phase 2 supports a generic multirotor rigid-body model with arbitrary propulsor count.
-    a.kind in (:iris_quadrotor, :multirotor) ||
-        error("Unsupported airframe.kind=$(a.kind) (Phase 2 supports :iris_quadrotor|:multirotor)")
+    a.kind in (:iris_quadrotor, :multirotor) || error(
+        "Unsupported airframe.kind=$(a.kind) (Phase 2 supports :iris_quadrotor|:multirotor)",
+    )
 
     # Motor/servo actuator models are sized to match the PX4 ABI arrays.
     motor_act = _build_actuator_model(spec.actuation.motor_actuators, 12)
@@ -202,14 +206,16 @@ function _build_vehicle(spec::AircraftSpec; x0_override::Union{Nothing,RigidBody
 
     # Rigid-body model params.
     N = length(spec.actuation.motors)
-    length(a.rotor_pos_body_m) == N ||
-        error("airframe.rotor_pos_body_m length=$(length(a.rotor_pos_body_m)) must match actuation.motors length=$(N)")
+    length(a.rotor_pos_body_m) == N || error(
+        "airframe.rotor_pos_body_m length=$(length(a.rotor_pos_body_m)) must match actuation.motors length=$(N)",
+    )
     rotor_pos = SVector{N,Vec3}(ntuple(i -> a.rotor_pos_body_m[i], N))
 
     # Propulsor axes (Phase 4): optional spec field, normalized here.
     axis_src = a.rotor_axis_body_m
-    length(axis_src) == N ||
-        error("airframe.rotor_axis_body_m length=$(length(axis_src)) must match actuation.motors length=$(N)")
+    length(axis_src) == N || error(
+        "airframe.rotor_axis_body_m length=$(length(axis_src)) must match actuation.motors length=$(N)",
+    )
     rotor_axis = SVector{N,Vec3}(
         ntuple(
             i -> begin
@@ -251,8 +257,9 @@ function _build_vehicle(spec::AircraftSpec; x0_override::Union{Nothing,RigidBody
         inflow_kQ = p.inflow_kQ,
     )
     if p.rotor_dir !== nothing
-        length(p.rotor_dir) == N ||
-            error("propulsion.rotor_dir length=$(length(p.rotor_dir)) does not match N=$(N)")
+        length(p.rotor_dir) == N || error(
+            "propulsion.rotor_dir length=$(length(p.rotor_dir)) does not match N=$(N)",
+        )
         prop.rotor_dir = SVector{N,Float64}(ntuple(i -> Float64(p.rotor_dir[i]), N))
     end
 
@@ -276,12 +283,14 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
 
     N = length(spec.actuation.motors)
     pos = spec.airframe.rotor_pos_body_m
-    length(pos) == N || error("Cannot derive CA params: rotor_pos_body_m length != motor count")
+    length(pos) == N ||
+        error("Cannot derive CA params: rotor_pos_body_m length != motor count")
 
     # Optional rotor/propulsor axes (Phase 4). Defaults to classic multirotor axis_b=(0,0,1)
     # so the thrust vector (force) points along -Z.
     axis_src = spec.airframe.rotor_axis_body_m
-    length(axis_src) == N || error("Cannot derive CA params: rotor_axis_body_m length != motor count")
+    length(axis_src) == N ||
+        error("Cannot derive CA params: rotor_axis_body_m length != motor count")
 
     km_mag = spec.airframe.propulsion.km_m
     rotor_dir = vehicle.propulsion.rotor_dir
@@ -291,11 +300,12 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
         PX4ParamSpec("CA_ROTOR_COUNT", N),
     ]
 
-    for i in 1:N
+    for i = 1:N
         p = pos[i]
         a = axis_src[i]
         n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
-        n2 > 1e-12 || error("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a")
+        n2 > 1e-12 ||
+            error("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a")
         invn = inv(sqrt(n2))
         axis_b = a .* invn
         # PX4 CA_ROTOR*_A* expects the *thrust vector direction* in body frame.
@@ -314,14 +324,20 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
 end
 
 """Apply a list of PX4 parameters to a running lockstep autopilot."""
-function _apply_px4_params!(ap::Autopilots.PX4LockstepAutopilot, params::Vector{PX4ParamSpec})
+function _apply_px4_params!(
+    ap::Autopilots.PX4LockstepAutopilot,
+    params::Vector{PX4ParamSpec},
+)
     for p in params
         param_set!(ap.handle, p.name, p.value)
     end
     return nothing
 end
 
-function _debug_px4_params!(ap::Autopilots.PX4LockstepAutopilot, params::Vector{PX4ParamSpec})
+function _debug_px4_params!(
+    ap::Autopilots.PX4LockstepAutopilot,
+    params::Vector{PX4ParamSpec},
+)
     flag = lowercase(String(get(ENV, "PX4_LOCKSTEP_DEBUG_PARAMS", "")))
     if !(flag in ("1", "true", "yes", "on"))
         return nothing
@@ -347,7 +363,8 @@ end
 
 @inline function _is_ca_axis_param(name::AbstractString)::Bool
     # PX4 CA rotor axis params: CA_ROTOR<i>_AX / _AY / _AZ
-    return startswith(name, "CA_ROTOR") && (endswith(name, "_AX") || endswith(name, "_AY") || endswith(name, "_AZ"))
+    return startswith(name, "CA_ROTOR") &&
+           (endswith(name, "_AX") || endswith(name, "_AY") || endswith(name, "_AZ"))
 end
 
 function _spec_summary(spec::AircraftSpec)::String
@@ -386,7 +403,9 @@ function build_aircraft_instance(
         elseif recording_in isa AbstractString
             Recording.read_recording(recording_in)
         else
-            error("build_aircraft_instance(mode=:replay) requires recording_in (Tier0Recording or path)")
+            error(
+                "build_aircraft_instance(mode=:replay) requires recording_in (Tier0Recording or path)",
+            )
         end
 
         traces = Recording.tier0_traces(rec)
@@ -459,18 +478,9 @@ function build_aircraft_instance(
             estimator = Sources.NullEstimatorSource(),
         )
 
-        meta = Dict{Symbol,Any}(
-            :aircraft_spec_summary => _spec_summary(spec),
-        )
+        meta = Dict{Symbol,Any}(:aircraft_spec_summary => _spec_summary(spec))
 
-        inst = AircraftInstance(
-            rec.timeline,
-            rec.plant0,
-            dynfun,
-            integrator,
-            sources,
-            meta,
-        )
+        inst = AircraftInstance(rec.timeline, rec.plant0, dynfun, integrator, sources, meta)
         return inst, nothing
     end
 
@@ -494,7 +504,8 @@ function build_aircraft_instance(
     )
 
     # Wind + estimator.
-    wind_src = Sources.LiveWindSource(env.wind, Random.Xoshiro(spec.seed), spec.timeline.dt_wind_s)
+    wind_src =
+        Sources.LiveWindSource(env.wind, Random.Xoshiro(spec.seed), spec.timeline.dt_wind_s)
     estimator_obj = _SIM.iris_default_estimator(spec.timeline.dt_autopilot_s)
     estimator_src = Sources.LiveEstimatorSource(
         estimator_obj,
@@ -628,14 +639,7 @@ function build_aircraft_instance(
         :aircraft_spec_summary => _spec_summary(spec),
     )
 
-    inst = AircraftInstance(
-        timeline,
-        plant0,
-        dynfun,
-        integrator,
-        sources,
-        meta,
-    )
+    inst = AircraftInstance(timeline, plant0, dynfun, integrator, sources, meta)
     return inst, ap
 end
 

@@ -245,13 +245,12 @@ function Engine(
 
     has_outputs =
         cfg.enable_derived_outputs &&
-        hasmethod(plant_outputs, Tuple{typeof(dynfun), Float64, typeof(plant0), PlantInput})
-    has_project = hasmethod(plant_project, Tuple{typeof(dynfun), typeof(plant0)})
-    has_ap_tick =
-        hasmethod(
-            plant_on_autopilot_tick,
-            Tuple{typeof(dynfun), typeof(plant0), ActuatorCommand},
-        )
+        hasmethod(plant_outputs, Tuple{typeof(dynfun),Float64,typeof(plant0),PlantInput})
+    has_project = hasmethod(plant_project, Tuple{typeof(dynfun),typeof(plant0)})
+    has_ap_tick = hasmethod(
+        plant_on_autopilot_tick,
+        Tuple{typeof(dynfun),typeof(plant0),ActuatorCommand},
+    )
 
     return Engine(
         cfg,
@@ -433,7 +432,7 @@ function process_events_at!(sim::Engine)
                             "but plant_outputs returned $(nb) batteries",
                         )
                     end
-                    for i in 1:nb
+                    for i = 1:nb
                         sim.bus.batteries[i] = bats[i]
                     end
                 end
@@ -445,8 +444,7 @@ function process_events_at!(sim::Engine)
                 end
                 temp = y.temp_k
                 if isfinite(temp)
-                    sim.bus.env =
-                        EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
+                    sim.bus.env = EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                 end
             else
                 sim.outputs.plant_y = nothing

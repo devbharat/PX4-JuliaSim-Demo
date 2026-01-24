@@ -110,10 +110,7 @@ function simulate(;
         n_batteries = 1
     end
 
-    bus = Runtime.SimBus(
-        time_us = timeline.t0_us,
-        n_batteries = n_batteries,
-    )
+    bus = Runtime.SimBus(time_us = timeline.t0_us, n_batteries = n_batteries)
 
     eng = Runtime.Engine(
         cfg;

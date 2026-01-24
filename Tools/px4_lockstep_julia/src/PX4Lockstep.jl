@@ -300,7 +300,8 @@ function param_preinit_set_i32(name::AbstractString, value::Integer)
         error("px4_lockstep_param_preinit_set_i32 unavailable; rebuild libpx4_lockstep")
     end
     ret = ccall(fn, Cint, (Cstring, Int32), name, Int32(value))
-    ret == 0 || error("px4_lockstep_param_preinit_set_i32 failed for $(name) with code $(ret)")
+    ret == 0 ||
+        error("px4_lockstep_param_preinit_set_i32 failed for $(name) with code $(ret)")
     return nothing
 end
 
@@ -312,7 +313,8 @@ function param_preinit_set_f32(name::AbstractString, value::Real)
         error("px4_lockstep_param_preinit_set_f32 unavailable; rebuild libpx4_lockstep")
     end
     ret = ccall(fn, Cint, (Cstring, Cfloat), name, Float32(value))
-    ret == 0 || error("px4_lockstep_param_preinit_set_f32 failed for $(name) with code $(ret)")
+    ret == 0 ||
+        error("px4_lockstep_param_preinit_set_f32 failed for $(name) with code $(ret)")
     return nothing
 end
 
@@ -351,7 +353,8 @@ function param_get(handle::LockstepHandle, name::AbstractString)
 
     fn_f32 = _resolve_symbol(handle.lib, :px4_lockstep_param_get_f32)
     out_f32 = Ref{Cfloat}(0)
-    ret_f = ccall(fn_f32, Cint, (Ptr{Cvoid}, Cstring, Ref{Cfloat}), handle.ptr, name, out_f32)
+    ret_f =
+        ccall(fn_f32, Cint, (Ptr{Cvoid}, Cstring, Ref{Cfloat}), handle.ptr, name, out_f32)
     ret_f == 0 || error("px4_lockstep_param_get_f32 failed for $(name) with code $(ret_f)")
     return Float32(out_f32[])
 end
@@ -379,7 +382,9 @@ function control_alloc_update_params!(handle::LockstepHandle)
     fn = try
         _resolve_symbol(handle.lib, :px4_lockstep_control_alloc_update_params)
     catch
-        error("px4_lockstep_control_alloc_update_params unavailable; rebuild libpx4_lockstep")
+        error(
+            "px4_lockstep_control_alloc_update_params unavailable; rebuild libpx4_lockstep",
+        )
     end
     ret = ccall(fn, Cint, (Ptr{Cvoid},), handle.ptr)
     ret == 0 || error("px4_lockstep_control_alloc_update_params failed with code $(ret)")
@@ -850,7 +855,11 @@ function uorb_check(handle::LockstepHandle, sub::UORBSubscriber)::Bool
 end
 
 """Copy the latest topic data into `out` (no allocation)."""
-function uorb_copy!(handle::LockstepHandle, sub::UORBSubscriber{T}, out::Ref{T}) where {T<:UORBMsg}
+function uorb_copy!(
+    handle::LockstepHandle,
+    sub::UORBSubscriber{T},
+    out::Ref{T},
+) where {T<:UORBMsg}
     isbitstype(T) || error("uORB messages must be isbits structs (got $T)")
     n = UInt32(sizeof(T))
     n == sub.msg_size || error(

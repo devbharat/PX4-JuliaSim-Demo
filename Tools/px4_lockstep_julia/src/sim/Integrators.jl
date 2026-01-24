@@ -449,7 +449,9 @@ Design intent:
     if isfinite(i.atol_soc)
         @inbounds for k = 1:B
             Δ = x_hi.power.soc[k] - x_lo.power.soc[k]
-            s = i.atol_soc + i.rtol_soc * max(abs(x_ref.power.soc[k]), abs(x_hi.power.soc[k]))
+            s =
+                i.atol_soc +
+                i.rtol_soc * max(abs(x_ref.power.soc[k]), abs(x_hi.power.soc[k]))
             s = max(s, 1e-15)
             err = max(err, abs(Δ) / s)
         end

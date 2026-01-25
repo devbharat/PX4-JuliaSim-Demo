@@ -1,6 +1,6 @@
 # Workflows
 
-This page collects the practical “how do I…” tasks.
+This page collects practical, task-oriented workflows.
 
 ## Run Iris live (PX4 in the loop)
 
@@ -109,6 +109,7 @@ To run a custom spec, pass `spec_path`:
 ```bash
 julia --project=Tools/px4_lockstep_julia \
   -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="path/to/spec.toml", mode=:live)'
+```
 
 To use the built-in Iris default, pass `spec_name` explicitly:
 

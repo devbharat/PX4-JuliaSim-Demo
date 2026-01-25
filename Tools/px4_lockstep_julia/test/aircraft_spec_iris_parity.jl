@@ -109,7 +109,7 @@ using Test
         scn_tr.faults;
         wind_dist = wind_dist,
     )
-    wind_replay = Sim.Sources.ReplayWindSource(traces.wind_ned)
+    wind_replay = Sim.Sources.ReplayWindSource(traces.wind_base_ned)
     autopilot_replay = Sim.Sources.ReplayAutopilotSource(traces.cmd)
 
     env_replay = iris_env_replay_for_tests(home = home)

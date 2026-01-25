@@ -26,25 +26,30 @@ The `Sim.Events` module provides a small, deterministic one-shot scheduler that 
 ## How scenarios are stepped in the runtime
 
 In the canonical runtime (`Sim.Runtime.Engine`), scenarios are driven by a scenario source
-(`Sim.Sources.AbstractScenarioSource`). The source is stepped only when the current
-boundary time lies on the scenario axis `timeline.scn`.
+(`Sim.Sources.AbstractScenarioSource`). The source is stepped at **every event boundary**
+(`timeline.evt`) so hybrid conditions are evaluated deterministically.
 
 - For `Sim.Sources.LiveScenarioSource`, `event_times_us(...)` discovers `AtTime` events
   in the scenario scheduler and adds those times (plus `t0_us`) to `timeline.scn`.
-- Between scenario boundaries, scenario outputs (`bus.ap_cmd`, `bus.faults`, `bus.landed`,
+  These times are included in the global boundary union so `AtTime` triggers are exact.
+- Between boundaries, scenario outputs (`bus.ap_cmd`, `bus.faults`, `bus.landed`,
   `bus.wind_dist_ned`) are treated as **ZOH** (sample-and-hold).
 
 Practical guidance:
 
 - Prefer `AtTime` for most hybrid events that must occur at specific times.
 - `AtStep` is useful for test scripts where you want an event after a deterministic number
-  of *scenario* updates.
-- `When` conditions are evaluated only when the scenario is stepped. If you need higher-rate
-  evaluation, include additional scenario boundaries in the timeline (via `event_times_us`) or
-  implement a scenario source that publishes at the desired cadence.
+  of *scenario* updates. In the canonical engine, that means **event boundaries**.
+- `When` conditions are evaluated at every event boundary. If you need higher-rate
+  evaluation, add more boundaries (e.g. a smaller `timeline.phys` or extra times via
+  `event_times_us`).
 
 ## Caveats
 
+- Scenario stepping at **every event boundary** favors correctness and determinism, but it
+  can be more expensive than a dedicated scenario cadence if your scenario logic is heavy.
+- `AtStep(k)` counts **event boundaries**, not `timeline.scn` ticks. This is intentional
+  in the canonical engine but could be revisited if a distinct scenario cadence is added.
 - Only `AtTime` events are currently discoverable up-front for inclusion as explicit timeline
   boundaries (`Runtime.build_timeline_for_run`).
 - Dynamic insertion of new explicit scenario boundaries at runtime is not supported.

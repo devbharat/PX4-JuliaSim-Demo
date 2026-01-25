@@ -3,10 +3,10 @@ uuid = "05d710f3-cab8-494a-a8a6-ce1ba4a271f6"
 version = "0.1.0"
 
 [deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
@@ -14,15 +14,18 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
+Aqua = "0.8.14"
 Dates = "1"
+JET = "0.9"
+JuliaFormatter = "1"
 Libdl = "1"
 LinearAlgebra = "1"
-PackageCompiler = "2"
 Printf = "1"
 Random = "1"
 Serialization = "1"
 StaticArrays = "1"
 TOML = "1"
+Test = "1"
 julia = "1.12"
 
 [extras]

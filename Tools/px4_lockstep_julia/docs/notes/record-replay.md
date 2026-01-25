@@ -1,8 +1,8 @@
 # Record & replay
 
-Record/replay exists to make simulation comparisons scientific.
+Record/replay exists to keep integrator and model comparisons meaningful.
 
-Instead of comparing two closed-loop runs (which quickly diverge and cause PX4 to issue different commands), you:
+Instead of comparing two closed-loop runs (which diverge quickly and cause PX4 to issue different commands), the workflow is:
 
 1. Run PX4 in the loop once and record the **minimum** streams required to drive the plant deterministically.
 2. Replay those exact streams open-loop while varying one thing (integrator settings, model changes, etc.).

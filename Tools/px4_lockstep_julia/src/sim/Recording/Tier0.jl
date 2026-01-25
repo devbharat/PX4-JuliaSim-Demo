@@ -30,7 +30,7 @@ using ..Runtime: TimeAxis
 This bundles:
 - the `Timeline`
 - the initial plant state
-- an in-memory recorder containing sampled streams (cmd, wind, plant, ...)
+- an in-memory recorder containing sampled streams (cmd, wind_base_ned, plant, ...)
 
 Notes
 -----

@@ -132,19 +132,32 @@ Ranges
 - `motors[i]` must be in `[0,1]`
 - `servos[i]` must be in `[-1,1]`
 
+Notes
+-----
+- NaNs are commonly used by PX4 to indicate unused actuator channels. Set
+  `allow_nan=true` to accept those values.
+
 This is intended for *engine boundary* validation.
 """
-function validate(cmd::ActuatorCommand; atol::Float64 = 1e-6)
+function validate(cmd::ActuatorCommand; atol::Float64 = 1e-6, allow_nan::Bool = true)
     m = cmd.motors
     s = cmd.servos
     @inbounds for i = 1:12
         v = m[i]
+        if isnan(v)
+            allow_nan || error("ActuatorCommand.motors[$i] is NaN")
+            continue
+        end
         isfinite(v) || error("ActuatorCommand.motors[$i] is not finite: $v")
         (-atol <= v <= 1.0 + atol) ||
             error("ActuatorCommand.motors[$i] out of range [0,1]: $v")
     end
     @inbounds for i = 1:8
         v = s[i]
+        if isnan(v)
+            allow_nan || error("ActuatorCommand.servos[$i] is NaN")
+            continue
+        end
         isfinite(v) || error("ActuatorCommand.servos[$i] is not finite: $v")
         (-1.0 - atol <= v <= 1.0 + atol) ||
             error("ActuatorCommand.servos[$i] out of range [-1,1]: $v")
@@ -158,11 +171,17 @@ Behavior
 --------
 - Non-finite values are replaced with 0.0.
 - Values are clamped to ABI ranges: motors `[0,1]`, servos `[-1,1]`.
-- If `strict=true`, this will `error(...)` on any non-finite value or value outside
-  the allowed range (within a small tolerance) *before* clamping.
+- If `strict=true`, this will `error(...)` on any non-finite value (except NaNs
+  when `allow_nan=true`) or value outside the allowed range (within a small
+  tolerance) *before* clamping.
 """
-function sanitize(cmd::ActuatorCommand; strict::Bool = false, atol::Float64 = 1e-6)
-    strict && validate(cmd; atol = atol)
+function sanitize(
+    cmd::ActuatorCommand;
+    strict::Bool = false,
+    atol::Float64 = 1e-6,
+    allow_nan::Bool = true,
+)
+    strict && validate(cmd; atol = atol, allow_nan = allow_nan)
 
     motors = SVector{12,Float64}(
         ntuple(i -> clamp(_finite_or(cmd.motors[i], 0.0), 0.0, 1.0), 12),

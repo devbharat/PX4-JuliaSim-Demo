@@ -28,6 +28,9 @@ The uORB boundary is configured in TOML via `[px4.uorb]` with explicit `pubs` an
 `src/Workflows/assets/aircraft/minimal_uorb.toml`).
 There are no code-side presets; TOML is the only source of uORB configuration.
 
+Determinism note: uORB publisher `instance` defaults to auto (`-1`) when omitted. For
+reproducible wiring, prefer explicit instances (e.g., `instance = 0` for singletons).
+
 ## Where the bridge lives
 
 - ABI wrapper: `src/PX4Lockstep.jl`

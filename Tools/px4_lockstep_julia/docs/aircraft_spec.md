@@ -116,6 +116,10 @@ For reuse, include a shared uORB file with `extends` (e.g. `iris_uorb.toml` or
 
 `px4.uorb` is required for live/record runs.
 
+Note: publisher instances default to `-1` (auto) if not specified. For determinism,
+prefer pinning explicit `instance = 0` for singleton topics and explicit instances
+for multi-instance topics. Auto-instance behavior may change if publisher ordering changes.
+
 ### `[timeline]`
 
 ```toml

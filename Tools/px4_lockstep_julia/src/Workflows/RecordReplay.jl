@@ -222,7 +222,7 @@ and returns a vector of summary rows.
 
 Notes
 -----
-- The recording must contain Tier-0 streams (`:cmd`, `:wind_ned`, and log samples).
+- The recording must contain Tier-0 streams (`:cmd`, `:wind_base_ned`, and log samples).
 - If the recording also contains scenario/fault streams, they are replayed as well.
   For plant-affecting faults, this is strongly recommended.
 - If `log_dir` is provided, per-solver CSV logs are written as
@@ -269,7 +269,7 @@ function compare_integrators_recording(;
     end
 
     ap_src = Sources.ReplayAutopilotSource(tr.cmd)
-    wind_src = Sources.ReplayWindSource(tr.wind_ned)
+    wind_src = Sources.ReplayWindSource(tr.wind_base_ned)
 
     log_dir = log_dir === nothing ? nothing : String(log_dir)
     log_prefix = String(log_prefix)

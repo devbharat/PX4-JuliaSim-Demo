@@ -26,7 +26,7 @@ using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
 """Bump this when *field meanings or units* change."""
-const BUS_SCHEMA_VERSION = 9
+const BUS_SCHEMA_VERSION = 10
 
 """A minimal atmosphere snapshot for bus-level coupling."""
 Base.@kwdef struct EnvSample

@@ -25,6 +25,19 @@ function (f::CmdAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plan
     )
 end
 
+"""Deterministic dynamics driven by wind samples (for record/replay tests)."""
+struct WindAccelX end
+
+function (f::WindAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plant.PlantInput)
+    a = u.wind_ned[1]
+    return Sim.RigidBody.RigidBodyDeriv(
+        pos_dot = x.vel_ned,
+        vel_dot = Sim.Types.vec3(a, 0.0, 0.0),
+        q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
+        ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+end
+
 """A trivial open-loop autopilot source used to record commands."""
 mutable struct ConstantMotorAutopilotSource
     cmd::Sim.Vehicles.ActuatorCommand
@@ -32,6 +45,21 @@ end
 
 function RT.update!(src::ConstantMotorAutopilotSource, bus::RT.SimBus, plant, t_us::UInt64)
     bus.cmd = src.cmd
+    return nothing
+end
+
+"""Scenario source that steps wind disturbance at a specified boundary."""
+struct WindDistScenario
+    t_step_us::UInt64
+    dist_ned::Sim.Types.Vec3
+end
+
+function RT.update!(src::WindDistScenario, bus::RT.SimBus, plant, t_us::UInt64)
+    bus.ap_cmd = Sim.Autopilots.AutopilotCommand()
+    bus.landed = false
+    bus.faults = Sim.Faults.FaultState()
+    bus.wind_dist_ned =
+        t_us >= src.t_step_us ? src.dist_ned : Sim.Types.vec3(0.0, 0.0, 0.0)
     return nothing
 end
 
@@ -137,11 +165,11 @@ end
     traces = REC.tier0_traces(rec, timeline)
 
     @test traces.cmd.axis.t_us == timeline.ap.t_us
-    @test traces.wind_ned.axis.t_us == timeline.wind.t_us
+    @test traces.wind_base_ned.axis.t_us == timeline.wind.t_us
     @test traces.plant.axis.t_us == timeline.log.t_us
 
     @test traces.cmd.data == cmd_tr.data
-    @test traces.wind_ned.data == wind_tr.data
+    @test traces.wind_base_ned.data == wind_tr.data
 end
 
 
@@ -189,6 +217,94 @@ end
     @test traces.est isa REC.ZOHTrace
     @test traces.est.data[1].pos_ned == x0.pos_ned
     @test traces.est.data[end].pos_ned == x0.pos_ned
+end
+
+
+@testset "Runtime.Engine: strict_cmd validates even without sanitize" begin
+    t0_us = UInt64(0)
+    t_end_us = UInt64(10_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    motors = SVector{12,Float64}(1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    servos = SVector{8,Float64}(ntuple(_ -> 0.0, 8))
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
+
+    ap_src = ConstantMotorAutopilotSource(cmd)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+    scenario = Sim.Sources.NullScenarioSource()
+    estimator = Sim.Sources.NullEstimatorSource()
+
+    x0 = Sim.RigidBody.RigidBodyState()
+
+    sim = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true, sanitize_cmd = false);
+        timeline = timeline,
+        bus = RT.SimBus(time_us = UInt64(0)),
+        plant0 = x0,
+        dynfun = CmdAccelX(),
+        integrator = Sim.Integrators.RK4Integrator(),
+        autopilot = ap_src,
+        wind = wind_src,
+        scenario = scenario,
+        estimator = estimator,
+    )
+
+    @test_throws ErrorException RT.run!(sim)
+end
+
+
+@testset "Runtime.Engine: sanitize replaces NaN actuator commands" begin
+    t0_us = UInt64(0)
+    t_end_us = UInt64(10_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(10_000),
+        dt_wind_us = UInt64(10_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    motors = SVector{12,Float64}(NaN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    servos = SVector{8,Float64}(ntuple(_ -> 0.0, 8))
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
+
+    ap_src = ConstantMotorAutopilotSource(cmd)
+    wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
+    wind_src = Sim.Sources.ReplayWindSource(wind_tr)
+    scenario = Sim.Sources.NullScenarioSource()
+    estimator = Sim.Sources.NullEstimatorSource()
+
+    x0 = Sim.RigidBody.RigidBodyState()
+    rec = REC.InMemoryRecorder()
+
+    sim = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true, sanitize_cmd = true);
+        timeline = timeline,
+        bus = RT.SimBus(time_us = UInt64(0)),
+        plant0 = x0,
+        dynfun = CmdAccelX(),
+        integrator = Sim.Integrators.RK4Integrator(),
+        autopilot = ap_src,
+        wind = wind_src,
+        scenario = scenario,
+        estimator = estimator,
+        recorder = rec,
+    )
+
+    RT.run!(sim)
+    REC.finalize!(rec)
+
+    traces = REC.tier0_traces(rec, timeline)
+    @test traces.cmd.data[1].motors[1] == 0.0
 end
 
 
@@ -355,7 +471,7 @@ end
         scn = REC.scenario_traces(tier0_loaded.recorder, tier0_loaded.timeline)
 
         ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
-        wind_replay = Sim.Sources.ReplayWindSource(tr.wind_ned)
+        wind_replay = Sim.Sources.ReplayWindSource(tr.wind_base_ned)
         wind_dist = hasproperty(scn, :wind_dist) ? scn.wind_dist : nothing
         scenario_replay = Sim.Sources.ReplayScenarioSource(
             scn.ap_cmd,
@@ -398,6 +514,105 @@ end
             @test e.soc <= 1e-15
             @test e.v1 <= 1e-12
         end
+    end
+end
+
+@testset "Record/replay equivalence with wind disturbance (Tier0)" begin
+    # Ensure non-zero wind_dist_ned (stepped at a non-wind boundary) reproduces exactly.
+    t0_us = UInt64(0)
+    t_end_us = UInt64(80_000)
+    timeline = RT.build_timeline(
+        t0_us,
+        t_end_us;
+        dt_ap_us = UInt64(5_000),
+        dt_wind_us = UInt64(20_000),
+        dt_log_us = UInt64(10_000),
+    )
+
+    base_wind = [Sim.Types.vec3(3.0, 0.0, 0.0) for _ in timeline.wind.t_us]
+    wind_tr = REC.SampleHoldTrace(timeline.wind, base_wind)
+
+    motors = SVector{12, Float64}(ntuple(_ -> 0.0, 12))
+    servos = SVector{8, Float64}(ntuple(_ -> 0.0, 8))
+    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
+
+    ap_live = ConstantMotorAutopilotSource(cmd)
+    wind_live = Sim.Sources.ReplayWindSource(wind_tr)
+    scenario = WindDistScenario(UInt64(35_000), Sim.Types.vec3(2.0, 0.0, 0.0))
+    estimator = Sim.Sources.NullEstimatorSource()
+
+    x0 = Sim.RigidBody.RigidBodyState(
+        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
+        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
+        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
+    )
+
+    integ = Sim.Integrators.RK4Integrator()
+
+    # --- Record ---
+    rec1 = REC.InMemoryRecorder()
+    sim1 = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true);
+        timeline = timeline,
+        bus = RT.SimBus(time_us = UInt64(0)),
+        plant0 = x0,
+        dynfun = WindAccelX(),
+        integrator = integ,
+        autopilot = ap_live,
+        wind = wind_live,
+        scenario = scenario,
+        estimator = estimator,
+        recorder = rec1,
+    )
+
+    RT.run!(sim1)
+    REC.finalize!(rec1)
+
+    tier0 = REC.Tier0Recording(recorder = rec1, timeline = timeline, plant0 = x0)
+    REC.validate_recording(tier0)
+
+    tr = REC.tier0_traces(rec1, timeline)
+    scn = REC.scenario_traces(rec1, timeline)
+
+    # --- Replay ---
+    ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
+    wind_replay = Sim.Sources.ReplayWindSource(tr.wind_base_ned)
+    scenario_replay = Sim.Sources.ReplayScenarioSource(
+        scn.ap_cmd,
+        scn.landed,
+        scn.faults;
+        wind_dist = scn.wind_dist,
+    )
+
+    rec2 = REC.InMemoryRecorder()
+    sim2 = RT.Engine(
+        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true);
+        timeline = timeline,
+        bus = RT.SimBus(time_us = UInt64(0)),
+        plant0 = x0,
+        dynfun = WindAccelX(),
+        integrator = integ,
+        autopilot = ap_replay,
+        wind = wind_replay,
+        scenario = scenario_replay,
+        estimator = estimator,
+        recorder = rec2,
+    )
+
+    RT.run!(sim2)
+    REC.finalize!(rec2)
+
+    tr2 = REC.tier0_traces(rec2, timeline)
+
+    @test length(tr.plant.data) == length(tr2.plant.data)
+    for i in eachindex(tr.plant.data)
+        a = tr.plant.data[i]
+        b = tr2.plant.data[i]
+        @test isapprox(a.pos_ned, b.pos_ned; atol = 1e-12)
+        @test isapprox(a.vel_ned, b.vel_ned; atol = 1e-12)
+        @test isapprox(a.q_bn, b.q_bn; atol = 1e-12)
+        @test isapprox(a.ω_body, b.ω_body; atol = 1e-12)
     end
 end
 

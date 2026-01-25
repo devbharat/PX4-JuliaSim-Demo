@@ -48,5 +48,13 @@ The engine runs in one of three modes:
 ## Caveats
 
 - Contact modeling is penalty-force; there is no continuous-time root finding.
-- Scenario `When` conditions are evaluated only when the scenario is stepped (typically at `timeline.scn` boundaries).
+- Scenario `When` conditions are evaluated at every event boundary. If you need a higher-rate
+  scenario evaluation, add more boundaries (e.g. a smaller `timeline.phys` or extra times via
+  `event_times_us`).
+- Scenario stepping at **every event boundary** is a correctness-first design. If this becomes
+  a performance bottleneck, consider introducing a dedicated scenario cadence while keeping
+  `When` evaluation aligned to boundaries.
+- `sanitize_cmd=false` is only safe if the autopilot never emits NaNs or out-of-range
+  actuator values. PX4 uses NaN as a sentinel for unused channels, so the default
+  (`sanitize_cmd=true`) is recommended for lockstep workflows.
 - Tier-0 recordings do not embed model parameters; replay assumes the model configuration matches the recording context.

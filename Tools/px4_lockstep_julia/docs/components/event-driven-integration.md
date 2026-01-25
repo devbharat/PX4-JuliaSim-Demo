@@ -41,7 +41,7 @@ bus sample is held.
 
 Order at `t_k`:
 
-1. Scenario updates bus (`faults`, `ap_cmd`, `landed`) if `t_k ∈ timeline.scn`
+1. Scenario updates bus (`faults`, `ap_cmd`, `landed`) at **every event boundary**
 2. Wind updates bus (`wind_ned`) if `t_k ∈ timeline.wind`
 3. Plant-derived telemetry updates bus (battery vector, env cache) via `plant_outputs`
 4. Estimator updates bus (`est`) if `t_k ∈ timeline.ap`
@@ -55,10 +55,11 @@ This ordering is implemented in exactly one place: `Runtime.Engine`.
 
 ## Caveats
 
-- Scenario `When(...)` conditions are evaluated only when the scenario is stepped
-  (typically at `timeline.scn` boundaries). If you need higher-rate evaluation, include
-  additional scenario boundaries in the timeline (via `event_times_us`) or implement a
-  scenario source that publishes at the desired cadence.
+- Scenario `When(...)` conditions are evaluated at every event boundary. If you need
+  higher-rate evaluation, add more boundaries (e.g. a smaller `timeline.phys` or extra
+  times via `event_times_us`).
+- Scenario stepping at **every event boundary** is the canonical choice for correctness,
+  but a future opt-in scenario cadence could reduce overhead for heavy scenarios.
 - Dynamic insertion of new explicit boundaries at runtime is not supported; timeline
   boundaries are computed up-front.
 - Contact event detection (root-finding) is not implemented; penalty contact is treated

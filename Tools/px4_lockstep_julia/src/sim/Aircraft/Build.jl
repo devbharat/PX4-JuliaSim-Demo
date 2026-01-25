@@ -557,7 +557,7 @@ function build_aircraft_instance(
 
         sources = (
             autopilot = Sources.ReplayAutopilotSource(traces.cmd),
-            wind = Sources.ReplayWindSource(traces.wind_ned),
+            wind = Sources.ReplayWindSource(traces.wind_base_ned),
             scenario = scenario,
             estimator = Sources.NullEstimatorSource(),
         )

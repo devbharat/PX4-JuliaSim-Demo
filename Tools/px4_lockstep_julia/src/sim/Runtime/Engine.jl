@@ -29,7 +29,7 @@ Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 
 using ..Types: Vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
-using ..Vehicles: ActuatorCommand, sanitize
+using ..Vehicles: ActuatorCommand, sanitize, validate
 using ..Plant: PlantInput, PlantOutputs, PlantState
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
 
@@ -394,10 +394,14 @@ function process_events_at!(sim::Engine)
         elseif stage === :wind
             if ev.due_wind
                 update!(sim.wind, sim.bus, sim.plant, sim.t_us)
+                base_wind = sim.bus.wind_ned
+                if sim.cfg.mode == MODE_RECORD
+                    record!(sim.recorder, :wind_base_ned, sim.t_us, base_wind)
+                end
 
                 # Apply any scenario-requested wind disturbance after the base wind
                 # source updates the sample.
-                sim.bus.wind_ned = sim.bus.wind_ned + sim.bus.wind_dist_ned
+                sim.bus.wind_ned = base_wind + sim.bus.wind_dist_ned
                 if sim.cfg.mode == MODE_RECORD
                     record!(sim.recorder, :wind_ned, sim.t_us, sim.bus.wind_ned)
                 end
@@ -475,8 +479,11 @@ function process_events_at!(sim::Engine)
 
                 # Defensive boundary validation: the plant integrator expects finite,
                 # range-bounded actuator commands. Record runs should fail fast.
+                if sim.cfg.strict_cmd
+                    validate(sim.bus.cmd; allow_nan = true)
+                end
                 if sim.cfg.sanitize_cmd
-                    sim.bus.cmd = sanitize(sim.bus.cmd; strict = sim.cfg.strict_cmd)
+                    sim.bus.cmd = sanitize(sim.bus.cmd; allow_nan = true)
                 end
                 if sim.cfg.mode == MODE_RECORD
                     record!(sim.recorder, :cmd, sim.t_us, sim.bus.cmd)

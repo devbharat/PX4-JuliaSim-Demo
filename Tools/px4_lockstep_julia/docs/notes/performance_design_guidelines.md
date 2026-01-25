@@ -2,7 +2,8 @@
 
 **Status:** Draft  
 **Last updated:** 2026-01-23  
-**Scope:** This document defines performance-oriented design rules for this repository, with a focus on deterministic, low-allocation, low-jitter simulation and PX4 lockstep integration.
+**Scope:** This document defines performance-oriented design rules for this repository, with a focus on deterministic, low-allocation, low-jitter simulation and PX4 lockstep integration.  
+**Note:** This is an internal draft; if it conflicts with `docs/performance_guidelines.md`, treat that file as canonical.
 
 ---
 

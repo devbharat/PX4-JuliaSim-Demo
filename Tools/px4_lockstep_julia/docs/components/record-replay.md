@@ -30,7 +30,7 @@ A Tier‑0 recording (`Sim.Recording.Tier0Recording`) bundles:
 Required streams (sufficient for deterministic plant replay):
 
 - `:cmd` — actuator commands (`ActuatorCommand`), **ZOH** on the autopilot axis
-- `:wind_ned` — wind sample, **sample/hold** on the wind axis
+- `:wind_base_ned` — base wind sample, **sample/hold** on the wind axis
 - `:plant` — plant state snapshots, **sampled** on the log axis
 - `:battery` and `:batteries` — battery telemetry snapshots, **sampled** on the log axis
   - `:batteries` is the full vector (deterministic order)
@@ -38,7 +38,7 @@ Required streams (sufficient for deterministic plant replay):
 
 Optional streams:
 
-- scenario outputs (faults and high-level autopilot commands), recorded either:
+- scenario outputs (faults, high-level autopilot commands, and wind disturbance), recorded either:
   - on the **event axis** (`*_evt`) when `record_faults_evt=true` (recommended), or
   - on the **scenario axis** otherwise
 - estimator output (`:est`) on the autopilot axis when `record_estimator=true`
@@ -50,7 +50,7 @@ short regression runs, not for long-duration logging.
 
 Replays are driven by typed traces and replay sources:
 
-- `Recording.tier0_traces(rec)` builds the standard Tier‑0 traces (`cmd`, `wind_ned`, ...)
+- `Recording.tier0_traces(rec)` builds the standard Tier‑0 traces (`cmd`, `wind_base_ned`, ...)
 - `Sources.ReplayAutopilotSource(trace)` publishes `bus.cmd`
 - `Sources.ReplayWindSource(trace)` publishes `bus.wind_ned`
 - `Sources.ReplayScenarioSource(...)` publishes `bus.ap_cmd`, `bus.landed`, `bus.faults`
@@ -63,7 +63,7 @@ using PX4Lockstep.Sim
 rec = Sim.Recording.read_recording("iris_recording.bin")
 tr0 = Sim.Recording.tier0_traces(rec)
 
-wind      = Sim.Sources.ReplayWindSource(tr0.wind_ned)
+wind      = Sim.Sources.ReplayWindSource(tr0.wind_base_ned)
 autopilot = Sim.Sources.ReplayAutopilotSource(tr0.cmd)
 
 # Optional: replay scenario outputs (faults + high-level commands) if they were recorded.
@@ -101,6 +101,8 @@ Caveats:
 - Tier‑0 recordings do **not** embed model parameters or hashes; replay assumes the
   current model configuration matches the recording context.
 - Persistence uses Julia `Serialization` (fast and dependency-light), but it is not a
-  stable long-term archival format across Julia versions.
+  stable long-term archival format across Julia versions. If long-lived recordings
+  become a requirement, add a versioned, stable format (e.g. HDF5/JLD2/Arrow) and keep
+  `Serialization` as the developer‑fast path.
 - Timeline boundaries are computed up-front. Dynamic insertion of new explicit
   boundaries at runtime is not supported.

@@ -2,6 +2,7 @@
 
 This document summarizes **what is currently covered** by automated tests in
 `Tools/px4_lockstep_julia/test/` and the **few remaining gaps** worth adding.
+It is a snapshot; update it when coverage changes.
 
 The goal is to keep verification deterministic, fast, and auditable.
 

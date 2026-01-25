@@ -17,7 +17,8 @@ if [[ "${PX4_LOCKSTEP_SYSIMAGE:-0}" != "1" ]]; then
 fi
 
 if ! julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" -e 'using PackageCompiler' >/dev/null 2>&1; then
-  echo "PackageCompiler not available in the project; skipping sysimage build." >&2
+  echo "PackageCompiler not installed; sysimage build requested but cannot proceed." >&2
+  echo "Install with: julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.add(\"PackageCompiler\")'" >&2
   exit 1
 fi
 

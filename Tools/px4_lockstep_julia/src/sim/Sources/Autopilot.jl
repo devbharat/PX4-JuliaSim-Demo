@@ -11,8 +11,6 @@ Autopilot commands (`bus.cmd`) are treated as **ZOH between autopilot ticks**.
 
 using StaticArrays: SVector
 
-import Base.CoreLogging: @warn
-
 using ..Autopilots: autopilot_step, autopilot_output_type, UORBOutputs
 import ..Runtime: AutopilotTelemetry, autopilot_telemetry
 
@@ -37,20 +35,15 @@ mutable struct LiveAutopilotSource{A,O} <: AbstractAutopilotSource
     ap::A
     last_out::Union{Nothing,O}
     telemetry::AutopilotTelemetry
-    warned_nonfinite::Bool
 end
 
 function LiveAutopilotSource(ap::A) where {A}
     O = autopilot_output_type(ap)
-    return LiveAutopilotSource{A,O}(ap, nothing, AutopilotTelemetry(), false)
+    return LiveAutopilotSource{A,O}(ap, nothing, AutopilotTelemetry())
 end
 
 @inline function _to_ntuple3_float(v)
     return (Float64(v[1]), Float64(v[2]), Float64(v[3]))
-end
-
-@inline function _finite_or(x::Float64, fallback::Float64)
-    return isfinite(x) ? x : fallback
 end
 
 @inline _telemetry_from_out(::Any) = AutopilotTelemetry()
@@ -91,15 +84,8 @@ function update!(src::LiveAutopilotSource, bus::SimBus, plant_state, t_us::UInt6
     motors_raw = out.actuator_motors
     servos_raw = out.actuator_servos
 
-    motors_vals = ntuple(i -> Float64(motors_raw[i]), 12)
-    servos_vals = ntuple(i -> Float64(servos_raw[i]), 8)
-    if !src.warned_nonfinite && (!all(isfinite, motors_vals) || !all(isfinite, servos_vals))
-        @warn "Lockstep outputs contain non-finite actuator commands; replacing with zeros" time_us =
-            t_us
-        src.warned_nonfinite = true
-    end
-    motors = SVector{12,Float64}(ntuple(i -> _finite_or(motors_vals[i], 0.0), 12))
-    servos = SVector{8,Float64}(ntuple(i -> _finite_or(servos_vals[i], 0.0), 8))
+    motors = SVector{12,Float64}(ntuple(i -> Float64(motors_raw[i]), 12))
+    servos = SVector{8,Float64}(ntuple(i -> Float64(servos_raw[i]), 8))
 
     bus.cmd = ActuatorCommand(motors = motors, servos = servos)
     return nothing

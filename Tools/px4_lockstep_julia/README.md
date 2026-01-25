@@ -12,7 +12,7 @@ The guiding idea: keep the C boundary minimal and deterministic, and build every
 ## What you can do with it
 
 - Run PX4 SITL in **lockstep** with a deterministic Julia-owned plant, environment, powertrain, and contacts.
-- Define aircraft, uORB boundaries, timelines, and missions in **TOML** (see `src/Workflows/assets/aircraft/iris_default.toml`), then run them via clean workflows.
+- Define aircraft, uORB boundaries, timelines, and missions in **TOML** (eg. [`Iris TOML`](src/Workflows/assets/aircraft/iris_default.toml)), then run them via clean workflows.
 - Record a PX4 run once, then **replay the exact same inputs** to compare integrators/models without closed-loop divergence.
 - Inject deterministic scenarios and faults (arm/mission, wind disturbances, motor/battery faults) and capture ordered logs.
 - Sweep integrators or model variants in replay and export summary CSVs for regression tracking.

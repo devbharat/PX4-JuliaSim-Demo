@@ -80,6 +80,9 @@ Battery remaining: min 0.82
 Saved plot to sim_plot.png
 ```
 
+<img width="1800" height="1500" alt="sim_plot" src="https://github.com/user-attachments/assets/adc3ce6e-48ba-4d09-8159-56af8c11ea75" />
+
+
 ## Compare integrators (record + replay)
 
 This helper records one PX4 live run, then replays the plant with multiple integrators:

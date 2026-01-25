@@ -211,10 +211,10 @@ end
     wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
     env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.NoWind())
-    model = Sim.Vehicles.IrisQuadrotor()
+    model = iris_vehicle_for_tests().model
     motor_act = Sim.Vehicles.DirectActuators()
     servo_act = Sim.Vehicles.DirectActuators()
-    propulsion = Sim.Propulsion.default_iris_quadrotor_set()
+    propulsion = Sim.Propulsion.default_multirotor_set()
     battery = Sim.Powertrain.IdealBattery()
 
     rb0 = Sim.RigidBody.RigidBodyState()
@@ -253,19 +253,19 @@ end
     # Record a short open-loop full-plant run, save/load the Tier0 recording, then replay the
     # recorded inputs and assert that the logged plant states match at every log tick.
 
-    veh = Sim.iris_default_vehicle()
+    veh = iris_vehicle_for_tests()
 
     # Record with a non-zero "live" environment wind model, but replay with the
     # canonical replay environment (NoWind). If the plant ever reads env.wind
     # directly, this test will diverge.
-    env_replay = Sim.iris_default_env_replay()
+    env_replay = iris_env_replay_for_tests()
     env_record = Sim.Environment.EnvironmentModel(
         atmosphere = env_replay.atmosphere,
         wind = Sim.Environment.ConstantWind(Sim.Types.vec3(5.0, 0.0, 0.0)),
         gravity = env_replay.gravity,
         origin = env_replay.origin,
     )
-    battery = Sim.iris_default_battery()
+    battery = iris_battery_for_tests()
     contact = Sim.Contacts.NoContact()
 
     model_record = Sim.PlantModels.CoupledMultirotorModel(
@@ -438,9 +438,9 @@ end
         return nothing
     end
 
-    veh = Sim.iris_default_vehicle()
-    batt = Sim.iris_default_battery()
-    env0 = Sim.iris_default_env_replay()
+    veh = iris_vehicle_for_tests()
+    batt = iris_battery_for_tests()
+    env0 = iris_env_replay_for_tests()
     wind_model = Sim.Environment.OUWind(
         mean = Sim.Types.vec3(0.0, 0.0, 0.0),
         σ = Sim.Types.vec3(0.0, 0.0, 0.0), # deterministic

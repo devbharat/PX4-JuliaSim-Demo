@@ -386,9 +386,9 @@ end
 
 """Initialize a `PlantState{N,B}` for `B` batteries.
 
-Phase 5.1 introduced vectorized battery state (`B` batteries). Phase 5.2 wires this
-into the canonical coupled multirotor plant model via a simple algebraic
-`PowerNetwork` (multi-bus + multi-battery).
+This supports vectorized battery state (`B` batteries) and is used by the
+canonical coupled multirotor plant model with an algebraic `PowerNetwork`
+(multi-bus + multi-battery).
 """
 function init_plant_state(
     rb::RigidBodyState,

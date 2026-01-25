@@ -97,7 +97,7 @@ function simulate(;
 
     _validate_lockstep_rates(autopilot, timeline; strict = strict_lockstep_rates)
 
-    # Phase 5.3: size the bus battery vector from the plant initial state when possible.
+    # Size the bus battery vector from the plant initial state when possible.
     n_batteries = 1
     try
         if hasproperty(plant0, :power)
@@ -163,7 +163,7 @@ function _validate_lockstep_rates(autopilot, timeline; strict::Bool)
         end
     end
 
-    # Phase 7: validate uORB injection schedule vs PX4 step cadence.
+    # Validate uORB injection schedule vs PX4 step cadence.
     #
     # If the simulator publishes certain uORB topics at fixed periods, the PX4
     # step cadence must be fast enough (and align as an integer divisor) so that
@@ -200,28 +200,8 @@ record_live_px4(; kwargs...) = simulate(; mode = :record, kwargs...)
 """Convenience wrapper: replay run."""
 replay_recording(; kwargs...) = simulate(; mode = :replay, kwargs...)
 
-# TODO (Phase 4 UX): provide `replay_recording(path_or_recording; ...)` that:
+# TODO: provide `replay_recording(path_or_recording; ...)` that:
 # - loads a Tier0Recording
 # - constructs replay sources automatically
 # - runs the engine
 # - returns an Engine and comparison summary
-
-
-"""Generic integrator comparison on a Tier-0 recording.
-
-This is a thin ergonomic alias for `compare_integrators_recording`.
-
-Typical use:
-
-    rows = Sim.compare_integrators(
-        recording = rec,
-        dynfun = dynfun,
-        solvers = [:RK4, :RK23],
-        reference_integrator = Sim.iris_reference_integrator(),
-        make_integrator = Sim.iris_integrator,
-    )
-
-For an end-to-end Iris workflow (record + replay sweep), see
-`compare_integrators_iris_mission`.
-"""
-compare_integrators(; kwargs...) = compare_integrators_recording(; kwargs...)

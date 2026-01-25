@@ -1,4 +1,4 @@
-"""Spec → Engine builder (Phase 3).
+"""Spec → Engine builder.
 
 This file is the implementation of the **aircraft composition layer**:
 
@@ -10,8 +10,8 @@ This file is the implementation of the **aircraft composition layer**:
   - `integrator`
   - runtime sources (autopilot/wind/scenario/estimator)
 
-Phase 3 extends the Phase 1 instance model with PX4 parameter injection for
-allocator geometry (CA_*), enabling multi-rotor layouts to drive PX4 directly.
+The builder applies spec-driven PX4 parameters for allocator geometry (CA_*),
+enabling multi-rotor layouts to drive PX4 directly.
 """
 
 using Random
@@ -28,6 +28,9 @@ using ..Vehicles
 using ..Propulsion
 using ..Powertrain
 using ..PlantModels
+using ..Environment
+using ..Scenario
+using ..Estimators
 
 using ..Autopilots
 using ..Integrators
@@ -35,6 +38,8 @@ using ..Contacts
 
 using PX4Lockstep:
     param_set!, param_notify!, param_get, param_preinit_set!, control_alloc_update_params!
+
+const _SIM = parentmodule(@__MODULE__)
 
 
 """Internal build output.
@@ -56,13 +61,98 @@ end
 # Helper builders
 # -----------------
 
+@inline function _integrator_from_symbol(name::Symbol)
+    if name === :Euler
+        return Integrators.EulerIntegrator()
+    elseif name === :RK4
+        return Integrators.RK4Integrator()
+    elseif name === :RK23
+        return Integrators.RK23Integrator()
+    elseif name === :RK45
+        return Integrators.RK45Integrator()
+    else
+        error("Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)")
+    end
+end
+
 @inline function _resolve_integrator(spec::AircraftSpec)
     integ = spec.plant.integrator
     if integ isa Symbol
-        # Reuse the existing integrator factory for now (Iris workflow helper).
-        return _SIM.iris_integrator(integ)
+        return _integrator_from_symbol(integ)
     end
     return integ
+end
+
+function _default_env_live(; home)
+    wind = Environment.OUWind(
+        mean = Types.vec3(0.0, 0.0, 0.0),
+        σ = Types.vec3(1.5, 1.5, 0.5),
+        τ_s = 3.0,
+    )
+    atm = Environment.ISA1976()
+    g = Environment.UniformGravity(9.80665)
+    return Environment.EnvironmentModel(
+        atmosphere = atm,
+        wind = wind,
+        gravity = g,
+        origin = home,
+    )
+end
+
+function _default_env_replay(; home)
+    atm = Environment.ISA1976()
+    g = Environment.UniformGravity(9.80665)
+    return Environment.EnvironmentModel(
+        atmosphere = atm,
+        wind = Environment.NoWind(),
+        gravity = g,
+        origin = home,
+    )
+end
+
+function _default_scenario(; arm_time_s::Float64 = 1.0, mission_time_s::Float64 = 2.0)
+    s = Scenario.EventScenario()
+    Scenario.arm_at!(s, arm_time_s)
+    Scenario.mission_start_at!(s, mission_time_s)
+    return s
+end
+
+function _default_estimator(dt_ap_s::Float64)
+    base = Estimators.NoisyEstimator(
+        pos_sigma_m = Types.vec3(0.02, 0.02, 0.02),
+        vel_sigma_mps = Types.vec3(0.05, 0.05, 0.05),
+        yaw_sigma_rad = 0.01,
+        rate_sigma_rad_s = Types.vec3(0.005, 0.005, 0.005),
+        bias_tau_s = 50.0,
+        rate_bias_sigma_rad_s = Types.vec3(0.001, 0.001, 0.001),
+    )
+    return Estimators.DelayedEstimator(base; delay_s = 2 * dt_ap_s, dt_est = dt_ap_s)
+end
+
+function _build_default_timeline(;
+    t_end_s::Float64,
+    dt_autopilot_s::Float64,
+    dt_wind_s::Float64,
+    dt_log_s::Float64,
+    dt_phys_s::Union{Nothing,Float64} = nothing,
+    scenario_source = nothing,
+)
+    t0_us = UInt64(0)
+    t_end_us = Runtime.dt_to_us(t_end_s)
+    dt_ap_us = Runtime.dt_to_us(dt_autopilot_s)
+    dt_wind_us = Runtime.dt_to_us(dt_wind_s)
+    dt_log_us = Runtime.dt_to_us(dt_log_s)
+    dt_phys_us = dt_phys_s === nothing ? nothing : Runtime.dt_to_us(dt_phys_s)
+
+    return Runtime.build_timeline_for_run(
+        t0_us,
+        t_end_us;
+        dt_ap_us = dt_ap_us,
+        dt_wind_us = dt_wind_us,
+        dt_log_us = dt_log_us,
+        dt_phys_us = dt_phys_us,
+        scenario = scenario_source,
+    )
 end
 
 function _build_actuator_model(mspec::AbstractActuatorModelSpec, N::Int)
@@ -132,7 +222,7 @@ end
 
 """Build a simple `PlantModels.PowerNetwork` from the aircraft spec.
 
-Phase 5.2 keeps the topology intentionally simple:
+The topology is intentionally simple:
 * every motor must be assigned to exactly one bus
 * every battery must be assigned to exactly one bus
 
@@ -195,10 +285,9 @@ function _build_vehicle(
 )
     a = spec.airframe
 
-    # Phase 2 supports a generic multirotor rigid-body model with arbitrary propulsor count.
-    a.kind in (:iris_quadrotor, :multirotor) || error(
-        "Unsupported airframe.kind=$(a.kind) (Phase 2 supports :iris_quadrotor|:multirotor)",
-    )
+    # Generic multirotor rigid-body model with arbitrary propulsor count.
+    a.kind === :multirotor ||
+        error("Unsupported airframe.kind=$(a.kind) (supports :multirotor)")
 
     # Motor/servo actuator models are sized to match the PX4 ABI arrays.
     motor_act = _build_actuator_model(spec.actuation.motor_actuators, 12)
@@ -211,7 +300,7 @@ function _build_vehicle(
     )
     rotor_pos = SVector{N,Vec3}(ntuple(i -> a.rotor_pos_body_m[i], N))
 
-    # Propulsor axes (Phase 4): optional spec field, normalized here.
+    # Propulsor axes: required spec field, normalized here.
     axis_src = a.rotor_axis_body_m
     length(axis_src) == N || error(
         "airframe.rotor_axis_body_m length=$(length(axis_src)) must match actuation.motors length=$(N)",
@@ -237,16 +326,12 @@ function _build_vehicle(
         angular_damping = a.angular_damping,
     )
 
-    model = if a.kind === :iris_quadrotor
-        Vehicles.IrisQuadrotor(params = params)
-    else
-        Vehicles.GenericMultirotor{N}(params)
-    end
+    model = Vehicles.GenericMultirotor{N}(params)
 
-    # Propulsion (Iris-like default motor+prop set).
+    # Propulsion (generic multirotor default motor+prop set).
     hover_T = a.mass_kg * 9.80665 / Float64(N)
     p = a.propulsion
-    prop = Propulsion.default_iris_quadrotor_set(
+    prop = Propulsion.default_multirotor_set(
         N = N,
         km_m = p.km_m,
         V_nom = p.V_nom,
@@ -270,12 +355,12 @@ end
 
 
 # -----------------
-# PX4 parameterization helpers (Phase 3)
+# PX4 parameterization helpers
 # -----------------
 
 """Derive PX4 control allocator (CA_*) parameters from the aircraft spec.
 
-This matches the old lockstep C-side Iris defaults, but is now spec-driven.
+This matches the old lockstep C-side defaults, but is now spec-driven.
 """
 function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance)
     cfg = spec.px4.lockstep_config
@@ -286,8 +371,7 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
     length(pos) == N ||
         error("Cannot derive CA params: rotor_pos_body_m length != motor count")
 
-    # Optional rotor/propulsor axes (Phase 4). Defaults to classic multirotor axis_b=(0,0,1)
-    # so the thrust vector (force) points along -Z.
+    # Rotor/propulsor axes: required by spec; thrust is applied along -axis_b.
     axis_src = spec.airframe.rotor_axis_body_m
     length(axis_src) == N ||
         error("Cannot derive CA params: rotor_axis_body_m length != motor count")
@@ -419,16 +503,16 @@ function build_aircraft_instance(
         end
 
         # Environment: disable live wind (wind comes from trace).
-        env = _SIM.iris_default_env_replay(home = spec.home)
+        env = _default_env_replay(home = spec.home)
 
         # Build param objects from spec but override initial RB to match the recording.
         vehicle = _build_vehicle(spec; x0_override = rec.plant0.rb)
 
-        # Phase 5.2: multi-battery power network (recording must match spec topology).
+        # Multi-battery power network (recording must match spec topology).
         batteries = _build_batteries(spec)
         power_net = _build_power_network(spec)
 
-        # Explicit actuator -> physical propulsor mapping (Phase 2).
+        # Explicit actuator -> physical propulsor mapping.
         N = length(spec.actuation.motors)
         if length(rec.plant0.rotor_ω) != N
             error(
@@ -489,12 +573,12 @@ function build_aircraft_instance(
     # ---------
 
     # Environment with live wind.
-    env = _SIM.iris_default_env_live(home = spec.home)
+    env = _default_env_live(home = spec.home)
 
     # Scenario + timeline.
-    scenario_obj = _SIM.iris_default_scenario()
+    scenario_obj = _default_scenario()
     scenario_src = Sources.LiveScenarioSource(scenario_obj)
-    timeline = _SIM.iris_timeline(
+    timeline = _build_default_timeline(
         t_end_s = spec.timeline.t_end_s,
         dt_autopilot_s = spec.timeline.dt_autopilot_s,
         dt_wind_s = spec.timeline.dt_wind_s,
@@ -506,7 +590,7 @@ function build_aircraft_instance(
     # Wind + estimator.
     wind_src =
         Sources.LiveWindSource(env.wind, Random.Xoshiro(spec.seed), spec.timeline.dt_wind_s)
-    estimator_obj = _SIM.iris_default_estimator(spec.timeline.dt_autopilot_s)
+    estimator_obj = _default_estimator(spec.timeline.dt_autopilot_s)
     estimator_src = Sources.LiveEstimatorSource(
         estimator_obj,
         Random.Xoshiro(spec.seed + 1),
@@ -516,11 +600,11 @@ function build_aircraft_instance(
     # Plant-side param objects.
     vehicle = _build_vehicle(spec)
 
-    # Phase 5.2: multi-battery power network.
+    # Multi-battery power network.
     batteries = _build_batteries(spec)
     power_net = _build_power_network(spec)
 
-    # Explicit actuator -> physical propulsor mapping (Phase 2).
+    # Explicit actuator -> physical propulsor mapping.
     N = length(spec.actuation.motors)
     motor_map = Vehicles.MotorMap{N}(
         SVector{N,Int}(ntuple(i -> spec.actuation.motors[i].channel, N)),
@@ -553,7 +637,7 @@ function build_aircraft_instance(
         batteries,
     )
 
-    # Apply spec-driven PX4 parameters (Phase 3).
+    # Apply spec-driven PX4 parameters.
     px4_params = PX4ParamSpec[]
     if spec.px4.derive_ca_params
         append!(px4_params, _derive_ca_params(spec, vehicle))
@@ -581,7 +665,7 @@ function build_aircraft_instance(
         edge_trigger = spec.px4.edge_trigger,
     )
 
-    # Apply optional CA_ROTOR*_A* params if the PX4 build supports them (Phase 4.3).
+    # Apply optional CA_ROTOR*_A* params if the PX4 build supports them.
     axis_applied = false
     if !isempty(axis_params)
         for p in axis_params
@@ -668,8 +752,8 @@ function build_engine(
 )
     validate_spec(spec; mode = mode, recording_in = recording_in)
 
-    # Phase 2 supports Iris preset and generic multirotor specs. Additional airframe
-    # kinds will be enabled in later phases.
+    # Multirotor specs only. Additional airframe kinds will be enabled
+    # in later phases.
 
     inst, ap = build_aircraft_instance(
         spec;

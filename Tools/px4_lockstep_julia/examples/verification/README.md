@@ -60,14 +60,10 @@ scenario outputs including faults) and then **replay** that recording open-loop 
 sweeping plant integrators.
 
 ```bash
-PX4_LOCKSTEP_LIB=... PX4_LOCKSTEP_MISSION=... \
-  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
+julia --project=Tools/px4_lockstep_julia \
+  Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl \
+  /path/to/spec.toml
 ```
-
-See the script header for environment variables such as:
-
-* `IRIS_T_END_S`
-* `IRIS_SWEEP_SOLVERS` (default: "RK4,RK23,RK45")
 
 The summary CSV is written under `examples/replay/out/`.
 

@@ -1,4 +1,4 @@
-"""PlantModels.PowerNetwork (Phase 5.2)
+"""PlantModels.PowerNetwork
 
 Simple algebraic power-network abstraction used by plant-integrated models.
 
@@ -37,8 +37,8 @@ Fields
 
 Notes
 -----
-Phase 5.2 keeps the topology simple by treating each battery as belonging to a
-single bus. Cross-feed / diode OR-ing is intentionally out of scope.
+The topology is intentionally simple: each battery belongs to a single bus.
+Cross-feed / diode OR-ing is intentionally out of scope.
 """
 Base.@kwdef struct PowerNetwork{N,B,K}
     bus_for_motor::SVector{N,Int}

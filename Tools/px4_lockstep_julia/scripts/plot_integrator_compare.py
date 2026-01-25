@@ -433,7 +433,7 @@ def main() -> int:
     ref_log = log_dir / f"{prefix}_ref_log.csv"
     if not ref_log.exists():
         print(f"Reference log not found: {ref_log}")
-        print("Tip: rerun compare with IRIS_LOG_DIR set to emit replay logs.")
+        print("Tip: rerun compare with log_dir set to emit replay logs.")
         return 0
 
     ref_data = load_log(ref_log)

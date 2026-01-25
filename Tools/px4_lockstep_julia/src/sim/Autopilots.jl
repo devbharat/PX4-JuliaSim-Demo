@@ -24,15 +24,6 @@ using PX4Lockstep: create, destroy, load_mission, step_uorb!
 using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
 using PX4Lockstep: create_publisher, create_subscriber, publish!
 using PX4Lockstep: uorb_check, uorb_copy, uorb_unsubscribe!
-using PX4Lockstep: BatteryStatusMsg, VehicleAttitudeMsg, VehicleLocalPositionMsg
-using PX4Lockstep:
-    VehicleGlobalPositionMsg, VehicleAngularVelocityMsg, VehicleLandDetectedMsg
-using PX4Lockstep: VehicleStatusMsg, VehicleControlModeMsg, ActuatorArmedMsg
-using PX4Lockstep: HomePositionMsg, GeofenceStatusMsg
-using PX4Lockstep: VehicleTorqueSetpointMsg, VehicleThrustSetpointMsg
-using PX4Lockstep: ActuatorMotorsMsg, ActuatorServosMsg
-using PX4Lockstep: VehicleAttitudeSetpointMsg, VehicleRatesSetpointMsg
-using PX4Lockstep: MissionResultMsg, TrajectorySetpointMsg
 
 export HomeLocation,
     WorldOrigin,
@@ -42,10 +33,8 @@ export HomeLocation,
     PX4UORBInterfaceConfig,
     UORBPubSpec,
     UORBSubSpec,
-    iris_state_injection_interface,
-    minimal_actuator_only_interface,
     PX4LockstepAutopilot,
-    # Phase 7: uORB injection scheduling helpers
+    # uORB injection scheduling helpers
     PX4StepContext,
     AbstractUORBInjectionSource,
     PeriodicUORBInjection,
@@ -173,6 +162,8 @@ end
 Only one lockstep handle is supported per process by default. Use
 `allow_multiple_handles=true` only when the PX4 lockstep runtime is known
 to be re-entrant.
+
+`uorb_cfg` is required and must be provided by the caller (typically from TOML).
 """
 function init!(;
     config = nothing,
@@ -180,7 +171,7 @@ function init!(;
     home::HomeLocation = HomeLocation(),
     edge_trigger::Bool = false,
     allow_multiple_handles::Bool = false,
-    uorb_cfg::PX4UORBInterfaceConfig = iris_state_injection_interface(),
+    uorb_cfg::PX4UORBInterfaceConfig,
 )
     h =
         isnothing(config) ?
@@ -254,7 +245,7 @@ function autopilot_step(
     cmd::AutopilotCommand;
     landed::Bool = false,
     battery::BatteryStatus = BatteryStatus(),
-    # Phase 5.3: full battery vector (deterministic order).
+    # Full battery vector (deterministic order).
     batteries::Vector{BatteryStatus} = BatteryStatus[battery],
 )
 

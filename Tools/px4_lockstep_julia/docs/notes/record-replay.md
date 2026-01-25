@@ -29,13 +29,13 @@ The streams are versioned by `BUS_SCHEMA_VERSION` in `src/sim/Runtime/Bus.jl`.
 From the PX4 root:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh 20
+Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh
 ```
 
 That script runs `examples/replay/iris_integrator_compare.jl`, which uses:
 
-- `PX4Lockstep.Sim.Workflows.simulate_iris_mission(...; mode=:record)`
-- `PX4Lockstep.Sim.Workflows.compare_integrators_iris_mission(...)`
+- `PX4Lockstep.Workflows.simulate_iris_mission(...; mode=:record)`
+- `PX4Lockstep.Workflows.compare_integrators_iris_mission(...)`
 
 Outputs are written under `examples/replay/out/`.
 

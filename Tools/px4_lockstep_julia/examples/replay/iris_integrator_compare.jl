@@ -1,25 +1,35 @@
 # Iris integrator compare (clean UX)
 #
 # This script is intentionally thin: it delegates all logic to the
-# first-class workflow wrapper in `Sim.Workflows/CompareIntegrators.jl`.
+# first-class workflow wrapper in `Workflows/RecordReplay.jl`.
 #
 # Typical usage:
 #
-#   PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-#     IRIS_SWEEP_SOLVERS=RK4,RK23,RK45 \
-#     IRIS_T_END_S=20.0 IRIS_OUT_DIR=out \
-#     julia --project=Tools/px4_lockstep_julia \
-#       Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
+#   julia --project=Tools/px4_lockstep_julia \
+#     Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl \
+#     /path/to/spec.toml
 #
-# Or replay an existing Tier-0 recording:
+# Or replay an existing Tier-0 recording (no PX4 lib needed):
 #
-#   IRIS_RECORD_IN=out/iris_20260101_120000_tier0.jls \
-#     IRIS_SWEEP_SOLVERS=RK4,RK23,RK45 \
-#     julia --project=Tools/px4_lockstep_julia \
-#       Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl
+#   julia --project=Tools/px4_lockstep_julia \
+#     Tools/px4_lockstep_julia/examples/replay/iris_integrator_compare.jl \
+#     /path/to/spec.toml out/iris_20260101_120000_tier0.jls
 
 using PX4Lockstep
-const Sim = PX4Lockstep.Sim
+const Workflows = PX4Lockstep.Workflows
 
 out_dir = joinpath(@__DIR__, "out")
-Sim.compare_integrators_iris_mission(out_dir=out_dir)
+
+spec_path = isempty(ARGS) ? nothing : ARGS[1]
+recording_in = length(ARGS) >= 2 ? ARGS[2] : nothing
+
+spec_path = spec_path === "" ? nothing : spec_path
+recording_in = recording_in === "" ? nothing : recording_in
+spec_name = spec_path === nothing ? :iris_default : nothing
+
+Workflows.compare_integrators_iris_mission(
+    out_dir = out_dir,
+    spec_path = spec_path,
+    spec_name = spec_name,
+    recording_in = recording_in,
+)

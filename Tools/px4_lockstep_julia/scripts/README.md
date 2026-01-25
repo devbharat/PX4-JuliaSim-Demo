@@ -21,7 +21,7 @@ Add `--show` to open an interactive window.
 
 ## Integrator comparison plots
 
-If the integrator comparison is run with replay logs enabled (`IRIS_LOG_DIR`),
+If the integrator comparison is run with replay logs enabled (`log_dir`),
 summary and trajectory/error plots can be generated:
 
 ```bash
@@ -45,22 +45,32 @@ Pass multiple `--topic` flags or a comma-separated `--topics` list.
 
 ## Iris lockstep run helper
 
-Run the live Iris mission with uORB injection flags (defaults to 70s):
+Run the live Iris mission with uORB injection flags (uses `examples/specs/iris_lockstep.toml`):
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
+Pass a custom spec path as the only argument:
+
+```bash
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh /path/to/spec.toml
+```
+
+The example specs point at the standard PX4 lockstep build path relative to the repo.
+On Linux, update the `.dylib` extension to `.so` in those specs if needed.
+
 The helper assumes the standard PX4 tree layout. For custom library or mission
-paths, run Julia directly and set `PX4_LOCKSTEP_LIB` / `PX4_LOCKSTEP_MISSION`
-in your environment.
+paths, create a spec that extends the built-in defaults under
+`src/Workflows/assets/aircraft` and run Julia directly with
+`Workflows.simulate_iris_mission(spec_path=..., mode=:live)`.
 
 ### Sysimage (optional, opt-in)
 
 To speed up Julia startup, enable sysimage building and usage:
 
 ```bash
-PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
 The first build can take about a minute. The sysimage is rebuilt automatically when
@@ -72,20 +82,21 @@ not for rapid local iteration.
 
 ## Iris multi-altitude sweep helper
 
-Run multiple missions at increasing home altitude offsets and write a CSV per run:
+Run multiple missions at fixed home altitude offsets and write a CSV per run (uses `examples/specs/iris_alt_*.toml`):
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh 70 1000 4 .
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh
 ```
 
-Args: `T_END_S`, `ALT_STEP_M`, `COUNT`, `OUT_DIR`, `PARALLEL`, `PLOT`
-(defaults: `70`, `1000`, `4`, repo root, `0`, `0`).
-
-To generate overlay plots automatically, pass a nonzero `PLOT` arg:
+You can pass a single spec path to run just one case:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh 70 1000 4 . 1 1
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_multi_alt.sh /path/to/spec.toml
 ```
+
+Set `PLOT=1` to generate overlay plots automatically:
+
+Logs are written to the paths configured in those specs (defaults land in the PX4 repo root).
 
 ## Overlay plot helper
 
@@ -93,10 +104,10 @@ Overlay multiple logs (e.g. from the sweep) to visualize trends:
 
 ```bash
 python Tools/px4_lockstep_julia/scripts/plot_sim_log_overlay.py \
-  --log sim_log_alt_488m.csv \
-  --log sim_log_alt_1488m.csv \
-  --log sim_log_alt_2488m.csv \
-  --log sim_log_alt_3488m.csv \
+  --log sim_log_alt_0000m.csv \
+  --log sim_log_alt_1000m.csv \
+  --log sim_log_alt_2000m.csv \
+  --log sim_log_alt_3000m.csv \
   --output sim_plot_overlay.png
 ```
 

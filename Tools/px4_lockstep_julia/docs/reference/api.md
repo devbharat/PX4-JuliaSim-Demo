@@ -59,13 +59,34 @@ Convenience wrapper for a replay run. Equivalent to `Sim.simulate(mode=:replay, 
 This expects you to construct replay sources explicitly (wind, scenario, autopilot) from traces.
 See [`../components/record-replay.md`](../components/record-replay.md) for the current record/replay workflow.
 
-### `Sim.Workflows.simulate_iris_mission`
+### `Workflows.simulate_iris_mission`
 
 End-to-end Iris mission workflow (high level wrapper).
 
-*Location*: `src/sim/Workflows/Iris.jl`
+*Location*: `src/Workflows/Iris.jl`
 
 This is the recommended starting point if you want “a working run” without assembling all components.
+You must provide either `spec_path=...` or `spec_name=...`.
+
+### Direct PX4 autopilot init (TOML-derived)
+
+`Autopilots.init!` requires an explicit uORB configuration. The recommended path is to
+load it from a TOML spec:
+
+```julia
+spec = Sim.Aircraft.load_spec("path/to/spec.toml")
+ap = Sim.Autopilots.init!(
+    config = spec.px4.lockstep_config,
+    libpath = spec.px4.libpath,
+    home = spec.home,
+    edge_trigger = spec.px4.edge_trigger,
+    uorb_cfg = spec.px4.uorb_cfg,
+)
+```
+
+`load_spec` is strict by default and does **not** apply internal defaults. If you
+want the built-in generic multirotor defaults, pass `base_spec=:default` or call
+`Sim.Aircraft.default_multirotor_spec()` directly.
 
 ## Not considered stable
 

@@ -1,9 +1,9 @@
 """Spec validation helpers.
 
-Phase 1 keeps validation intentionally lightweight and fail-fast, but it now checks
-the *instance graph* at a basic level (IDs, counts, simple wiring invariants).
+Validation is intentionally lightweight and fail-fast, but it checks the
+*instance graph* at a basic level (IDs, counts, simple wiring invariants).
 
-Later phases will extend this to validate:
+This can be extended to validate:
 * actuator → propulsor maps
 * uORB instance wiring
 * sensor timing + injection schedules
@@ -28,7 +28,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     end
 
     # -----------------------------
-    # Instance graph sanity (Phase 1)
+    # Instance graph sanity
     # -----------------------------
 
     # Motors
@@ -69,38 +69,26 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             throw(ArgumentError("Servo $(s.id) has channel=$(s.channel) (expected 1..8)"))
     end
 
-    # Airframe (Phase 2: generic multirotor, Iris remains a preset)
-    if spec.name === :iris
-        spec.airframe.kind === :iris_quadrotor ||
-            throw(ArgumentError("Iris spec requires airframe.kind=:iris_quadrotor"))
-        length(motors) == 4 || throw(ArgumentError("Iris spec requires exactly 4 motors"))
-        length(spec.airframe.rotor_pos_body_m) == 4 ||
-            throw(ArgumentError("Iris spec requires 4 rotor_pos_body_m entries"))
+    # Airframe (multirotor only)
+    spec.airframe.kind === :multirotor || throw(
+        ArgumentError(
+            "Unsupported airframe.kind=$(spec.airframe.kind) (supports :multirotor)",
+        ),
+    )
+    length(spec.airframe.rotor_pos_body_m) == length(motors) || throw(
+        ArgumentError(
+            "airframe.rotor_pos_body_m length=$(length(spec.airframe.rotor_pos_body_m)) must match actuation.motors length=$(length(motors))",
+        ),
+    )
 
-        # Per-rotor axes (Phase 4)
-        length(spec.airframe.rotor_axis_body_m) == 4 ||
-            throw(ArgumentError("Iris spec requires 4 rotor_axis_body_m entries"))
-    else
-        spec.airframe.kind === :multirotor || throw(
-            ArgumentError(
-                "Non-Iris specs require airframe.kind=:multirotor (Phase 2 supports multirotor only)",
-            ),
-        )
-        length(spec.airframe.rotor_pos_body_m) == length(motors) || throw(
-            ArgumentError(
-                "airframe.rotor_pos_body_m length=$(length(spec.airframe.rotor_pos_body_m)) must match actuation.motors length=$(length(motors))",
-            ),
-        )
+    # Per-rotor axes
+    length(spec.airframe.rotor_axis_body_m) == length(motors) || throw(
+        ArgumentError(
+            "airframe.rotor_axis_body_m length=$(length(spec.airframe.rotor_axis_body_m)) must match actuation.motors length=$(length(motors))",
+        ),
+    )
 
-        # Per-rotor axes (Phase 4)
-        length(spec.airframe.rotor_axis_body_m) == length(motors) || throw(
-            ArgumentError(
-                "airframe.rotor_axis_body_m length=$(length(spec.airframe.rotor_axis_body_m)) must match actuation.motors length=$(length(motors))",
-            ),
-        )
-    end
-
-    # Axis sanity (Phase 4): if provided, must be non-zero and finite.
+    # Axis sanity: must be non-zero and finite.
     for (i, a) in enumerate(spec.airframe.rotor_axis_body_m)
         (isfinite(a[1]) && isfinite(a[2]) && isfinite(a[3])) || throw(
             ArgumentError("airframe.rotor_axis_body_m[$i] contains non-finite values: $a"),
@@ -110,7 +98,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             throw(ArgumentError("airframe.rotor_axis_body_m[$i] is near-zero: $a"))
     end
 
-    # Power system (Phase 5.2: multi-battery + multi-bus)
+    # Power system (multi-battery + multi-bus)
     bats = spec.power.batteries
     isempty(bats) && throw(ArgumentError("power.batteries must be non-empty"))
     bat_ids = [b.id for b in bats]
@@ -127,7 +115,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     servo_id_set = Set(servo_ids)
     bat_id_set = Set(bat_ids)
 
-    # Phase 5.2 topology constraints: each motor/battery must map to exactly one bus.
+    # Topology constraints: each motor/battery must map to exactly one bus.
     motor_bus_count = Dict{MotorId,Int}(mid => 0 for mid in motor_ids)
     bat_bus_count = Dict{BatteryId,Int}(bid => 0 for bid in bat_ids)
     for bus in buses
@@ -166,7 +154,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     end
 
     # -----------------------------
-    # PX4 params (Phase 3)
+    # PX4 params
     # -----------------------------
     if !isempty(spec.px4.params)
         names = String[]
@@ -180,12 +168,15 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             throw(ArgumentError("Duplicate PX4 parameter names in px4.params"))
     end
 
-    # Live / record require a mission file for the Iris workflow.
-    if mode !== :replay && spec.name === :iris
-        if spec.px4.mission_path === nothing
+    if mode !== :replay && spec.px4.uorb_cfg === nothing
+        throw(ArgumentError("px4.uorb is required for live/record runs (define in TOML)"))
+    end
+    if mode !== :replay && spec.px4.uorb_cfg !== nothing
+        cfg = spec.px4.uorb_cfg
+        if isempty(cfg.pubs) && isempty(cfg.subs)
             throw(
                 ArgumentError(
-                    "Iris live/record runs require mission_path (set spec.px4.mission_path or PX4_LOCKSTEP_MISSION)",
+                    "px4.uorb must define at least one pub or sub for live/record runs",
                 ),
             )
         end

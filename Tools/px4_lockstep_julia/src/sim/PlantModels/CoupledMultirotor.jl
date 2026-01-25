@@ -70,7 +70,7 @@ end
 
 """Convenience constructor with default identity motor mapping.
 
-This preserves backwards compatibility with the Phase 0/1 call sites where the
+This preserves backwards compatibility with legacy call sites where the
 physical propulsor index `i` corresponded to PX4 motor output channel `i`.
 
 For configurable airframes, prefer passing an explicit `motor_map` derived from the
@@ -89,8 +89,8 @@ function CoupledMultirotorModel(
     ),
     servo_map = nothing,
 ) where {N}
-    # Phase 5.2: preserve the legacy single-battery call sites by implicitly
-    # constructing a trivial one-bus power network.
+    # Preserve legacy single-battery call sites by implicitly constructing a
+    # trivial one-bus power network.
     batteries = (battery,)
     net = PowerNetwork{N,1,1}(
         bus_for_motor = SVector{N,Int}(ntuple(_ -> 1, N)),
@@ -113,7 +113,7 @@ function CoupledMultirotorModel(
     )
 end
 
-"""Power-network constructor (Phase 5.2).
+"""Power-network constructor.
 
 Prefer using this constructor for multi-battery / multi-bus aircraft. The
 single-battery constructor remains for backwards compatibility.
@@ -708,7 +708,7 @@ function _eval_propulsion_and_power_network(
         ),
     )
 
-    # Phase 5.2: multi-bus, multi-battery algebraic power network.
+    # Multi-bus, multi-battery algebraic power network.
     #
     # Strategy:
     # 1) Solve one bus voltage per bus using an equivalent Thevenin source
@@ -793,7 +793,7 @@ function _eval_propulsion_and_power_network(
     I_bus_motors = MVector{K,Float64}(ntuple(_ -> 0.0, K))
 
     @inbounds for i = 1:N
-        # Axial inflow component along the propulsor thrust direction (Phase 4).
+        # Axial inflow component along the propulsor thrust direction.
         # Convention: axis_b points along the propulsor axis such that F = -T * axis_b.
         ai = axis_b[i]
         Vax_i =
@@ -917,7 +917,7 @@ function plant_outputs(
             f.model.params.rotor_axis_body,
         )
 
-    # Compute per-battery telemetry (Phase 5.3).
+    # Compute per-battery telemetry.
     batt_all = SVector{B,BatteryStatus}(
         ntuple(
             i -> begin
@@ -999,7 +999,7 @@ function (f::CoupledMultirotorModel)(
         )
     end
 
-    # Battery dynamics from per-battery current draw (Phase 5.2).
+    # Battery dynamics from per-battery current draw.
     soc_dot = MVector{B,Float64}(undef)
     v1_dot = MVector{B,Float64}(undef)
     @inbounds for i = 1:B

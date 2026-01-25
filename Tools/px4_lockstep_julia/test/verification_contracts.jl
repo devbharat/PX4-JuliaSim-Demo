@@ -45,7 +45,7 @@ function _iris_fullplant(
     linear_drag::Union{Nothing,Float64} = nothing,
     angular_damping::Union{Nothing,T.Vec3} = nothing,
 )
-    veh = Sim.iris_default_vehicle(; x0 = x0)
+    veh = iris_vehicle_for_tests(; x0 = x0)
     if linear_drag !== nothing || angular_damping !== nothing
         params = veh.model.params
         params_new = Sim.Vehicles.QuadrotorParams{4}(
@@ -57,10 +57,10 @@ function _iris_fullplant(
             angular_damping =
                 angular_damping === nothing ? params.angular_damping : angular_damping,
         )
-        veh.model = Sim.Vehicles.IrisQuadrotor(params = params_new)
+        veh.model = Sim.Vehicles.GenericMultirotor{4}(params_new)
     end
-    batt = Sim.iris_default_battery()
-    env = Sim.iris_default_env_replay()
+    batt = iris_battery_for_tests()
+    env = iris_env_replay_for_tests()
 
     model = Sim.PlantModels.CoupledMultirotorModel(
         veh.model,
@@ -214,7 +214,7 @@ end
     end
 
     @testset "Phase 5.1 - init_plant_state with multiple batteries" begin
-        veh = Sim.iris_default_vehicle()
+        veh = iris_vehicle_for_tests()
         b1 = PT.TheveninBattery(soc0 = 0.9, v1_0 = 0.12)
         b2 = PT.TheveninBattery(soc0 = 0.8, v1_0 = 0.34)
         x0 = Sim.Plant.init_plant_state(
@@ -299,12 +299,12 @@ end
         )
 
         model = Sim.PlantModels.CoupledMultirotorModel(
-            Sim.iris_default_vehicle().model,
+            iris_vehicle_for_tests().model,
             Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
             Sim.Contacts.NoContact(),
             Sim.Vehicles.DirectActuators(),
             Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_iris_quadrotor_set(),
+            Sim.Propulsion.default_multirotor_set(),
             (b1, b2),
             net,
         )
@@ -335,12 +335,12 @@ end
             share_mode = :equal,
         )
         model_eq = Sim.PlantModels.CoupledMultirotorModel(
-            Sim.iris_default_vehicle().model,
+            iris_vehicle_for_tests().model,
             Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
             Sim.Contacts.NoContact(),
             Sim.Vehicles.DirectActuators(),
             Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_iris_quadrotor_set(),
+            Sim.Propulsion.default_multirotor_set(),
             (b1, b2),
             net_eq,
         )
@@ -383,12 +383,12 @@ end
         )
 
         model = Sim.PlantModels.CoupledMultirotorModel(
-            Sim.iris_default_vehicle().model,
+            iris_vehicle_for_tests().model,
             Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
             Sim.Contacts.NoContact(),
             Sim.Vehicles.DirectActuators(),
             Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_iris_quadrotor_set(),
+            Sim.Propulsion.default_multirotor_set(),
             (b1, b2),
             net,
         )
@@ -917,7 +917,7 @@ end
         # Goal: verify the bus-voltage solver returns a consistent fixed-point.
         # This is a deterministic envelope sweep over random-but-safe inputs.
 
-        p = Sim.Propulsion.default_iris_quadrotor_set()
+        p = Sim.Propulsion.default_multirotor_set()
         rng = MersenneTwister(123)
 
         ocv = 16.0
@@ -951,7 +951,7 @@ end
 
     @testset "Quad symmetry torque test" begin
         # Roll/pitch cancellation for symmetric thrust distribution.
-        model = Sim.Vehicles.IrisQuadrotor()
+        model = iris_vehicle_for_tests().model
         env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.NoWind())
 
         x = RB.RigidBodyState()  # identity attitude, zero rates

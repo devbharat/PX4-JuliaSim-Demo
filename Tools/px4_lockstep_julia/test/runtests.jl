@@ -5,6 +5,10 @@ using LinearAlgebra
 using PX4Lockstep
 
 const Sim = PX4Lockstep.Sim
+const Workflows = PX4Lockstep.Workflows
+
+# TOML-first Iris helpers for tests.
+include("_iris_helpers.jl")
 
 # Verification cases (analytic + invariants). Keep in a separate file so the
 # main test entrypoint stays readable.
@@ -25,6 +29,7 @@ include("record_replay_engine.jl")
 
 # AircraftSpec scaffolding (Phase 0) checks.
 include("aircraft_spec_iris_parity.jl")
+include("aircraft_spec_toml.jl")
 
 # Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
 include("multirotor_motor_map.jl")
@@ -815,9 +820,9 @@ end
 end
 
 @testset "Propulsion owns rotor_dir yaw-torque sign" begin
-    env = Sim.iris_default_env_replay()
-    vehicle = Sim.iris_default_vehicle()
-    battery = Sim.iris_default_battery()
+    env = iris_env_replay_for_tests()
+    vehicle = iris_vehicle_for_tests()
+    battery = iris_battery_for_tests()
 
     dynfun = Sim.PlantModels.CoupledMultirotorModel(
         vehicle.model,
@@ -1148,7 +1153,7 @@ end
 
 
 @testset "PlantModels: bus voltage solve (linear + saturated regimes)" begin
-    pset = Sim.Propulsion.default_iris_quadrotor_set()
+    pset = Sim.Propulsion.default_multirotor_set()
     p = pset  # QuadRotorSet{4}
     ω = SVector{4,Float64}(400.0, 400.0, 400.0, 400.0)
 
@@ -1184,7 +1189,7 @@ end
     end
 
     # Current-limited regime (force I_lin >= Imax but avoid V_min clamp).
-    p_sat = Sim.Propulsion.default_iris_quadrotor_set()
+    p_sat = Sim.Propulsion.default_multirotor_set()
     units_sat = [
         Sim.Propulsion.MotorPropUnit(
             esc = unit.esc,

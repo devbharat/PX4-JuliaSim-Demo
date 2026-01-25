@@ -1,0 +1,10 @@
+schema_version = 1
+
+[px4.uorb]
+[[px4.uorb.subs]]
+key = "actuator_motors"
+type = "ActuatorMotorsMsg"
+
+[[px4.uorb.subs]]
+key = "actuator_servos"
+type = "ActuatorServosMsg"

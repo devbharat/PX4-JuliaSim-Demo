@@ -45,7 +45,7 @@ Base.@kwdef struct PX4StepContext
     cmd::AutopilotCommand
     landed::Bool
     battery::BatteryStatus
-    # Phase 5.3: full battery vector (deterministic order).
+    # Full battery vector (deterministic order).
     batteries::Vector{BatteryStatus} = BatteryStatus[]
 
     # Derived values used across multiple topics
@@ -274,7 +274,7 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
                 ),
             )
         else
-            # Phase 5.3: publish one battery_status per configured publisher instance.
+            # Publish one battery_status per configured publisher instance.
             bidx0s = Int[]
             for (j, (_pub_any, inst)) in enumerate(entries)
                 inst >= -1 ||

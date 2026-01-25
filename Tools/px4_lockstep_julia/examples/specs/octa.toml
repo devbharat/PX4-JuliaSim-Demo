@@ -1,0 +1,137 @@
+schema_version = 1
+# EXPERIMENTAL / DEMO ONLY: this spec is untested and not flight-validated.
+extends = ["../../src/Workflows/assets/aircraft/minimal_uorb.toml"]
+
+[aircraft]
+name = "octa"
+seed = 2
+
+[home]
+lat_deg = 47.397742
+lon_deg = 8.545594
+alt_msl_m = 488.0
+
+[px4]
+# For now this is primarily a plant/framework regression target; PX4-side
+# allocator/mixer config is still required to fly it.
+edge_trigger = false
+derive_ca_params = true
+
+[px4.lockstep]
+dataman_use_ram = 1
+enable_commander = 0
+commander_rate_hz = 100
+navigator_rate_hz = 20
+mc_pos_control_rate_hz = 100
+mc_att_control_rate_hz = 250
+mc_rate_control_rate_hz = 250
+enable_control_allocator = 1
+control_allocator_rate_hz = 250
+
+# Keep the uORB boundary minimal for non-Iris experiments.
+
+[timeline]
+t_end_s = 10.0
+dt_autopilot_s = 0.004
+dt_wind_s = 0.001
+dt_log_s = 0.01
+
+[plant]
+integrator = "RK45"
+contact = "flat_ground"
+
+[airframe]
+kind = "multirotor"
+mass_kg = 2.0
+inertia_diag_kgm2 = [0.05, 0.05, 0.10]
+linear_drag = 0.05
+angular_damping = [0.02, 0.02, 0.01]
+
+# Simple symmetric octa layout (radius 0.25m).
+rotor_pos_body_m = [
+  [ 0.25,  0.00, 0.0],
+  [ 0.18,  0.18, 0.0],
+  [ 0.00,  0.25, 0.0],
+  [-0.18,  0.18, 0.0],
+  [-0.25,  0.00, 0.0],
+  [-0.18, -0.18, 0.0],
+  [ 0.00, -0.25, 0.0],
+  [ 0.18, -0.18, 0.0],
+]
+
+rotor_axis_body_m = [
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+]
+
+[airframe.propulsion]
+kind = "multirotor_default"
+km_m = 0.05
+
+[actuation]
+
+[[actuation.motors]]
+id = "motor1"
+channel = 1
+
+[[actuation.motors]]
+id = "motor2"
+channel = 2
+
+[[actuation.motors]]
+id = "motor3"
+channel = 3
+
+[[actuation.motors]]
+id = "motor4"
+channel = 4
+
+[[actuation.motors]]
+id = "motor5"
+channel = 5
+
+[[actuation.motors]]
+id = "motor6"
+channel = 6
+
+[[actuation.motors]]
+id = "motor7"
+channel = 7
+
+[[actuation.motors]]
+id = "motor8"
+channel = 8
+
+[actuation.motor_actuators]
+kind = "direct"
+
+[power]
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+capacity_ah = 7.0
+soc0 = 1.0
+ocv_soc = [0.0, 1.0]
+ocv_v = [10.8, 12.6]
+r0 = 0.020
+r1 = 0.010
+c1 = 2000.0
+v1_0 = 0.0
+min_voltage_v = 9.9
+
+[[power.buses]]
+id = "main"
+battery_ids = ["bat1"]
+motor_ids = ["motor1", "motor2", "motor3", "motor4", "motor5", "motor6", "motor7", "motor8"]
+servo_ids = []
+avionics_load_w = 15.0
+
+[run]
+mode = "live"

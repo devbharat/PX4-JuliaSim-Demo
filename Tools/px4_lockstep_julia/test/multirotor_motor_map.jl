@@ -5,7 +5,7 @@ using PX4Lockstep
 const Sim = PX4Lockstep.Sim
 
 @testset "Phase 2: MotorMap maps PX4 channels -> physical propulsors" begin
-    env = Sim.iris_default_env_replay()
+    env = iris_env_replay_for_tests()
 
     # Use a small 4-motor multirotor and inspect the instantaneous rotor acceleration.
     N = 4
@@ -31,7 +31,7 @@ const Sim = PX4Lockstep.Sim
     servo_act = Sim.Vehicles.DirectActuators()
 
     hover_T = params.mass * 9.80665 / Float64(N)
-    prop = Sim.Propulsion.default_iris_quadrotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
+    prop = Sim.Propulsion.default_multirotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
     battery = Sim.Powertrain.IdealBattery()
 
     # Swap channels: physical motor #1 reads channel 2, physical motor #2 reads channel 1.
@@ -80,7 +80,7 @@ end
 
 
 @testset "Phase 2: Generic multirotor N=8 runs without PX4" begin
-    env = Sim.iris_default_env_replay()
+    env = iris_env_replay_for_tests()
 
     N = 8
     r = 0.25
@@ -106,7 +106,7 @@ end
     servo_act = Sim.Vehicles.DirectActuators()
 
     hover_T = params.mass * 9.80665 / Float64(N)
-    prop = Sim.Propulsion.default_iris_quadrotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
+    prop = Sim.Propulsion.default_multirotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
     battery = Sim.Powertrain.IdealBattery()
 
     motor_map = Sim.Vehicles.MotorMap{N}(SVector{N,Int}(ntuple(i -> i, N)))
@@ -130,7 +130,7 @@ end
         battery,
     )
 
-    timeline = Sim.iris_timeline(
+    timeline = iris_timeline_for_tests(
         t_end_s = 0.2,
         dt_autopilot_s = 0.01,
         dt_wind_s = 0.01,

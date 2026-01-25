@@ -1,0 +1,12 @@
+schema_version = 1
+extends = ["../../src/Workflows/assets/aircraft/iris_default.toml"]
+
+[px4]
+libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib"
+mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
+
+[timeline]
+t_end_s = 70.0
+
+[run]
+log_csv = "../../../sim_log.csv"

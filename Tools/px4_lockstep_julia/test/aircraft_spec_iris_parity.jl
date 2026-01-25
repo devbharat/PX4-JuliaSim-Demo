@@ -9,18 +9,18 @@ using Test
     dt_wind = 0.02
     dt_log = 0.02
 
-    home = Sim.iris_default_home()
-    contact = Sim.iris_default_contact()
+    home = iris_home_for_tests()
+    contact = iris_contact_for_tests()
 
-    env = Sim.iris_default_env_replay(home = home)
-    vehicle = Sim.iris_default_vehicle()
-    battery = Sim.iris_default_battery()
-    dynfun = Sim.iris_dynfun(env, vehicle, battery; contact = contact)
+    env = iris_env_replay_for_tests(home = home)
+    vehicle = iris_vehicle_for_tests()
+    battery = iris_battery_for_tests()
+    dynfun = iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
 
-    scenario_obj = Sim.iris_default_scenario()
+    scenario_obj = iris_scenario_for_tests()
     scenario_src = Sim.Sources.LiveScenarioSource(scenario_obj)
 
-    timeline = Sim.iris_timeline(
+    timeline = iris_timeline_for_tests(
         t_end_s = t_end_s,
         dt_autopilot_s = dt_ap,
         dt_wind_s = dt_wind,
@@ -49,7 +49,7 @@ using Test
         battery,
     )
 
-    integ = Sim.iris_integrator(:RK4)
+    integ = integrator_from_symbol(:RK4)
 
     rec_sink = Sim.Recording.InMemoryRecorder()
     _ = Sim.simulate(
@@ -74,14 +74,26 @@ using Test
     )
 
     # --- Replay via the new spec builder ---
-    spec = Sim.Aircraft.iris_spec(
-        t_end_s = t_end_s,
-        dt_autopilot_s = dt_ap,
-        dt_wind_s = dt_wind,
-        dt_log_s = dt_log,
-        integrator = :RK4,
+    base_spec = iris_spec_for_tests()
+    spec = Sim.Aircraft.AircraftSpec(
+        name = base_spec.name,
+        px4 = base_spec.px4,
+        timeline = Sim.Aircraft.TimelineSpec(
+            t_end_s = t_end_s,
+            dt_autopilot_s = dt_ap,
+            dt_wind_s = dt_wind,
+            dt_log_s = dt_log,
+            dt_phys_s = nothing,
+        ),
+        plant = Sim.Aircraft.PlantSpec(integrator = :RK4, contact = contact),
+        airframe = base_spec.airframe,
+        actuation = base_spec.actuation,
+        power = base_spec.power,
+        sensors = base_spec.sensors,
+        seed = base_spec.seed,
         home = home,
-        contact = contact,
+        telemetry = base_spec.telemetry,
+        log_sinks = base_spec.log_sinks,
     )
 
     eng_spec = Sim.Aircraft.build_engine(spec; mode = :replay, recording_in = rec)
@@ -100,10 +112,10 @@ using Test
     wind_replay = Sim.Sources.ReplayWindSource(traces.wind_ned)
     autopilot_replay = Sim.Sources.ReplayAutopilotSource(traces.cmd)
 
-    env_replay = Sim.iris_default_env_replay(home = home)
-    vehicle_replay = Sim.iris_default_vehicle(; x0 = rec.plant0.rb)
-    battery_replay = Sim.iris_default_battery()
-    dynfun_replay = Sim.iris_dynfun(env_replay, vehicle_replay, battery_replay; contact = contact)
+    env_replay = iris_env_replay_for_tests(home = home)
+    vehicle_replay = iris_vehicle_for_tests(; x0 = rec.plant0.rb)
+    battery_replay = iris_battery_for_tests()
+    dynfun_replay = iris_dynfun_for_tests(env_replay, vehicle_replay, battery_replay; contact = contact)
 
     eng_manual = Sim.simulate(
         mode = :replay,

@@ -1,0 +1,86 @@
+schema_version = 1
+
+[px4.uorb]
+[[px4.uorb.pubs]]
+key = "battery_status"
+type = "BatteryStatusMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_attitude"
+type = "VehicleAttitudeMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_local_position"
+type = "VehicleLocalPositionMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_global_position"
+type = "VehicleGlobalPositionMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_angular_velocity"
+type = "VehicleAngularVelocityMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_land_detected"
+type = "VehicleLandDetectedMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_status"
+type = "VehicleStatusMsg"
+
+[[px4.uorb.pubs]]
+key = "vehicle_control_mode"
+type = "VehicleControlModeMsg"
+
+[[px4.uorb.pubs]]
+key = "actuator_armed"
+type = "ActuatorArmedMsg"
+
+[[px4.uorb.pubs]]
+key = "home_position"
+type = "HomePositionMsg"
+
+[[px4.uorb.pubs]]
+key = "geofence_status"
+type = "GeofenceStatusMsg"
+
+[[px4.uorb.subs]]
+key = "torque_sp"
+type = "VehicleTorqueSetpointMsg"
+
+[[px4.uorb.subs]]
+key = "thrust_sp"
+type = "VehicleThrustSetpointMsg"
+
+[[px4.uorb.subs]]
+key = "actuator_motors"
+type = "ActuatorMotorsMsg"
+
+[[px4.uorb.subs]]
+key = "actuator_servos"
+type = "ActuatorServosMsg"
+
+[[px4.uorb.subs]]
+key = "attitude_sp"
+type = "VehicleAttitudeSetpointMsg"
+
+[[px4.uorb.subs]]
+key = "rates_sp"
+type = "VehicleRatesSetpointMsg"
+
+[[px4.uorb.subs]]
+key = "mission_result"
+type = "MissionResultMsg"
+
+[[px4.uorb.subs]]
+key = "vehicle_status"
+type = "VehicleStatusMsg"
+
+[[px4.uorb.subs]]
+key = "battery_status"
+type = "BatteryStatusMsg"
+
+[[px4.uorb.subs]]
+key = "trajectory_setpoint"
+type = "TrajectorySetpointMsg"

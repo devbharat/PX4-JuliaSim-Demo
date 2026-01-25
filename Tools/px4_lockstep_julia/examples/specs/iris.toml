@@ -1,0 +1,133 @@
+schema_version = 1
+extends = ["../../src/Workflows/assets/aircraft/iris_uorb.toml"]
+
+[aircraft]
+name = "iris"
+seed = 1
+
+[home]
+lat_deg = 47.397742
+lon_deg = 8.545594
+alt_msl_m = 488.0
+
+[px4]
+# Path to a QGC WPL mission file. This repo ships a small example.
+mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
+
+# Path to the lockstep shared library (required for live/record runs).
+libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib"
+
+edge_trigger = false
+derive_ca_params = true
+
+[px4.lockstep]
+dataman_use_ram = 1
+enable_commander = 0
+commander_rate_hz = 100
+navigator_rate_hz = 20
+mc_pos_control_rate_hz = 100
+mc_att_control_rate_hz = 250
+mc_rate_control_rate_hz = 250
+enable_control_allocator = 1
+control_allocator_rate_hz = 250
+
+
+[timeline]
+t_end_s = 20.0
+dt_autopilot_s = 0.004
+dt_wind_s = 0.001
+dt_log_s = 0.01
+
+[plant]
+integrator = "RK45"
+contact = "flat_ground"
+
+[airframe]
+kind = "multirotor"
+mass_kg = 1.5
+inertia_diag_kgm2 = [0.029125, 0.029125, 0.055225]
+
+rotor_pos_body_m = [
+  [ 0.1515,  0.2450, 0.0],
+  [-0.1515, -0.1875, 0.0],
+  [ 0.1515, -0.2450, 0.0],
+  [-0.1515,  0.1875, 0.0],
+]
+
+# Body axes are FRD; thrust force is applied as F_i = -T_i * axis_b[i].
+rotor_axis_body_m = [
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+]
+
+linear_drag = 0.05
+angular_damping = [0.02, 0.02, 0.01]
+
+[airframe.x0]
+pos_ned = [0.0, 0.0, 0.0]
+vel_ned = [0.0, 0.0, 0.0]
+q_bn = [1.0, 0.0, 0.0, 0.0]
+omega_body = [0.0, 0.0, 0.0]
+
+[airframe.propulsion]
+kind = "multirotor_default"
+km_m = 0.05
+V_nom = 12.0
+rho_nom = 1.225
+rotor_radius_m = 0.127
+inflow_kT = 8.0
+inflow_kQ = 8.0
+
+[actuation]
+
+[[actuation.motors]]
+id = "motor1"
+channel = 1
+
+[[actuation.motors]]
+id = "motor2"
+channel = 2
+
+[[actuation.motors]]
+id = "motor3"
+channel = 3
+
+[[actuation.motors]]
+id = "motor4"
+channel = 4
+
+[actuation.motor_actuators]
+kind = "direct"
+
+[actuation.servo_actuators]
+kind = "direct"
+
+[power]
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+capacity_ah = 5.0
+soc0 = 1.0
+ocv_soc = [0.0, 1.0]
+ocv_v = [10.8, 12.6]
+r0 = 0.020
+r1 = 0.010
+c1 = 2000.0
+v1_0 = 0.0
+min_voltage_v = 9.9
+low_thr = 0.15
+crit_thr = 0.10
+emerg_thr = 0.05
+
+[[power.buses]]
+id = "main"
+battery_ids = ["bat1"]
+motor_ids = ["motor1", "motor2", "motor3", "motor4"]
+servo_ids = []
+avionics_load_w = 0.0
+
+[run]
+mode = "live"

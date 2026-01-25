@@ -8,6 +8,7 @@
 4. **Public API entrypoints:** [`reference/api.md`](reference/api.md)
 
 If you specifically care about replay infrastructure: [`notes/record-replay.md`](notes/record-replay.md).
+If you want the TOML schema: [`aircraft_spec.md`](aircraft_spec.md).
 
 ## Reference
 

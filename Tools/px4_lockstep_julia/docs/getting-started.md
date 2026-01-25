@@ -28,7 +28,7 @@ The helper scripts expect to find the lockstep library at:
 build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.(so|dylib)
 ```
 
-If your build output is elsewhere, set `PX4_LOCKSTEP_LIB` explicitly.
+If your build output is elsewhere, edit the example specs and update `px4.libpath`.
 
 ## Instantiate the Julia environment
 
@@ -43,10 +43,11 @@ julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 The easiest path is the run helper (it also regenerates `src/UORBGenerated.jl` when uORB headers change):
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
-This produces `sim_log.csv` in your current working directory.
+This produces `sim_log.csv` at the path configured in the spec (see `examples/specs/iris_lockstep.toml`).
+On Linux, update the `.dylib` extension in the example specs to `.so`.
 
 ## Sysimage (optional, opt-in)
 
@@ -54,7 +55,7 @@ To speed up Julia startup, the helper scripts can build and use a sysimage.
 Enable it explicitly:
 
 ```bash
-PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+PX4_LOCKSTEP_SYSIMAGE=1 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
 The first run will be slower while the sysimage is built (often around a minute);
@@ -67,26 +68,23 @@ not for rapid edit‑run iteration during development.
 
 ## Configuration notes
 
-The helper scripts assume the **standard PX4 tree layout** and do not accept path overrides.
-If you need custom paths (e.g., a different `libpx4_lockstep` location), run Julia directly
-and set `PX4_LOCKSTEP_LIB` / `PX4_LOCKSTEP_MISSION` yourself (see below).
+The helper scripts assume the **standard PX4 tree layout**. You can pass a custom
+spec path to override defaults; for custom library or mission paths, create a spec
+that extends the built-in defaults under `src/Workflows/assets/aircraft/` and set
+`px4.libpath` / `px4.mission_path` there.
 
 ## Troubleshooting
 
 ### “PX4 lockstep library not found”
 
-If you are running **without** the helper scripts, set `PX4_LOCKSTEP_LIB` to the built shared library:
-
-```bash
-export PX4_LOCKSTEP_LIB=/absolute/path/to/libpx4_lockstep.so
-```
+If you are running **without** the helper scripts, set `px4.libpath` in your spec.
 
 ### uORB struct mismatch errors
 
 If PX4’s uORB headers changed, regenerate `src/UORBGenerated.jl`:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 1
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
 The run scripts check timestamps and regenerate automatically when needed.

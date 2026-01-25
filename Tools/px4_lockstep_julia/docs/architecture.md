@@ -142,9 +142,10 @@ file when headers are newer:
 
 ### Interface configuration
 
-The uORB boundary is now configured explicitly via `PX4UORBInterfaceConfig` presets
-(`iris_state_injection_interface`, `minimal_actuator_only_interface`). This keeps the
-published/subscribed topics reproducible and removes reliance on environment flags.
+The uORB boundary is configured in TOML via `[px4.uorb]` with explicit `pubs` and
+`subs` (often via `extends` using shared files like
+`src/Workflows/assets/aircraft/iris_uorb.toml`). This keeps the published/subscribed topics
+reproducible and removes reliance on environment flags.
 
 ## Data Ownership and Frames
 

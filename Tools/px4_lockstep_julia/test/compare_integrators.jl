@@ -7,7 +7,7 @@ const RT = SIM.Runtime
 const INTEG = SIM.Integrators
 const SRC = SIM.Sources
 const REC = SIM.Recording
-const WORK = SIM.Workflows
+const WORK = PX4Lockstep.Workflows
 
 """A tiny deterministic rigid-body model: X-acceleration equals motor[1] command."""
 struct CmdAccelX end

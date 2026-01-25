@@ -1,4 +1,4 @@
-"""Aircraft specs (Phase 1).
+"""Aircraft specs.
 
 Goal
 ----
@@ -8,14 +8,13 @@ The spec layer exists to separate:
 from
 * **aircraft composition** (instances of components + their connections)
 
-Phase 0 introduced the minimum scaffolding so the existing Iris workflow could
-route through a stable `build_engine(spec; ...)` entrypoint.
-
-Phase 1 makes the composition intent concrete by adding:
+The initial scaffolding introduced a stable `build_engine(spec; ...)` entrypoint.
+The spec layer now makes the composition intent concrete by adding:
 * explicit **component instances** (motors, batteries, sensors)
 * explicit **connections** (power buses wiring motors to batteries, etc.)
 
-Behavior is still Iris-equivalent.
+The simulation core remains aircraft-agnostic; aircraft-specific defaults live in
+`PX4Lockstep.Workflows`.
 """
 
 using StaticArrays
@@ -29,17 +28,12 @@ using ..RigidBody
 
 import ...LockstepConfig
 
-# Parent module handle (PX4Lockstep.Sim). This is used to call helper builders
-# (legacy Iris defaults) without hard dependencies on include order.
-const _SIM = parentmodule(@__MODULE__)
-
-
 # -----------------------
 # Instance identifier tags
 # -----------------------
 
-# Phase 1 uses `Symbol` IDs for zero-friction authoring. Later phases may wrap
-# these in small newtypes for better error messages and type safety.
+# Use `Symbol` IDs for low-friction authoring. These may be wrapped in small
+# newtypes later for clearer errors and type safety.
 const MotorId = Symbol
 const ServoId = Symbol
 const BatteryId = Symbol
@@ -86,14 +80,14 @@ Base.@kwdef struct ServoSpec
     channel::Int
 end
 
-"""Propulsion model parameters (Iris-like default motor+prop set).
+"""Propulsion model parameters (simple default motor+prop set).
 
-Phase 1 keeps this intentionally small: the builder uses
-`Propulsion.default_iris_quadrotor_set(...)` with a hover-thrust derived from
+Kept intentionally small: the builder uses
+`Propulsion.default_multirotor_set(...)` with a hover-thrust derived from
 airframe mass and motor count.
 """
 Base.@kwdef struct PropulsionSpec
-    kind::Symbol = :iris_like
+    kind::Symbol = :multirotor_default
     km_m::Float64 = 0.05
     V_nom::Float64 = 12.0
     rho_nom::Float64 = 1.225
@@ -104,21 +98,13 @@ Base.@kwdef struct PropulsionSpec
     rotor_dir::Union{Nothing,Vector{Float64}} = nothing
 end
 
-"""Airframe spec.
-
-Phase 1 supports the Iris quadrotor rigid-body model.
-"""
+"""Airframe spec (multirotor only)."""
 Base.@kwdef struct AirframeSpec
-    kind::Symbol = :iris_quadrotor
+    kind::Symbol = :multirotor
 
-    mass_kg::Float64 = 1.5
-    inertia_diag_kgm2::Vec3 = vec3(0.029125, 0.029125, 0.055225)
-    rotor_pos_body_m::Vector{Vec3} = Vec3[
-        vec3(0.1515, 0.2450, 0.0),
-        vec3(-0.1515, -0.1875, 0.0),
-        vec3(0.1515, -0.2450, 0.0),
-        vec3(-0.1515, 0.1875, 0.0),
-    ]
+    mass_kg::Float64 = 1.0
+    inertia_diag_kgm2::Vec3 = vec3(1.0, 1.0, 1.0)
+    rotor_pos_body_m::Vector{Vec3} = Vec3[]
 
     """Per-rotor axis vectors in body frame (unit).
 
@@ -133,8 +119,8 @@ Base.@kwdef struct AirframeSpec
     use `(0,0,1)` for all rotors (thrust along **-body Z**).
     """
     rotor_axis_body_m::Vector{Vec3} = Vec3[]
-    linear_drag::Float64 = 0.05
-    angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
+    linear_drag::Float64 = 0.0
+    angular_damping::Vec3 = vec3(0.0, 0.0, 0.0)
 
     """Initial rigid-body state for live/record runs."""
     x0::RigidBodyState = RigidBodyState()
@@ -155,7 +141,7 @@ Base.@kwdef struct ActuationSpec
     servo_actuators::AbstractActuatorModelSpec = DirectActuatorSpec()
 end
 
-"""Battery model spec (single-battery Phase 1)."""
+"""Battery model spec (one entry per battery)."""
 Base.@kwdef struct BatterySpec
     id::BatteryId = :bat1
     model::Symbol = :thevenin
@@ -241,15 +227,14 @@ Base.@kwdef struct PX4Spec
     """Path to the PX4 mission file."""
     mission_path::Union{Nothing,String} = nothing
 
-    """Path to `libpx4_lockstep` (or `nothing` to use `ENV[PX4_LOCKSTEP_LIB]` / auto-find)."""
+    """Path to `libpx4_lockstep`."""
     libpath::Union{Nothing,String} = nothing
 
     """PX4 lockstep configuration (rates + feature toggles)."""
-    lockstep_config::LockstepConfig = _SIM.iris_default_lockstep_config()
+    lockstep_config::LockstepConfig = LockstepConfig()
 
-    """uORB pub/sub contract used by the PX4 bridge."""
-    uorb_cfg::Autopilots.PX4UORBInterfaceConfig =
-        Autopilots.iris_state_injection_interface()
+    """uORB pub/sub contract used by the PX4 bridge (required for live/record)."""
+    uorb_cfg::Union{Nothing,Autopilots.PX4UORBInterfaceConfig} = nothing
 
     """Optional PX4 parameter overrides applied at init-time."""
     params::Vector{PX4ParamSpec} = PX4ParamSpec[]
@@ -263,7 +248,7 @@ end
 
 Base.@kwdef struct TimelineSpec
     """Simulation end time (seconds)."""
-    t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0"))
+    t_end_s::Float64 = 20.0
 
     """Autopilot cadence (seconds)."""
     dt_autopilot_s::Float64 = 0.004
@@ -283,12 +268,12 @@ Base.@kwdef struct PlantSpec
     integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45
 
     """Contact model used by the plant dynamics."""
-    contact::Contacts.AbstractContactModel = _SIM.iris_default_contact()
+    contact::Contacts.AbstractContactModel = Contacts.FlatGroundContact()
 end
 
 Base.@kwdef struct AircraftSpec
-    """Spec name / preset tag (Phase 1 supports only :iris)."""
-    name::Symbol = :iris
+    """Spec name tag (freeform identifier)."""
+    name::Symbol = :aircraft
 
     px4::PX4Spec = PX4Spec()
     timeline::TimelineSpec = TimelineSpec()
@@ -303,7 +288,7 @@ Base.@kwdef struct AircraftSpec
     seed::Int = 1
 
     """Home / local origin used for PX4 and NED conversion."""
-    home::Autopilots.HomeLocation = _SIM.iris_default_home()
+    home::Autopilots.HomeLocation = Autopilots.HomeLocation()
 
     """Optional telemetry sink (no-op by default)."""
     telemetry::Runtime.AbstractTelemetrySink = Runtime.NullTelemetry()
@@ -314,131 +299,15 @@ end
 
 
 # -----------------------
-# Iris convenience preset
+# Generic multirotor presets (internal)
 # -----------------------
 
-"""Return an Iris aircraft spec with the same defaults as `simulate_iris_mission`.
+"""The canonical generic multirotor defaults live in a TOML asset.
 
-This is a thin data wrapper: it does not run any simulation.
+See `default_multirotor_spec()` for the internal TOML-backed defaults.
 """
-function iris_spec(;
-    mission_path::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_MISSION", nothing),
-    libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
-    lockstep_config = _SIM.iris_default_lockstep_config(),
-    uorb_cfg::Autopilots.PX4UORBInterfaceConfig = Autopilots.iris_state_injection_interface(),
-    t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
-    dt_autopilot_s::Float64 = 0.004,
-    dt_wind_s::Float64 = 0.001,
-    dt_log_s::Float64 = 0.01,
-    dt_phys_s::Union{Nothing,Float64} = nothing,
-    seed::Integer = 1,
-    integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45,
-    home = _SIM.iris_default_home(),
-    contact = _SIM.iris_default_contact(),
-    telemetry = Runtime.NullTelemetry(),
-    log_sinks = nothing,
-)
-    px4 = PX4Spec(
-        mission_path = mission_path === nothing ? nothing : String(mission_path),
-        libpath = libpath === nothing ? nothing : String(libpath),
-        lockstep_config = lockstep_config,
-        uorb_cfg = uorb_cfg,
-        edge_trigger = false,
-    )
 
-    timeline = TimelineSpec(
-        t_end_s = t_end_s,
-        dt_autopilot_s = dt_autopilot_s,
-        dt_wind_s = dt_wind_s,
-        dt_log_s = dt_log_s,
-        dt_phys_s = dt_phys_s,
-    )
-
-    plant = PlantSpec(integrator = integrator, contact = contact)
-
-    # --- Iris component instances ---
-    motors = MotorSpec[
-        MotorSpec(id = :motor1, channel = 1),
-        MotorSpec(id = :motor2, channel = 2),
-        MotorSpec(id = :motor3, channel = 3),
-        MotorSpec(id = :motor4, channel = 4),
-    ]
-
-    actuation = ActuationSpec(
-        motors = motors,
-        servos = ServoSpec[],
-        motor_actuators = DirectActuatorSpec(),
-        servo_actuators = DirectActuatorSpec(),
-    )
-
-    batteries = BatterySpec[BatterySpec(
-        id = :bat1,
-        model = :thevenin,
-        capacity_ah = 5.0,
-        soc0 = 1.0,
-        ocv_soc = [0.0, 1.0],
-        ocv_v = [10.8, 12.6],
-        r0 = 0.020,
-        r1 = 0.010,
-        c1 = 2000.0,
-        v1_0 = 0.0,
-        min_voltage_v = 9.9,
-    ),]
-
-    buses = PowerBusSpec[PowerBusSpec(
-        id = :main,
-        battery_ids = BatteryId[:bat1],
-        motor_ids = MotorId[:motor1, :motor2, :motor3, :motor4],
-        servo_ids = ServoId[],
-        avionics_load_w = 0.0,
-    ),]
-
-    power = PowerSpec(batteries = batteries, buses = buses)
-
-    airframe = AirframeSpec(
-        kind = :iris_quadrotor,
-        mass_kg = 1.5,
-        inertia_diag_kgm2 = vec3(0.029125, 0.029125, 0.055225),
-        rotor_pos_body_m = Vec3[
-            vec3(0.1515, 0.2450, 0.0),
-            vec3(-0.1515, -0.1875, 0.0),
-            vec3(0.1515, -0.2450, 0.0),
-            vec3(-0.1515, 0.1875, 0.0),
-        ],
-        rotor_axis_body_m = Vec3[
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-        ],
-        linear_drag = 0.05,
-        angular_damping = vec3(0.02, 0.02, 0.01),
-        x0 = RigidBodyState(),
-        propulsion = PropulsionSpec(kind = :iris_like, km_m = 0.05),
-    )
-
-    return AircraftSpec(
-        name = :iris,
-        px4 = px4,
-        timeline = timeline,
-        plant = plant,
-        airframe = airframe,
-        actuation = actuation,
-        power = power,
-        sensors = AbstractSensorSpec[],
-        seed = Int(seed),
-        home = home,
-        telemetry = telemetry,
-        log_sinks = log_sinks,
-    )
-end
-
-
-# -----------------------
-# Generic multirotor presets (Phase 2)
-# -----------------------
-
-"""Return a minimal octacopter aircraft spec (Phase 2).
+"""Return a minimal octacopter aircraft spec.
 
 This is primarily intended as a *composition / plant* regression target:
 - `airframe.kind=:multirotor`
@@ -446,13 +315,14 @@ This is primarily intended as a *composition / plant* regression target:
 - rotor positions on a circle (radius configurable)
 
 Note: Running this against PX4 will require PX4-side configuration (allocator, mixer,
-etc.). Phase 2 focuses on the Julia plant/framework side.
+etc.) and an explicit `uorb_cfg`. This spec is **experimental / demo-only** and
+untested against PX4. This remains a Julia-side plant/framework regression target.
 """
 function octa_spec(;
     mission_path::Union{Nothing,AbstractString} = nothing,
-    libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
-    lockstep_config = _SIM.iris_default_lockstep_config(),
-    uorb_cfg::Autopilots.PX4UORBInterfaceConfig = Autopilots.iris_state_injection_interface(),
+    libpath::Union{Nothing,AbstractString} = nothing,
+    lockstep_config = LockstepConfig(),
+    uorb_cfg::Union{Nothing,Autopilots.PX4UORBInterfaceConfig} = nothing,
     t_end_s::Float64 = 20.0,
     dt_autopilot_s::Float64 = 0.004,
     dt_wind_s::Float64 = 0.001,
@@ -460,8 +330,8 @@ function octa_spec(;
     dt_phys_s::Union{Nothing,Float64} = nothing,
     seed::Integer = 1,
     integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45,
-    home = _SIM.iris_default_home(),
-    contact = _SIM.iris_default_contact(),
+    home = Autopilots.HomeLocation(),
+    contact = Contacts.FlatGroundContact(),
     telemetry = Runtime.NullTelemetry(),
     log_sinks = nothing,
     # Geometry / mass properties

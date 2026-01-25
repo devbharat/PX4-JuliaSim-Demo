@@ -1,3 +1,16 @@
+using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
+using PX4Lockstep: create_publisher, create_subscriber, publish!
+using PX4Lockstep: uorb_check, uorb_copy, uorb_unsubscribe!
+using PX4Lockstep: BatteryStatusMsg, VehicleAttitudeMsg, VehicleLocalPositionMsg
+using PX4Lockstep:
+    VehicleGlobalPositionMsg, VehicleAngularVelocityMsg, VehicleLandDetectedMsg
+using PX4Lockstep: VehicleStatusMsg, VehicleControlModeMsg, ActuatorArmedMsg
+using PX4Lockstep: HomePositionMsg, GeofenceStatusMsg
+using PX4Lockstep: VehicleTorqueSetpointMsg, VehicleThrustSetpointMsg
+using PX4Lockstep: ActuatorMotorsMsg, ActuatorServosMsg
+using PX4Lockstep: VehicleAttitudeSetpointMsg, VehicleRatesSetpointMsg
+using PX4Lockstep: MissionResultMsg, TrajectorySetpointMsg
+
 const ZERO_VEC3_F32 = (0.0f0, 0.0f0, 0.0f0)
 const ZERO_VEC2_F32 = (0.0f0, 0.0f0)
 const ZERO_Q_F32 = (0.0f0, 0.0f0, 0.0f0, 0.0f0)
@@ -73,57 +86,6 @@ Base.@kwdef struct PX4UORBInterfaceConfig
     subs::Vector{UORBSubSpec} = UORBSubSpec[]
 end
 
-"""Default uORB interface for the Iris workflow.
-
-Injects estimated state + a few status topics into PX4, and subscribes to actuator and
-setpoint outputs.
-
-This mirrors the previous `UORB_INPUT_SPECS` / `UORB_OUTPUT_SPECS` default behavior,
-but is now explicit and reproducible.
-"""
-function iris_state_injection_interface()
-    pubs = UORBPubSpec[
-        UORBPubSpec(key = :battery_status, type = BatteryStatusMsg),
-        UORBPubSpec(key = :vehicle_attitude, type = VehicleAttitudeMsg),
-        UORBPubSpec(key = :vehicle_local_position, type = VehicleLocalPositionMsg),
-        UORBPubSpec(key = :vehicle_global_position, type = VehicleGlobalPositionMsg),
-        UORBPubSpec(key = :vehicle_angular_velocity, type = VehicleAngularVelocityMsg),
-        UORBPubSpec(key = :vehicle_land_detected, type = VehicleLandDetectedMsg),
-        UORBPubSpec(key = :vehicle_status, type = VehicleStatusMsg),
-        UORBPubSpec(key = :vehicle_control_mode, type = VehicleControlModeMsg),
-        UORBPubSpec(key = :actuator_armed, type = ActuatorArmedMsg),
-        UORBPubSpec(key = :home_position, type = HomePositionMsg),
-        UORBPubSpec(key = :geofence_status, type = GeofenceStatusMsg),
-    ]
-
-    subs = UORBSubSpec[
-        UORBSubSpec(key = :torque_sp, type = VehicleTorqueSetpointMsg),
-        UORBSubSpec(key = :thrust_sp, type = VehicleThrustSetpointMsg),
-        UORBSubSpec(key = :actuator_motors, type = ActuatorMotorsMsg),
-        UORBSubSpec(key = :actuator_servos, type = ActuatorServosMsg),
-        UORBSubSpec(key = :attitude_sp, type = VehicleAttitudeSetpointMsg),
-        UORBSubSpec(key = :rates_sp, type = VehicleRatesSetpointMsg),
-        UORBSubSpec(key = :mission_result, type = MissionResultMsg),
-        UORBSubSpec(key = :vehicle_status, type = VehicleStatusMsg),
-        UORBSubSpec(key = :battery_status, type = BatteryStatusMsg),
-        UORBSubSpec(key = :trajectory_setpoint, type = TrajectorySetpointMsg),
-    ]
-
-    return PX4UORBInterfaceConfig(pubs = pubs, subs = subs)
-end
-
-"""Minimal uORB interface used by unit tests or debugging.
-
-This does **not** inject state into PX4, so it is not suitable for live mission runs.
-"""
-function minimal_actuator_only_interface()
-    subs = UORBSubSpec[
-        UORBSubSpec(key = :actuator_motors, type = ActuatorMotorsMsg),
-        UORBSubSpec(key = :actuator_servos, type = ActuatorServosMsg),
-    ]
-    return PX4UORBInterfaceConfig(pubs = UORBPubSpec[], subs = subs)
-end
-
 
 Base.@kwdef mutable struct UORBOutputs
     actuator_controls::NTuple{8,Float32} = ZERO_CONTROLS_8
@@ -148,7 +110,7 @@ end
 mutable struct UORBBridge
     handle::LockstepHandle
 
-    # Phase 5.3: allow multiple uORB instances per logical key.
+    # Allow multiple uORB instances per logical key.
     # Each entry is (handle, instance).
     pubs::Dict{Symbol,Vector{Tuple{UORBPublisher,Int32}}}
     subs::Dict{Symbol,Vector{Tuple{UORBSubscriber,Int32}}}
@@ -186,9 +148,7 @@ function _init_uorb_bridge(handle::LockstepHandle, cfg::PX4UORBInterfaceConfig)
     return UORBBridge(handle, pubs, subs)
 end
 
-# Convenience: build the default Iris interface.
-_init_uorb_bridge(handle::LockstepHandle) =
-    _init_uorb_bridge(handle, iris_state_injection_interface())
+
 
 function _close_uorb_bridge!(bridge::UORBBridge)
     for entries in values(bridge.subs)

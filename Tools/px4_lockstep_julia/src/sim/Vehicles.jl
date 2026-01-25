@@ -11,7 +11,7 @@ The long-term scope includes:
 
 This module starts with a high-signal baseline:
 
-* a rigid-body quadrotor model for the PX4 Iris (suitable for closed-loop testing)
+* a rigid-body multirotor model (suitable for closed-loop testing)
 * clean interfaces so it can be replaced with higher-fidelity models later.
 """
 module Vehicles
@@ -35,7 +35,6 @@ export AbstractVehicleModel,
     VehicleInstance,
     QuadrotorParams,
     GenericMultirotor,
-    IrisQuadrotor,
     map_motors,
     map_servos,
     step_actuators!,
@@ -43,7 +42,7 @@ export AbstractVehicleModel,
     inertia_diag,
     dynamics
 
-"""Propulsor layout geometry (Phase 4).
+"""Propulsor layout geometry.
 
 This is the geometric definition of how propulsors are mounted on the vehicle.
 
@@ -366,44 +365,21 @@ This is intentionally low-fidelity (rigid-body + simple drag + thrust moments) b
 - stable and high-signal for closed-loop PX4 testing
 - allocation-free in the hot path
 
-Phase 2 generalizes the Iris-only model to arbitrary propulsor counts `N`.
+The baseline multirotor model supports arbitrary propulsor counts `N`.
 
 Notes
 -----
-* Phase 4 generalizes thrust direction to arbitrary per-propulsor body-frame axes.
+* Thrust direction is configurable per propulsor via `rotor_axis_body`.
 """
 struct GenericMultirotor{N} <: AbstractVehicleModel
     params::QuadrotorParams{N}
 end
 
-"""Convenience alias: Iris is a 4-propulsor multirotor."""
-struct IrisQuadrotor <: AbstractVehicleModel
-    params::QuadrotorParams{4}
-end
-
 """Vehicle mass (kg)."""
 mass(m::GenericMultirotor) = m.params.mass
-mass(m::IrisQuadrotor) = m.params.mass
 
 """Vehicle inertia diagonal (kg*m^2) in body axes."""
 inertia_diag(m::GenericMultirotor) = m.params.inertia_diag
-inertia_diag(m::IrisQuadrotor) = m.params.inertia_diag
-
-"""Default Iris constructor (kept for backwards compatibility)."""
-function IrisQuadrotor(; params::Union{Nothing,QuadrotorParams{4}} = nothing)
-    if params === nothing
-        rotor_pos = SVector(
-            vec3(0.1515, 0.2450, 0.0),
-            vec3(-0.1515, -0.1875, 0.0),
-            vec3(0.1515, -0.2450, 0.0),
-            vec3(-0.1515, 0.1875, 0.0),
-        )
-        rotor_axis = SVector{4,Vec3}(ntuple(_ -> vec3(0.0, 0.0, 1.0), 4))
-        params =
-            QuadrotorParams{4}(rotor_pos_body = rotor_pos, rotor_axis_body = rotor_axis)
-    end
-    return IrisQuadrotor(params)
-end
 
 @inline function _multirotor_dynamics(
     p::QuadrotorParams{N},
@@ -485,16 +461,5 @@ function dynamics(
     return _multirotor_dynamics(model.params, env, t, x, u, wind_ned)
 end
 
-"""Rigid-body dynamics for Iris (backwards compatible wrapper)."""
-function dynamics(
-    model::IrisQuadrotor,
-    env::EnvironmentModel,
-    t::Float64,
-    x::RigidBodyState,
-    u::RotorOutput{4},
-    wind_ned::Vec3,
-)
-    return _multirotor_dynamics(model.params, env, t, x, u, wind_ned)
-end
 
 end # module Vehicles

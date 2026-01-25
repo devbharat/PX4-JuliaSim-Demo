@@ -41,15 +41,16 @@ julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 3) Run the Iris mission (auto-regenerates `src/UORBGenerated.jl` if needed):
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
-This produces `sim_log.csv` in your current directory.
+This produces `sim_log.csv` at the path configured in the spec (defaults to the PX4 repo root).
+On Linux, update the `.dylib` extension in the example specs to `.so`.
 
 4) Do a **record → replay** integrator sweep:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh 20
+Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh
 ```
 
 Outputs are written under `Tools/px4_lockstep_julia/examples/replay/out/`.
@@ -69,20 +70,26 @@ Key invariants:
 - **Docs home:** `docs/README.md`
 - **Getting started:** `docs/getting-started.md`
 - **Architecture & design:** `docs/architecture.md`
-- **Workflows (Iris, record/replay, verification):** `docs/workflows.md`
+- **Workflows (Iris, record/replay, verification):** `docs/notes/workflows.md`
 - **Frames & sign conventions:** `docs/reference/conventions.md`
 - **Reference API entrypoints:** `docs/reference/api.md`
 
 ## Standalone usage (not in a PX4 tree)
 
-If you check this repo out standalone, set the library path explicitly:
+If you check this repo out standalone, create a small spec that extends the built-in
+Iris defaults and sets `px4.libpath`:
 
 ```bash
-export PX4_LOCKSTEP_LIB=/path/to/libpx4_lockstep.(so|dylib)
-export PX4_LOCKSTEP_MISSION=/path/to/simple_mission.waypoints
+cat > /tmp/iris_spec.toml <<EOF
+schema_version = 1
+extends = ["/path/to/Tools/px4_lockstep_julia/src/Workflows/assets/aircraft/iris_default.toml"]
+
+[px4]
+libpath = "/path/to/libpx4_lockstep.(so|dylib)"
+EOF
 
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
-julia --project=. -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+julia --project=. -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="/tmp/iris_spec.toml", mode=:live)'
 ```
 
 ## Verification problems (integrator correctness)

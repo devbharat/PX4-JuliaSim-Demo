@@ -73,7 +73,7 @@ mutable struct SimBus
 
     env::EnvSample
 
-    # Phase 5.3: multi-battery telemetry (battery 1 is the primary).
+    # Multi-battery telemetry (battery 1 is the primary).
     batteries::Vector{BatteryTelemetry}
 end
 

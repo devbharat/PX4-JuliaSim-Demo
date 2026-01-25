@@ -36,6 +36,7 @@ export LockstepConfig,
 
 # Simulation framework lives in a submodule so the core PX4 lockstep wrapper stays small.
 export Sim
+export Workflows
 
 const LIB_ENV = "PX4_LOCKSTEP_LIB"
 const PX4_LOCKSTEP_ABI_VERSION_V3 = UInt32(3)
@@ -896,5 +897,6 @@ function uorb_unsubscribe!(handle::LockstepHandle, sub::UORBSubscriber)
 end
 
 include("sim/Sim.jl")
+include("Workflows/Workflows.jl")
 
 end

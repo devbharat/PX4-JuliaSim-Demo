@@ -422,7 +422,7 @@ function process_events_at!(sim::Engine)
                 sim.outputs.derived_valid = true
 
                 # Battery telemetry is the most important derived output: PX4 consumes it.
-                # Phase 5.3: prefer the full per-battery vector when available.
+                # Prefer the full per-battery vector when available.
                 if y.battery_statuses !== nothing
                     bats = y.battery_statuses
                     nb = length(bats)
@@ -500,7 +500,7 @@ function process_events_at!(sim::Engine)
                 # even for simplified dynamics models that do not implement plant_outputs(...).
                 record!(sim.recorder, :battery, sim.t_us, sim.bus.batteries[1])
 
-                # Phase 5.3: record the full battery vector as a snapshot so recorded
+                # Record the full battery vector as a snapshot so recorded
                 # values are not aliased through the mutable bus vector.
                 record!(sim.recorder, :batteries, sim.t_us, copy(sim.bus.batteries))
 

@@ -20,19 +20,9 @@ closed-loop system.
 using Dates
 using Printf
 
-using .Logging
-
 # -----------------------------
 # Small utilities
 # -----------------------------
-
-_env_or_nothing(name::AbstractString) = begin
-    v = get(ENV, name, nothing)
-    v === nothing && return nothing
-    s = String(v)
-    isempty(strip(s)) && return nothing
-    return s
-end
 
 function _default_run_name(prefix::AbstractString)
     return prefix * "_" * Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
@@ -43,6 +33,55 @@ function _slugify_label(label::AbstractString)
     s = replace(s, r"[^a-z0-9]+" => "_")
     s = replace(s, r"^_+|_+$" => "")
     return isempty(s) ? "solver" : s
+end
+
+function _make_integrator(name::Symbol)
+    if name === :Euler
+        return Integrators.EulerIntegrator()
+    elseif name === :RK4
+        return Integrators.RK4Integrator()
+    elseif name === :RK23
+        return Integrators.RK23Integrator()
+    elseif name === :RK45
+        return Integrators.RK45Integrator()
+    else
+        error("Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)")
+    end
+end
+
+function _default_reference_integrator()
+    return Integrators.RK45Integrator(
+        rtol_pos = 1e-7,
+        atol_pos = 1e-7,
+        rtol_vel = 1e-7,
+        atol_vel = 1e-7,
+        rtol_ω = 1e-7,
+        atol_ω = 1e-7,
+        atol_att_rad = 1e-7,
+        h_min = 1e-6,
+        h_max = 0.02,
+        plant_error_control = true,
+        atol_rotor = 1e-2,
+        atol_soc = 1e-6,
+        atol_v1 = 1e-3,
+    )
+end
+
+function _with_home(spec::Aircraft.AircraftSpec, home)
+    return Aircraft.AircraftSpec(
+        name = spec.name,
+        px4 = spec.px4,
+        timeline = spec.timeline,
+        plant = spec.plant,
+        airframe = spec.airframe,
+        actuation = spec.actuation,
+        power = spec.power,
+        sensors = spec.sensors,
+        seed = spec.seed,
+        home = home,
+        telemetry = spec.telemetry,
+        log_sinks = spec.log_sinks,
+    )
 end
 
 function _rms(v::AbstractVector{Float64})
@@ -333,64 +372,54 @@ end
 """Compare integrators for an Iris PX4 waypoint mission with clean UX.
 
 This is the primary entrypoint for integrator envelope validation.
+You must provide either `spec_path` or `spec_name`.
 
 Defaults:
-- If `recording_in` is not provided, it records a Tier-0 run using `record_integrator`.
-- If `record_integrator` is `nothing`, it uses a deepcopy of `reference_integrator`.
+- If `recording_in` is not provided, it records a Tier-0 run using the spec's integrator.
 - Then it replays plant-only using the Tier-0 streams and sweeps `solvers`.
 
 You can either:
 - provide `recording_in` to skip recording, OR
-- set `PX4_LOCKSTEP_MISSION` to record a new run.
+- use a spec with `px4.mission_path` + `px4.libpath` to record a new run.
 
 Outputs:
 - prints a summary table
 - optionally writes a summary CSV if `out_csv` is provided
-- optionally writes per-solver CSV logs if `log_dir` is provided (see
-  `IRIS_LOG_DIR` / `IRIS_LOG_PREFIX`)
+- optionally writes per-solver CSV logs if `log_dir` is provided
 """
 function compare_integrators_iris_mission(;
+    spec_path::Union{Nothing,AbstractString} = nothing,
+    spec_name::Union{Nothing,Symbol} = nothing,
     # Recording control
-    recording_in::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_RECORD_IN"),
-    recording_out::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_RECORD_OUT"),
+    recording_in::Union{Nothing,AbstractString} = nothing,
+    recording_out::Union{Nothing,AbstractString} = nothing,
     # Output
-    out_csv::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_OUT_CSV"),
-    out_dir::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_OUT_DIR"),
-    run_name::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_RUN_NAME"),
-    log_dir::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_LOG_DIR"),
-    log_prefix::Union{Nothing,AbstractString} = _env_or_nothing("IRIS_LOG_PREFIX"),
+    out_csv::Union{Nothing,AbstractString} = nothing,
+    out_dir::Union{Nothing,AbstractString} = nothing,
+    run_name::Union{Nothing,AbstractString} = nothing,
+    log_dir::Union{Nothing,AbstractString} = nothing,
+    log_prefix::Union{Nothing,AbstractString} = nothing,
     # Solver sweep
-    solvers = begin
-        s = _env_or_nothing("IRIS_SWEEP_SOLVERS")
-        s === nothing ? [:RK4, :RK23, :RK45] :
-        [Symbol(strip(x)) for x in split(s, ',') if !isempty(strip(x))]
-    end,
-    # Timeline + mission
-    t_end_s::Float64 = parse(Float64, get(ENV, "IRIS_T_END_S", "20.0")),
-    dt_autopilot_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_AUTOPILOT_S", "0.004")),
-    dt_wind_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_WIND_S", "0.001")),
-    dt_log_s::Float64 = parse(Float64, get(ENV, "IRIS_DT_LOG_S", "0.01")),
-    dt_phys_s::Union{Nothing,Float64} = nothing,
-    seed::Integer = parse(Int, get(ENV, "IRIS_SEED", "1")),
-    mission_path::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_MISSION", nothing),
-    libpath::Union{Nothing,AbstractString} = get(ENV, "PX4_LOCKSTEP_LIB", nothing),
-    lockstep_config = iris_default_lockstep_config(),
-    home = iris_default_home(),
-    contact = iris_default_contact(),
+    solvers = [:RK4, :RK23, :RK45],
     # Integrators
-    #
-    # Note: if `record_integrator` is not provided, a fresh copy of
-    # `reference_integrator` is used.
-    #
-    # Why: the Tier0 recording is what generates the replayed `:cmd` trace. If that trace is
-    # generated with a different (for example, lower accuracy) integrator than the reference
-    # replay, the controller command sequence is tuned to a different plant and can produce
-    # open-loop drift that appears as solver error growth.
-    record_integrator::Union{Nothing,Integrators.AbstractIntegrator} = nothing,
-    reference_integrator::Integrators.AbstractIntegrator = iris_reference_integrator(),
+    reference_integrator::Integrators.AbstractIntegrator = _default_reference_integrator(),
     # Behavior
     print_table::Bool = true,
 )
+    if spec_path === nothing && spec_name === nothing
+        error("spec_path or spec_name is required (e.g. spec_name=:iris_default).")
+    end
+    resolved_spec_path =
+        spec_path === nothing ? Workflows.spec_path(spec_name) : String(spec_path)
+    spec = Aircraft.load_spec(resolved_spec_path; strict = true)
+
+    t_end_s = spec.timeline.t_end_s
+    dt_autopilot_s = spec.timeline.dt_autopilot_s
+    dt_wind_s = spec.timeline.dt_wind_s
+    dt_log_s = spec.timeline.dt_log_s
+    mission_path = spec.px4.mission_path
+    libpath = spec.px4.libpath
+
     # Resolve run_name and output paths.
     run_name = run_name === nothing ? _default_run_name("iris") : String(run_name)
     log_prefix = log_prefix === nothing ? run_name : String(log_prefix)
@@ -412,50 +441,21 @@ function compare_integrators_iris_mission(;
     println("  solvers: ", join(string.(solvers), ", "))
     log_dir === nothing || println("  log_dir: $(log_dir)")
 
-    # If recording with PX4 live, ensure the command trace corresponds to the
-    # *same reference plant dynamics* used for the replay baseline.
-    #
-    # If recording uses a different integrator than the reference replay, the command
-    # trace can be tuned to the record integrator trajectory. Replay with a different
-    # integrator can then accumulate drift over long horizons.
-    #
-    # To keep the default behavior consistent, `record_integrator` defaults to a fresh
-    # copy of `reference_integrator` unless explicitly overridden.
-    record_integrator_eff =
-        record_integrator === nothing ? deepcopy(reference_integrator) :
-        deepcopy(record_integrator)
-    Integrators.reset!(record_integrator_eff)
-    if recording_in === nothing
-        record_integrator === nothing &&
-            println("  record_integrator: (default) deepcopy(reference_integrator)")
-    end
-
     # Acquire recording.
     rec = if recording_in !== nothing
         println("[compare_integrators_iris_mission] Using existing recording: $(recording_in)")
         Recording.read_recording(recording_in)
     else
-        mission_path === nothing && error(
-            "No recording_in provided and PX4_LOCKSTEP_MISSION is not set. " *
-            "Provide a recording_in path or set PX4_LOCKSTEP_MISSION to record.",
-        )
+        mission_path === nothing &&
+            error("No recording_in provided and spec.px4.mission_path is not set.")
+        libpath === nothing &&
+            error("px4.libpath is required to record; set it in the TOML.")
 
         println("[compare_integrators_iris_mission] RECORD (PX4 live)")
         recording = simulate_iris_mission(
+            spec_path = resolved_spec_path,
             mode = :record,
-            mission_path = mission_path,
-            libpath = libpath,
-            lockstep_config = lockstep_config,
             recording_out = recording_out,
-            t_end_s = t_end_s,
-            dt_autopilot_s = dt_autopilot_s,
-            dt_wind_s = dt_wind_s,
-            dt_log_s = dt_log_s,
-            dt_phys_s = dt_phys_s,
-            seed = seed,
-            integrator = record_integrator_eff,
-            home = home,
-            contact = contact,
         )
         # `simulate_iris_mission(mode=:record)` returns a Tier0Recording.
         recording
@@ -465,12 +465,12 @@ function compare_integrators_iris_mission(;
         println("  recording_out: $(recording_out)")
     end
 
-    # Reconstruct replay plant model (NoWind env; wind comes from trace).
-    home_rec = get(rec.meta, :home, home)
-    env = iris_default_env_replay(home = home_rec)
-    vehicle = iris_default_vehicle()
-    battery = iris_default_battery()
-    dynfun = iris_dynfun(env, vehicle, battery; contact = contact)
+    # Reconstruct replay plant model from spec (NoWind env; wind comes from trace).
+    home_rec = get(rec.meta, :home, spec.home)
+    spec_replay = home_rec === spec.home ? spec : _with_home(spec, home_rec)
+    inst, _ =
+        Aircraft.build_aircraft_instance(spec_replay; mode = :replay, recording_in = rec)
+    dynfun = inst.dynfun
 
     println("[compare_integrators_iris_mission] REPLAY (plant-only sweep)")
 
@@ -479,7 +479,7 @@ function compare_integrators_iris_mission(;
         dynfun = dynfun,
         solvers = solvers,
         reference_integrator = reference_integrator,
-        make_integrator = iris_integrator,
+        make_integrator = _make_integrator,
         require_scenario = true,
         log_dir = log_dir,
         log_prefix = log_prefix,

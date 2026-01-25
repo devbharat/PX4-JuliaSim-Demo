@@ -59,34 +59,15 @@ include("Recording/Recording.jl")
 include("Sources/Sources.jl")
 
 
-# Aircraft composition layer (Phase 0 scaffolding)
+# Aircraft composition layer (spec -> engine builder)
 include("Aircraft/Aircraft.jl")
 
 
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")
 
-# Convenience workflows (Iris mission wrapper helpers).
-include("Workflows/Iris.jl")
-include("Workflows/CompareIntegrators.jl")
-
-# Namespace wrapper for workflow helpers.
-module Workflows
-using ..Sim:
-    simulate_iris_mission, compare_integrators_recording, compare_integrators_iris_mission
-export simulate_iris_mission,
-    compare_integrators_recording, compare_integrators_iris_mission
-end
-
 # User-facing workflow entrypoints (thin wrappers around Runtime.Engine).
 include("API.jl")
 
-export simulate,
-    run_live_px4,
-    record_live_px4,
-    replay_recording,
-    simulate_iris_mission,
-    compare_integrators,
-    compare_integrators_recording,
-    compare_integrators_iris_mission
+export simulate, run_live_px4, record_live_px4, replay_recording
 end # module Sim

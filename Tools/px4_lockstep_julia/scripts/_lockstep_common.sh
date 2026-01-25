@@ -16,9 +16,6 @@ detect_lib_ext() {
 
 LIB_EXT="$(detect_lib_ext)"
 SYS_EXT="${LIB_EXT}"
-
-PX4_LOCKSTEP_LIB="${REPO_ROOT}/build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.${LIB_EXT}"
-PX4_LOCKSTEP_MISSION="${REPO_ROOT}/Tools/px4_lockstep_julia/examples/simple_mission.waypoints"
 JULIA_DEPOT_PATH="${REPO_ROOT}/Tools/px4_lockstep_julia/.julia_depot"
 UORB_HEADERS_DIR="${REPO_ROOT}/build/px4_sitl_lockstep/uORB/topics"
 UORB_OUT="${REPO_ROOT}/Tools/px4_lockstep_julia/src/UORBGenerated.jl"

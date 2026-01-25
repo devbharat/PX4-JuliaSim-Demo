@@ -22,9 +22,11 @@ Key points:
 
 ## Interface configuration
 
-The uORB boundary is configured explicitly via `PX4UORBInterfaceConfig` presets in
-`PX4Lockstep.Sim.Autopilots` (for example, `iris_state_injection_interface`). Use these
-configs to select which topics are published/subscribed instead of env flags.
+The uORB boundary is configured in TOML via `[px4.uorb]` with explicit `pubs` and
+`subs`. For reuse, include a shared file with `extends` (see
+`src/Workflows/assets/aircraft/iris_uorb.toml` and
+`src/Workflows/assets/aircraft/minimal_uorb.toml`).
+There are no code-side presets; TOML is the only source of uORB configuration.
 
 ## Where the bridge lives
 

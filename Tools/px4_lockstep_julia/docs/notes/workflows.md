@@ -7,7 +7,7 @@ This page collects the practical “how do I…” tasks.
 From your PX4 root:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh 70
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
 This helper:
@@ -15,7 +15,11 @@ This helper:
 1. Locates `libpx4_lockstep` in the standard PX4 build output.
 2. Regenerates `src/UORBGenerated.jl` when uORB headers have changed.
 3. Optionally builds/uses a sysimage when `PX4_LOCKSTEP_SYSIMAGE=1`.
-4. Runs `PX4Lockstep.Sim.Workflows.simulate_iris_mission(...; mode=:live)`.
+4. Runs `PX4Lockstep.Workflows.simulate_iris_mission(...; mode=:live)`.
+
+`simulate_iris_mission` requires an explicit spec via `spec_path` or `spec_name`.
+The helper uses `examples/specs/iris_lockstep.toml`, which extends the built-in
+defaults in `src/Workflows/assets/aircraft/iris_default.toml`.
 
 Note: sysimage builds can take around a minute the first time, and any Julia code
 change triggers a rebuild. It’s intended for CI or analysis runs with many repeats,
@@ -23,7 +27,7 @@ not for rapid edit‑run iteration.
 
 Output:
 
-- `sim_log.csv` in your current directory.
+- `sim_log.csv` at the path configured in the spec (see `examples/specs/iris_lockstep.toml`).
 
 ## Record → replay integrator sweep (recommended)
 
@@ -38,31 +42,24 @@ Instead, this workflow:
 Run:
 
 ```bash
-Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh 20
+Tools/px4_lockstep_julia/scripts/run_iris_integrator_compare.sh
 ```
+
+This helper uses `examples/specs/iris_compare.toml`, which extends the built-in defaults.
 
 Outputs:
 
 - Summary CSVs under `Tools/px4_lockstep_julia/examples/replay/out/`
-- Optional per-integrator replay logs if you set `IRIS_LOG_DIR` (see below).
-
-Useful environment variables:
-
-- `IRIS_T_END_S`: duration (seconds)
-- `IRIS_SWEEP_SOLVERS`: comma-separated solver list (e.g. `RK4,RK23,RK45`)
-- `IRIS_LOG_DIR`: write replay logs for plotting
-- `IRIS_LOG_PREFIX`: prefix for replay log filenames
+- Optional per-integrator replay logs if you pass `log_dir` to the workflow.
 
 See also: `Tools/px4_lockstep_julia/examples/replay/README.md`.
 
 ## Determinism check (replay same integrator repeatedly)
 
 ```bash
-PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-IRIS_DETERMINISM_SOLVER=RK4 IRIS_DETERMINISM_N=3 \
-IRIS_LOG_DIR=Tools/px4_lockstep_julia/examples/replay/out \
-  julia --project=Tools/px4_lockstep_julia \
-    Tools/px4_lockstep_julia/examples/replay/iris_integrator_determinism.jl
+julia --project=Tools/px4_lockstep_julia \
+  Tools/px4_lockstep_julia/examples/replay/iris_integrator_determinism.jl \
+  RK4 3 /path/to/spec.toml
 ```
 
 ## Verification problems (no PX4 required)
@@ -78,7 +75,7 @@ More scripts and details: `Tools/px4_lockstep_julia/examples/verification/README
 
 ## Plotting
 
-The default Iris run writes `sim_log.csv`. To plot:
+The default Iris run writes `sim_log.csv` (path from the spec). To plot:
 
 ```bash
 python Tools/px4_lockstep_julia/scripts/plot_sim_log.py \
@@ -101,11 +98,24 @@ Setup instructions: `Tools/px4_lockstep_julia/scripts/README.md`.
 You can call the workflow directly from Julia (useful for debugging):
 
 ```bash
-IRIS_T_END_S=20 \
-PX4_LOCKSTEP_LIB=/path/to/libpx4_lockstep.(so|dylib) \
-PX4_LOCKSTEP_MISSION=Tools/px4_lockstep_julia/examples/simple_mission.waypoints \
-  julia --project=Tools/px4_lockstep_julia \
-    -e 'using PX4Lockstep.Sim; Sim.simulate_iris_mission(mode=:live)'
+julia --project=Tools/px4_lockstep_julia \
+  -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="/path/to/spec.toml", mode=:live)'
 ```
 
-If you’re using this repo standalone (not inside a PX4 tree), use `--project=.` and set `PX4_LOCKSTEP_LIB` explicitly.
+Your spec must set `px4.libpath` for live/record runs (and `px4.mission_path` for live PX4 missions).
+
+To run a custom spec, pass `spec_path`:
+
+```bash
+julia --project=Tools/px4_lockstep_julia \
+  -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="path/to/spec.toml", mode=:live)'
+
+To use the built-in Iris default, pass `spec_name` explicitly:
+
+```bash
+julia --project=Tools/px4_lockstep_julia \
+  -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_name=:iris_default, mode=:live)'
+```
+```
+
+If you’re using this repo standalone (not inside a PX4 tree), use `--project=.` and set `px4.libpath` in your spec.

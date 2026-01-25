@@ -1,0 +1,125 @@
+schema_version = 1
+extends = ["../../src/Workflows/assets/aircraft/minimal_uorb.toml"]
+
+[aircraft]
+name = "wingtra_ray"
+seed = 3
+
+[home]
+lat_deg = 47.397742
+lon_deg = 8.545594
+alt_msl_m = 488.0
+
+[px4]
+# NOTE: This is a *work-in-progress* placeholder spec intended for later
+# WingtraRay integration. The current Julia plant is multirotor-only (Phase 2),
+# so this file focuses on the parts that are already supported: propulsor layout,
+# power, and simulator/lockstep configuration.
+edge_trigger = false
+derive_ca_params = true
+
+[px4.lockstep]
+dataman_use_ram = 1
+enable_commander = 0
+commander_rate_hz = 100
+navigator_rate_hz = 20
+mc_pos_control_rate_hz = 100
+mc_att_control_rate_hz = 250
+mc_rate_control_rate_hz = 250
+enable_control_allocator = 1
+control_allocator_rate_hz = 250
+
+
+[timeline]
+t_end_s = 10.0
+dt_autopilot_s = 0.004
+dt_wind_s = 0.001
+dt_log_s = 0.01
+
+[plant]
+integrator = "RK45"
+contact = "flat_ground"
+
+[airframe]
+# Phase 2 builder supports :multirotor only. A proper VTOL/fixed-wing model
+# will use a different airframe.kind and plant model in later phases.
+kind = "multirotor"
+
+# Rough placeholder numbers.
+mass_kg = 4.0
+inertia_diag_kgm2 = [0.20, 0.25, 0.40]
+linear_drag = 0.05
+angular_damping = [0.02, 0.02, 0.01]
+
+# Two forward props. Positions are approximate placeholders in body-FRD.
+rotor_pos_body_m = [
+  [0.30,  0.20, 0.0],
+  [0.30, -0.20, 0.0],
+]
+
+# Forward propulsors: thrust acts along +X in body frame.
+# Convention: F = -T * axis_b, so set axis_b = [-1, 0, 0].
+rotor_axis_body_m = [
+  [-1.0, 0.0, 0.0],
+  [-1.0, 0.0, 0.0],
+]
+
+[airframe.x0]
+# Start in a "tailsitter hover" attitude (pitch ~ +90 deg) so body X points up.
+euler_deg = [0.0, 90.0, 0.0]
+pos_ned = [0.0, 0.0, 0.0]
+vel_ned = [0.0, 0.0, 0.0]
+omega_body = [0.0, 0.0, 0.0]
+
+[airframe.propulsion]
+kind = "multirotor_default"
+km_m = 0.05
+
+[actuation]
+
+[[actuation.motors]]
+id = "motor_left"
+channel = 1
+
+[[actuation.motors]]
+id = "motor_right"
+channel = 2
+
+[[actuation.servos]]
+id = "elevon_left"
+channel = 1
+
+[[actuation.servos]]
+id = "elevon_right"
+channel = 2
+
+[actuation.motor_actuators]
+kind = "direct"
+
+[actuation.servo_actuators]
+kind = "direct"
+
+[power]
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+capacity_ah = 12.0
+soc0 = 1.0
+ocv_soc = [0.0, 1.0]
+ocv_v = [21.6, 25.2]  # 6S-style placeholder
+r0 = 0.030
+r1 = 0.015
+c1 = 3000.0
+v1_0 = 0.0
+min_voltage_v = 19.8
+
+[[power.buses]]
+id = "main"
+battery_ids = ["bat1"]
+motor_ids = ["motor_left", "motor_right"]
+servo_ids = ["elevon_left", "elevon_right"]
+avionics_load_w = 25.0
+
+[run]
+mode = "live"

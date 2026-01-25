@@ -29,7 +29,7 @@ export ESCParams,
     MotorPropUnit,
     RotorOutput,
     QuadRotorSet,
-    default_iris_quadrotor_set
+    default_multirotor_set
 
 ############################
 # Type hierarchy
@@ -193,16 +193,17 @@ function QuadRotorSet(
     return QuadRotorSet{N,U}(units, rotor_dir)
 end
 
-"""A reasonable Iris-like default motor+prop set.
+"""A reasonable generic multirotor default motor+prop set.
 
-This is *not* meant to be a perfect Iris model; it is a calibrated baseline that:
+This is *not* meant to be a perfect model of any specific airframe; it is a
+calibrated baseline that:
 * produces the correct hover thrust at the previous default hover throttle,
 * has plausible motor time constants,
 * produces plausible current draw.
 
 Replace these parameters when modeling other airframes.
 """
-function default_iris_quadrotor_set(;
+function default_multirotor_set(;
     N::Int = 4,
     km_m::Float64 = 0.05,
     V_nom::Float64 = 12.0,
@@ -236,7 +237,7 @@ function default_iris_quadrotor_set(;
     )
 
     units = [MotorPropUnit(esc = esc, motor = motor, prop = prop) for _ = 1:N]
-    # Iris typically has alternating directions; use 1,1,-1,-1 as a common pattern.
+    # Common alternating pattern for 4-rotor layouts: 1,1,-1,-1.
     rotor_dir =
         N == 4 ? SVector(1.0, 1.0, -1.0, -1.0) :
         SVector{N,Float64}(ntuple(i -> (isodd(i) ? 1.0 : -1.0), N))

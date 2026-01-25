@@ -23,8 +23,8 @@ multirotor plant models.
 - **Separation of geometry vs. dynamics:**
   - vehicle models own rotor positions and axes
   - propulsion owns motor/prop parameters and rotor spin direction for yaw reaction
-- **Calibrated defaults:** `default_iris_quadrotor_set` provides a reasonable Iris-like
-  baseline intended for closed-loop testing (not high-fidelity aero).
+- **Calibrated defaults:** `default_multirotor_set` provides a reasonable generic
+  multirotor baseline intended for closed-loop testing (not high-fidelity aero).
 
 ## Integration contracts
 

@@ -317,17 +317,6 @@ function _build_vehicle(
             N,
         ),
     )
-    params = Vehicles.QuadrotorParams{N}(
-        mass = a.mass_kg,
-        inertia_diag = a.inertia_diag_kgm2,
-        rotor_pos_body = rotor_pos,
-        rotor_axis_body = rotor_axis,
-        linear_drag = a.linear_drag,
-        angular_damping = a.angular_damping,
-    )
-
-    model = Vehicles.GenericMultirotor{N}(params)
-
     # Propulsion (generic multirotor default motor+prop set).
     hover_T = a.mass_kg * 9.80665 / Float64(N)
     p = a.propulsion
@@ -347,6 +336,51 @@ function _build_vehicle(
         )
         prop.rotor_dir = SVector{N,Float64}(ntuple(i -> Float64(p.rotor_dir[i]), N))
     end
+
+    # Rigid-body inertia tensor (kg*m^2).
+    Ixx, Iyy, Izz = a.inertia_diag_kgm2
+    Ixy, Ixz, Iyz = a.inertia_products_kgm2
+    I_body = @SMatrix [
+        Ixx Ixy Ixz
+        Ixy Iyy Iyz
+        Ixz Iyz Izz
+    ]
+
+    # Basic sanity checks: inertia must be symmetric positive-definite.
+    # (Sylvester's criterion for 3x3 SPD matrices.)
+    Ixx > 0.0 || error("airframe inertia: Ixx must be > 0 (got $Ixx)")
+    Iyy > 0.0 || error("airframe inertia: Iyy must be > 0 (got $Iyy)")
+    Izz > 0.0 || error("airframe inertia: Izz must be > 0 (got $Izz)")
+    m2 = Ixx * Iyy - Ixy * Ixy
+    m2 > 0.0 || error(
+        "airframe inertia: leading 2x2 principal minor must be > 0 (got $m2); check Ixy",
+    )
+    detI =
+        Ixx * (Iyy * Izz - Iyz * Iyz) -
+        Ixy * (Ixy * Izz - Iyz * Ixz) +
+        Ixz * (Ixy * Iyz - Iyy * Ixz)
+    detI > 0.0 || error(
+        "airframe inertia: determinant must be > 0 (got $detI); inertia tensor is not positive-definite",
+    )
+    # Precompute inverse for the hot path.
+    I_body_inv = inv(I_body)
+
+    # Rotor inertias (kg*m^2) are owned by the propulsion units.
+    rotor_J = SVector{N,Float64}(ntuple(i -> Propulsion.rotor_inertia_kgm2(prop.units[i]), N))
+
+    params = Vehicles.QuadrotorParams{N}(
+        mass = a.mass_kg,
+        inertia_kgm2 = I_body,
+        inertia_inv_kgm2 = I_body_inv,
+        rotor_pos_body = rotor_pos,
+        rotor_axis_body = rotor_axis,
+        rotor_inertia_kgm2 = rotor_J,
+        rotor_dir = prop.rotor_dir,
+        linear_drag = a.linear_drag,
+        angular_damping = a.angular_damping,
+    )
+
+    model = Vehicles.GenericMultirotor{N}(params)
 
     x0 = x0_override === nothing ? a.x0 : x0_override
     return Vehicles.VehicleInstance(model, motor_act, servo_act, prop, x0)

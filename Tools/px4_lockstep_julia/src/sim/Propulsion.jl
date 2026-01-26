@@ -28,6 +28,7 @@ export ESCParams,
     QuadraticPropParams,
     MotorPropUnit,
     RotorOutput,
+    rotor_inertia_kgm2,
     QuadRotorSet,
     default_multirotor_set
 
@@ -160,9 +161,27 @@ Base.@kwdef struct RotorOutput{N}
     thrust_n::SVector{N,Float64}
     shaft_torque_nm::SVector{N,Float64}
     ω_rad_s::SVector{N,Float64}
+    ω_dot_rad_s2::SVector{N,Float64} = zero(SVector{N,Float64})
     motor_current_a::SVector{N,Float64}
     bus_current_a::Float64
 end
+
+"""Rotor spin inertia about the propulsor axis (kg*m^2).
+
+This is used both for rotor-speed dynamics and (optionally) for rigid-body
+gyroscopic coupling.
+
+Notes
+-----
+- For the default multirotor plant, this is the motor/prop assembly inertia stored
+  in `BLDCMotorParams.J_kgm2`.
+- If a custom `MotorParams` type does not define an axial inertia, provide a
+  `rotor_inertia_kgm2(::MotorPropUnit)` method for it. The fallback returns 0.0.
+"""
+rotor_inertia_kgm2(::MotorPropUnit) = 0.0
+
+@inline rotor_inertia_kgm2(u::MotorPropUnit{M,P}) where {M<:BLDCMotorParams,P<:AbstractPropParams} =
+    u.motor.J_kgm2
 
 ############################
 # Quad set (N rotors)

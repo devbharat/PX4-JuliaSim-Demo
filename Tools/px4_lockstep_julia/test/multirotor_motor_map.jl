@@ -1,5 +1,6 @@
 using Test
 using StaticArrays
+using LinearAlgebra
 using PX4Lockstep
 
 const Sim = PX4Lockstep.Sim
@@ -16,12 +17,16 @@ const Sim = PX4Lockstep.Sim
         Sim.Types.vec3(-0.1, 0.1, 0.0),
     )
     rotor_axis = SVector{N,Sim.Types.Vec3}(ntuple(_ -> Sim.Types.vec3(0.0, 0.0, 1.0), N))
+    I = Sim.Types.Mat3([0.01 0.0 0.0; 0.0 0.01 0.0; 0.0 0.0 0.02])
 
     params = Sim.Vehicles.QuadrotorParams{N}(
         mass = 1.0,
-        inertia_diag = Sim.Types.vec3(0.01, 0.01, 0.02),
+        inertia_kgm2 = I,
+        inertia_inv_kgm2 = inv(I),
         rotor_pos_body = rotor_pos,
         rotor_axis_body = rotor_axis,
+        rotor_inertia_kgm2 = SVector{N,Float64}(ntuple(_ -> 0.0, N)),
+        rotor_dir = SVector{N,Float64}(ntuple(_ -> 1.0, N)),
         linear_drag = 0.0,
         angular_damping = Sim.Types.vec3(0.0, 0.0, 0.0),
     )
@@ -91,12 +96,16 @@ end
         end, N),
     )
     rotor_axis = SVector{N,Sim.Types.Vec3}(ntuple(_ -> Sim.Types.vec3(0.0, 0.0, 1.0), N))
+    I = Sim.Types.Mat3([0.05 0.0 0.0; 0.0 0.05 0.0; 0.0 0.0 0.10])
 
     params = Sim.Vehicles.QuadrotorParams{N}(
         mass = 2.0,
-        inertia_diag = Sim.Types.vec3(0.05, 0.05, 0.10),
+        inertia_kgm2 = I,
+        inertia_inv_kgm2 = inv(I),
         rotor_pos_body = rotor_pos,
         rotor_axis_body = rotor_axis,
+        rotor_inertia_kgm2 = SVector{N,Float64}(ntuple(_ -> 0.0, N)),
+        rotor_dir = SVector{N,Float64}(ntuple(_ -> 1.0, N)),
         linear_drag = 0.05,
         angular_damping = Sim.Types.vec3(0.02, 0.02, 0.01),
     )

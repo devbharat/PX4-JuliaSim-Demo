@@ -6,7 +6,10 @@ libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_locks
 mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
 
 [timeline]
-t_end_s = 70.0
+t_end_s = 68.0
+
+[plant]
+contact = "flat_ground"
 
 [run]
 log_csv = "../../../sim_log.csv"

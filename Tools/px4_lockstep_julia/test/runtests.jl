@@ -34,6 +34,9 @@ include("aircraft_spec_toml.jl")
 # Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
 include("multirotor_motor_map.jl")
 
+# Vehicle dynamics unit coverage (inertia tensor + rotor gyroscopic coupling).
+include("vehicles_inertia_gyro.jl")
+
 """Return the geodesic rotation error (rad) between two quaternions.
 
 Quaternions are treated as equivalent up to sign (q == -q).

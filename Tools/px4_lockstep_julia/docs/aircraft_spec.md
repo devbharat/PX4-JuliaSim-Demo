@@ -138,6 +138,35 @@ integrator = "RK45"       # Euler|RK4|RK23|RK45
 contact = "flat_ground"   # flat_ground|no_contact
 
 # Or a full table:
+# [plant.integrator]
+# kind = "RK45"            # Euler|RK4|RK23|RK45
+# rtol_pos = 1e-7
+# atol_pos = 1e-6
+# rtol_vel = 1e-7
+# atol_vel = 1e-6
+# rtol_omega = 1e-7        # alias: rtol_ω
+# atol_omega = 1e-6        # alias: atol_ω
+# atol_att_rad = 1e-6
+# plant_error_control = false
+# rtol_act = 0.0
+# atol_act = 1.0e-3
+# rtol_actdot = 0.0
+# atol_actdot = 1.0e-2
+# rtol_rotor = 0.0
+# atol_rotor = 1.0
+# rtol_soc = 0.0
+# atol_soc = 1.0e-4
+# rtol_v1 = 0.0
+# atol_v1 = 1.0
+# h_min = 1.0e-6
+# h_max = 0.01
+# h_init = 0.0
+# max_substeps = 50000
+# safety = 0.9
+# min_factor = 0.2
+# max_factor = 5.0
+# quantize_us = true
+#
 # [plant.contact]
 # kind = "flat_ground"
 # k_n_per_m = 5000.0
@@ -152,6 +181,16 @@ contact = "flat_ground"   # flat_ground|no_contact
 kind = "multirotor"
 mass_kg = 1.5
 inertia_diag_kgm2 = [0.03, 0.03, 0.06]
+
+# Optional products of inertia (body frame): [Ixy, Ixz, Iyz].
+# inertia_products_kgm2 = [0.0, 0.0, 0.0]
+
+# Alternatively, provide the full symmetric 3x3 tensor (either nested 3x3 or flat 9 values):
+# inertia_kgm2 = [
+#   [0.03, 0.0, 0.0],
+#   [0.0, 0.03, 0.0],
+#   [0.0, 0.0, 0.06],
+# ]
 rotor_pos_body_m = [
   [0.15, 0.25, 0.0],
   ...

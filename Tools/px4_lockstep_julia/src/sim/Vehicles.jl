@@ -39,6 +39,7 @@ export AbstractVehicleModel,
     map_servos,
     step_actuators!,
     mass,
+    inertia,
     inertia_diag,
     dynamics
 
@@ -207,6 +208,9 @@ function mass end
 """Vehicle inertia diagonal (kg*m^2) in body frame."""
 function inertia_diag end
 
+"""Vehicle inertia tensor (kg*m^2) in body frame."""
+function inertia end
+
 """Compute the rigid-body dynamics.
 
 `dynamics(model, env, t, x, u, wind_ned)` must return `RigidBodyDeriv`.
@@ -371,9 +375,20 @@ Notes:
 """
 Base.@kwdef struct QuadrotorParams{N}
     mass::Float64 = 1.5
-    inertia_diag::Vec3 = vec3(0.029125, 0.029125, 0.055225)
+    inertia_kgm2::Mat3 = @SMatrix [
+        0.029125 0.0 0.0
+        0.0 0.029125 0.0
+        0.0 0.0 0.055225
+    ]
+    inertia_inv_kgm2::Mat3 = @SMatrix [
+        1.0 / 0.029125 0.0 0.0
+        0.0 1.0 / 0.029125 0.0
+        0.0 0.0 1.0 / 0.055225
+    ]
     rotor_pos_body::SVector{N,Vec3}
     rotor_axis_body::SVector{N,Vec3}
+    rotor_inertia_kgm2::SVector{N,Float64}
+    rotor_dir::SVector{N,Float64}
     linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
     angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
 end
@@ -398,7 +413,13 @@ end
 mass(m::GenericMultirotor) = m.params.mass
 
 """Vehicle inertia diagonal (kg*m^2) in body axes."""
-inertia_diag(m::GenericMultirotor) = m.params.inertia_diag
+inertia_diag(m::GenericMultirotor) = begin
+    I = m.params.inertia_kgm2
+    vec3(I[1, 1], I[2, 2], I[3, 3])
+end
+
+"""Vehicle inertia tensor (kg*m^2) in body axes."""
+inertia(m::GenericMultirotor) = m.params.inertia_kgm2
 
 @inline function _multirotor_dynamics(
     p::QuadrotorParams{N},
@@ -409,7 +430,8 @@ inertia_diag(m::GenericMultirotor) = m.params.inertia_diag
     wind_ned::Vec3,
 ) where {N}
     m = p.mass
-    I = p.inertia_diag
+    I = p.inertia_kgm2
+    I_inv = p.inertia_inv_kgm2
 
     thrusts = u.thrust_n
     shaft_torques = u.shaft_torque_nm
@@ -449,16 +471,41 @@ inertia_diag(m::GenericMultirotor) = m.params.inertia_diag
         τ += axis_b .* shaft_torques[i]
     end
 
-    # Angular dynamics with simple damping.
+    # Angular dynamics.
     ω = x.ω_body
-    Iω = vec3(I[1] * ω[1], I[2] * ω[2], I[3] * ω[3])
+    Iω = I * ω
     ω_cross_Iω = cross(ω, Iω)
+
+    # Rotor gyroscopic coupling.
+    #
+    # The propulsion layer owns the per-rotor axial inertia `J` and provides rotor speeds
+    # and accelerations. The rigid body accounts for the additional angular momentum
+    # stored in the spinning rotors:
+    #
+    #   L_total = I_body*ω + Σ (J_i * Ω_i)
+    #
+    # which yields extra terms in body-frame dynamics:
+    #
+    #   I_body*ω̇ = τ - ω×(I_body*ω) - ω×H_rotor - Ḣ_rotor
+    #
+    # where H_rotor = Σ(J_i*Ω_i).
+    #
+    # Note: `p.rotor_dir` is the *reaction torque sign* (torque on body). Rotor spin
+    # direction is opposite that sign.
+    H = vec3(0.0, 0.0, 0.0)
+    Hdot = vec3(0.0, 0.0, 0.0)
+    @inbounds for i = 1:N
+        J = p.rotor_inertia_kgm2[i]
+        # Rotor spin sign: opposite the reaction torque sign.
+        s_spin = -p.rotor_dir[i]
+        axis_b = p.rotor_axis_body[i]
+        H += (J * s_spin * u.ω_rad_s[i]) .* axis_b
+        Hdot += (J * s_spin * u.ω_dot_rad_s2[i]) .* axis_b
+    end
+
     τ_damped = τ - p.angular_damping .* ω
-    ω_dot = vec3(
-        (τ_damped[1] - ω_cross_Iω[1]) / I[1],
-        (τ_damped[2] - ω_cross_Iω[2]) / I[2],
-        (τ_damped[3] - ω_cross_Iω[3]) / I[3],
-    )
+    rhs = τ_damped - ω_cross_Iω - cross(ω, H) - Hdot
+    ω_dot = I_inv * rhs
 
     return RigidBodyDeriv(
         pos_dot = x.vel_ned,

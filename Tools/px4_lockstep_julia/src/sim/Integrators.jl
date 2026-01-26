@@ -547,6 +547,26 @@ end
     return clamp(fac, minf, maxf)
 end
 
+@inline function _max_substeps_error(
+    name::AbstractString,
+    i,
+    tcur::Float64,
+    remaining::Float64,
+    dt::Float64,
+    naccept::Int,
+    nreject::Int,
+)
+    error(
+        "$name exceeded max_substeps=$(i.max_substeps) " *
+        "(tcur=$(tcur), remaining=$(remaining), dt=$(dt), last_h=$(i.last_h), " *
+        "naccept=$(naccept), nreject=$(nreject), h_min=$(i.h_min), h_max=$(i.h_max), " *
+        "rtol_pos=$(i.rtol_pos), atol_pos=$(i.atol_pos), rtol_vel=$(i.rtol_vel), " *
+        "atol_vel=$(i.atol_vel), rtol_ω=$(i.rtol_ω), atol_ω=$(i.atol_ω), " *
+        "atol_att_rad=$(i.atol_att_rad), plant_error_control=$(i.plant_error_control), " *
+        "quantize_us=$(i.quantize_us))",
+    )
+end
+
 ############################
 # RK23 (Bogacki–Shampine 3(2))
 ############################
@@ -600,7 +620,7 @@ function step_integrator(
 
     while remaining > 0.0
         (naccept + nreject) < i.max_substeps ||
-            error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
+            _max_substeps_error("RK23Integrator", i, tcur, remaining, dt, naccept, nreject)
         h = _clamp_step(i, h, remaining)
 
         k1 = f(tcur, x, u);
@@ -728,7 +748,7 @@ function step_integrator(
 
     while remaining > 0.0
         (naccept + nreject) < i.max_substeps ||
-            error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
+            _max_substeps_error("RK45Integrator", i, tcur, remaining, dt, naccept, nreject)
         h = _clamp_step(i, h, remaining)
 
         k1 = f(tcur, x, u);
@@ -856,7 +876,7 @@ function step_integrator(
 
     while remaining > 0.0
         (naccept + nreject) < i.max_substeps ||
-            error("RK23Integrator exceeded max_substeps=$(i.max_substeps)")
+            _max_substeps_error("RK23Integrator", i, tcur, remaining, dt, naccept, nreject)
         h = _clamp_step(i, h, remaining)
 
         k1 = f(tcur, x, u);
@@ -981,7 +1001,7 @@ function step_integrator(
 
     while remaining > 0.0
         (naccept + nreject) < i.max_substeps ||
-            error("RK45Integrator exceeded max_substeps=$(i.max_substeps)")
+            _max_substeps_error("RK45Integrator", i, tcur, remaining, dt, naccept, nreject)
         h = _clamp_step(i, h, remaining)
 
         k1 = f(tcur, x, u);

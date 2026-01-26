@@ -104,6 +104,26 @@ Base.@kwdef struct AirframeSpec
 
     mass_kg::Float64 = 1.0
     inertia_diag_kgm2::Vec3 = vec3(1.0, 1.0, 1.0)
+
+    """Off-diagonal inertia terms (kg*m^2) in body frame.
+
+    Conventions
+    -----------
+    This stores the symmetric products of inertia as:
+
+    * `inertia_products_kgm2[1] = Ixy`
+    * `inertia_products_kgm2[2] = Ixz`
+    * `inertia_products_kgm2[3] = Iyz`
+
+    The full inertia tensor used by the rigid-body dynamics is:
+
+    ```
+    I = [ Ixx  Ixy  Ixz
+          Ixy  Iyy  Iyz
+          Ixz  Iyz  Izz ]
+    ```
+    """
+    inertia_products_kgm2::Vec3 = vec3(0.0, 0.0, 0.0)
     rotor_pos_body_m::Vector{Vec3} = Vec3[]
 
     """Per-rotor axis vectors in body frame (unit).
@@ -338,6 +358,7 @@ function octa_spec(;
     radius_m::Float64 = 0.25,
     mass_kg::Float64 = 2.0,
     inertia_diag_kgm2::Vec3 = vec3(0.05, 0.05, 0.10),
+    inertia_products_kgm2::Vec3 = vec3(0.0, 0.0, 0.0),
 )
     px4 = PX4Spec(
         mission_path = mission_path === nothing ? nothing : String(mission_path),
@@ -401,6 +422,7 @@ function octa_spec(;
         kind = :multirotor,
         mass_kg = mass_kg,
         inertia_diag_kgm2 = inertia_diag_kgm2,
+        inertia_products_kgm2 = inertia_products_kgm2,
         rotor_pos_body_m = rotor_pos_body_m,
         rotor_axis_body_m = Vec3[vec3(0.0, 0.0, 1.0) for _ = 1:8],
     )

@@ -6,10 +6,8 @@ gaps so users know what is and is not being simulated.
 
 ## Rigid-body dynamics
 
-- **Diagonal inertia only**: the airframe uses `inertia_diag_kgm2` and the rigid-body
-  model assumes a diagonal inertia matrix (no products of inertia).
-- **No rotor gyroscopic coupling**: rotor angular momentum is not fed into body
-  dynamics (only thrust and reaction torques are applied).
+- **Rigid body is idealized**: the airframe is treated as a rigid body with a fixed
+  inertia tensor (no structural flex, fuel slosh, or moving-mass effects).
 
 ## Aerodynamics / vehicle
 

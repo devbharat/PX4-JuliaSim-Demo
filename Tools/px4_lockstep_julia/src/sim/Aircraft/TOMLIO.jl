@@ -326,13 +326,160 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
     end
 end
 
-function _parse_integrator(x, ctx::AbstractString)
+function _parse_integrator(x, ctx::AbstractString; strict::Bool)
     if x isa Symbol
         return x
     elseif x isa AbstractString
         return Symbol(x)
+    elseif x isa AbstractDict
+        tbl = _as_table(x, ctx)
+        kind_raw = get(tbl, "kind", nothing)
+        kind_raw === nothing && error("$ctx.kind is required (e.g. 'RK45')")
+        kind_str = lowercase(_as_string(kind_raw, "$ctx.kind"))
+        kind_sym = Symbol(uppercase(kind_str))
+
+        if kind_sym === :RK23 || kind_sym === :RK45
+            # Adaptive integrators: allow full tolerance + step-size config.
+            allowed = Set([
+                "kind",
+                "rtol_pos",
+                "atol_pos",
+                "rtol_vel",
+                "atol_vel",
+                "rtol_ω",
+                "atol_ω",
+                "rtol_omega",
+                "atol_omega",
+                "atol_att_rad",
+                "plant_error_control",
+                "rtol_act",
+                "atol_act",
+                "rtol_actdot",
+                "atol_actdot",
+                "rtol_rotor",
+                "atol_rotor",
+                "rtol_soc",
+                "atol_soc",
+                "rtol_v1",
+                "atol_v1",
+                "h_min",
+                "h_max",
+                "h_init",
+                "max_substeps",
+                "safety",
+                "min_factor",
+                "max_factor",
+                "quantize_us",
+            ])
+            strict && _known_keys!(tbl, allowed, ctx)
+
+            integ = kind_sym === :RK23 ? Integrators.RK23Integrator() : Integrators.RK45Integrator()
+            rtol_pos = _as_f64(get(tbl, "rtol_pos", integ.rtol_pos), "$ctx.rtol_pos")
+            atol_pos = _as_f64(get(tbl, "atol_pos", integ.atol_pos), "$ctx.atol_pos")
+            rtol_vel = _as_f64(get(tbl, "rtol_vel", integ.rtol_vel), "$ctx.rtol_vel")
+            atol_vel = _as_f64(get(tbl, "atol_vel", integ.atol_vel), "$ctx.atol_vel")
+            rtol_ω = haskey(tbl, "rtol_ω") ?
+                _as_f64(tbl["rtol_ω"], "$ctx.rtol_ω") :
+                (haskey(tbl, "rtol_omega") ? _as_f64(tbl["rtol_omega"], "$ctx.rtol_omega") : integ.rtol_ω)
+            atol_ω = haskey(tbl, "atol_ω") ?
+                _as_f64(tbl["atol_ω"], "$ctx.atol_ω") :
+                (haskey(tbl, "atol_omega") ? _as_f64(tbl["atol_omega"], "$ctx.atol_omega") : integ.atol_ω)
+            atol_att_rad = _as_f64(get(tbl, "atol_att_rad", integ.atol_att_rad), "$ctx.atol_att_rad")
+            plant_error_control =
+                _as_bool(get(tbl, "plant_error_control", integ.plant_error_control), "$ctx.plant_error_control")
+
+            rtol_act = _as_f64(get(tbl, "rtol_act", integ.rtol_act), "$ctx.rtol_act")
+            atol_act = _as_f64(get(tbl, "atol_act", integ.atol_act), "$ctx.atol_act")
+            rtol_actdot = _as_f64(get(tbl, "rtol_actdot", integ.rtol_actdot), "$ctx.rtol_actdot")
+            atol_actdot = _as_f64(get(tbl, "atol_actdot", integ.atol_actdot), "$ctx.atol_actdot")
+            rtol_rotor = _as_f64(get(tbl, "rtol_rotor", integ.rtol_rotor), "$ctx.rtol_rotor")
+            atol_rotor = _as_f64(get(tbl, "atol_rotor", integ.atol_rotor), "$ctx.atol_rotor")
+            rtol_soc = _as_f64(get(tbl, "rtol_soc", integ.rtol_soc), "$ctx.rtol_soc")
+            atol_soc = _as_f64(get(tbl, "atol_soc", integ.atol_soc), "$ctx.atol_soc")
+            rtol_v1 = _as_f64(get(tbl, "rtol_v1", integ.rtol_v1), "$ctx.rtol_v1")
+            atol_v1 = _as_f64(get(tbl, "atol_v1", integ.atol_v1), "$ctx.atol_v1")
+
+            h_min = _as_f64(get(tbl, "h_min", integ.h_min), "$ctx.h_min")
+            h_max = _as_f64(get(tbl, "h_max", integ.h_max), "$ctx.h_max")
+            h_init = _as_f64(get(tbl, "h_init", integ.h_init), "$ctx.h_init")
+            max_substeps =
+                Int(_as_int(get(tbl, "max_substeps", integ.max_substeps), "$ctx.max_substeps"))
+            safety = _as_f64(get(tbl, "safety", integ.safety), "$ctx.safety")
+            min_factor = _as_f64(get(tbl, "min_factor", integ.min_factor), "$ctx.min_factor")
+            max_factor = _as_f64(get(tbl, "max_factor", integ.max_factor), "$ctx.max_factor")
+            quantize_us =
+                _as_bool(get(tbl, "quantize_us", integ.quantize_us), "$ctx.quantize_us")
+
+            if kind_sym === :RK23
+                return Integrators.RK23Integrator(
+                    rtol_pos = rtol_pos,
+                    atol_pos = atol_pos,
+                    rtol_vel = rtol_vel,
+                    atol_vel = atol_vel,
+                    rtol_ω = rtol_ω,
+                    atol_ω = atol_ω,
+                    atol_att_rad = atol_att_rad,
+                    plant_error_control = plant_error_control,
+                    rtol_act = rtol_act,
+                    atol_act = atol_act,
+                    rtol_actdot = rtol_actdot,
+                    atol_actdot = atol_actdot,
+                    rtol_rotor = rtol_rotor,
+                    atol_rotor = atol_rotor,
+                    rtol_soc = rtol_soc,
+                    atol_soc = atol_soc,
+                    rtol_v1 = rtol_v1,
+                    atol_v1 = atol_v1,
+                    h_min = h_min,
+                    h_max = h_max,
+                    h_init = h_init,
+                    max_substeps = max_substeps,
+                    safety = safety,
+                    min_factor = min_factor,
+                    max_factor = max_factor,
+                    quantize_us = quantize_us,
+                )
+            end
+
+            return Integrators.RK45Integrator(
+                rtol_pos = rtol_pos,
+                atol_pos = atol_pos,
+                rtol_vel = rtol_vel,
+                atol_vel = atol_vel,
+                rtol_ω = rtol_ω,
+                atol_ω = atol_ω,
+                atol_att_rad = atol_att_rad,
+                plant_error_control = plant_error_control,
+                rtol_act = rtol_act,
+                atol_act = atol_act,
+                rtol_actdot = rtol_actdot,
+                atol_actdot = atol_actdot,
+                rtol_rotor = rtol_rotor,
+                atol_rotor = atol_rotor,
+                rtol_soc = rtol_soc,
+                atol_soc = atol_soc,
+                rtol_v1 = rtol_v1,
+                atol_v1 = atol_v1,
+                h_min = h_min,
+                h_max = h_max,
+                h_init = h_init,
+                max_substeps = max_substeps,
+                safety = safety,
+                min_factor = min_factor,
+                max_factor = max_factor,
+                quantize_us = quantize_us,
+            )
+        elseif kind_sym === :RK4
+            strict && _known_keys!(tbl, Set(["kind"]), ctx)
+            return Integrators.RK4Integrator()
+        elseif kind_sym === :EULER
+            strict && _known_keys!(tbl, Set(["kind"]), ctx)
+            return Integrators.EulerIntegrator()
+        else
+            error("$ctx.kind must be one of 'Euler', 'RK4', 'RK23', 'RK45' (got '$kind_str')")
+        end
     else
-        error("$ctx.integrator must be a string/symbol (e.g. 'RK45')")
+        error("$ctx must be a string/symbol or table (e.g. 'RK45' or {kind='RK45'})")
     end
 end
 
@@ -507,6 +654,8 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
         "kind",
         "mass_kg",
         "inertia_diag_kgm2",
+        "inertia_products_kgm2",
+        "inertia_kgm2",
         "rotor_pos_body_m",
         "rotor_axis_body_m",
         "linear_drag",
@@ -519,10 +668,62 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
     kind = haskey(tbl, "kind") ? _sym(_as_string(tbl["kind"], "$ctx.kind")) : base.kind
     mass_kg =
         haskey(tbl, "mass_kg") ? _as_f64(tbl["mass_kg"], "$ctx.mass_kg") : base.mass_kg
-    inertia =
-        haskey(tbl, "inertia_diag_kgm2") ?
-        _parse_vec3(tbl["inertia_diag_kgm2"], "$ctx.inertia_diag_kgm2") :
-        base.inertia_diag_kgm2
+
+    # Inertia: allow either full 3x3 tensor or (diag + products).
+    inertia_diag = base.inertia_diag_kgm2
+    inertia_prod = base.inertia_products_kgm2
+
+    if haskey(tbl, "inertia_kgm2")
+        I_any = tbl["inertia_kgm2"]
+        arr = _as_array(I_any, "$ctx.inertia_kgm2")
+        if length(arr) == 3 && all(x -> x isa AbstractVector, arr)
+            row1 = _as_array(arr[1], "$ctx.inertia_kgm2[1]")
+            row2 = _as_array(arr[2], "$ctx.inertia_kgm2[2]")
+            row3 = _as_array(arr[3], "$ctx.inertia_kgm2[3]")
+            (length(row1) == 3 && length(row2) == 3 && length(row3) == 3) ||
+                error("$ctx.inertia_kgm2 must be a 3x3 nested array")
+            I11 = _as_f64(row1[1], "$ctx.inertia_kgm2[1][1]")
+            I12 = _as_f64(row1[2], "$ctx.inertia_kgm2[1][2]")
+            I13 = _as_f64(row1[3], "$ctx.inertia_kgm2[1][3]")
+            I21 = _as_f64(row2[1], "$ctx.inertia_kgm2[2][1]")
+            I22 = _as_f64(row2[2], "$ctx.inertia_kgm2[2][2]")
+            I23 = _as_f64(row2[3], "$ctx.inertia_kgm2[2][3]")
+            I31 = _as_f64(row3[1], "$ctx.inertia_kgm2[3][1]")
+            I32 = _as_f64(row3[2], "$ctx.inertia_kgm2[3][2]")
+            I33 = _as_f64(row3[3], "$ctx.inertia_kgm2[3][3]")
+
+            # Require symmetry (products of inertia). Keep the error explicit so
+            # users don't silently get a different tensor than they intended.
+            atol = 1e-12
+            (abs(I12 - I21) <= atol && abs(I13 - I31) <= atol && abs(I23 - I32) <= atol) ||
+                error("$ctx.inertia_kgm2 must be symmetric (I12==I21, I13==I31, I23==I32)")
+
+            inertia_diag = vec3(I11, I22, I33)
+            inertia_prod = vec3(I12, I13, I23)
+        elseif length(arr) == 9
+            # Flat 9-element row-major representation.
+            v = [_as_f64(arr[i], "$ctx.inertia_kgm2[$i]") for i = 1:9]
+            I11, I12, I13, I21, I22, I23, I31, I32, I33 = v
+            atol = 1e-12
+            (abs(I12 - I21) <= atol && abs(I13 - I31) <= atol && abs(I23 - I32) <= atol) ||
+                error("$ctx.inertia_kgm2 must be symmetric (I12==I21, I13==I31, I23==I32)")
+            inertia_diag = vec3(I11, I22, I33)
+            inertia_prod = vec3(I12, I13, I23)
+        else
+            error(
+                "$ctx.inertia_kgm2 must be either a 3x3 nested array or a flat 9-element array",
+            )
+        end
+    else
+        inertia_diag =
+            haskey(tbl, "inertia_diag_kgm2") ?
+            _parse_vec3(tbl["inertia_diag_kgm2"], "$ctx.inertia_diag_kgm2") :
+            base.inertia_diag_kgm2
+        inertia_prod =
+            haskey(tbl, "inertia_products_kgm2") ?
+            _parse_vec3(tbl["inertia_products_kgm2"], "$ctx.inertia_products_kgm2") :
+            base.inertia_products_kgm2
+    end
 
     rotor_pos = base.rotor_pos_body_m
     if haskey(tbl, "rotor_pos_body_m")
@@ -597,7 +798,8 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
     return AirframeSpec(
         kind = kind,
         mass_kg = mass_kg,
-        inertia_diag_kgm2 = inertia,
+        inertia_diag_kgm2 = inertia_diag,
+        inertia_products_kgm2 = inertia_prod,
         rotor_pos_body_m = rotor_pos,
         rotor_axis_body_m = rotor_axis,
         linear_drag = linear_drag,
@@ -1079,7 +1281,8 @@ function spec_from_toml_dict(
         strict && _known_keys!(p, Set(["integrator", "contact"]), "plant")
         integ =
             haskey(p, "integrator") ?
-            _parse_integrator(p["integrator"], "plant.integrator") : spec.plant.integrator
+            _parse_integrator(p["integrator"], "plant.integrator"; strict = strict) :
+            spec.plant.integrator
         contact =
             haskey(p, "contact") ?
             _parse_contact(p["contact"]; strict = strict, ctx = "plant.contact") :
@@ -1196,6 +1399,7 @@ function spec_from_toml_dict(
             kind = spec.airframe.kind,
             mass_kg = spec.airframe.mass_kg,
             inertia_diag_kgm2 = spec.airframe.inertia_diag_kgm2,
+            inertia_products_kgm2 = spec.airframe.inertia_products_kgm2,
             rotor_pos_body_m = spec.airframe.rotor_pos_body_m,
             rotor_axis_body_m = Vec3[vec3(0.0, 0.0, 1.0) for _ = 1:N],
             linear_drag = spec.airframe.linear_drag,

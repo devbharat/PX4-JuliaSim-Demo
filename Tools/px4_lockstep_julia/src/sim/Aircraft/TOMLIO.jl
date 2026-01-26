@@ -21,6 +21,9 @@ Top-level:
   - [home]
   - [px4]
   - [timeline]
+  - [environment]
+  - [scenario]
+  - [estimator]
   - [plant]
   - [airframe]
   - [actuation]
@@ -326,6 +329,158 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
     end
 end
 
+@inline function _norm_kind(x, ctx::AbstractString)
+    return Symbol(lowercase(_as_string(x, ctx)))
+end
+
+function _parse_environment(
+    tbl_any;
+    strict::Bool,
+    ctx::AbstractString,
+    base::EnvironmentSpec,
+)
+    tbl = _as_table(tbl_any, ctx)
+    allowed = Set([
+        "wind",
+        "wind_mean_ned",
+        "wind_sigma_ned",
+        "wind_tau_s",
+        "atmosphere",
+        "gravity",
+        "gravity_mps2",
+        "gravity_mu",
+        "gravity_r0_m",
+    ])
+    strict && _known_keys!(tbl, allowed, ctx)
+
+    wind = haskey(tbl, "wind") ? _norm_kind(tbl["wind"], "$ctx.wind") : base.wind
+    wind =
+        wind in (:none, :no, :off, :no_wind) ? :none :
+        wind in (:ou, :ou_wind, :turbulence) ? :ou :
+        wind in (:constant, :const) ? :constant : wind
+    wind in (:none, :ou, :constant) ||
+        error("$ctx.wind must be one of 'none', 'ou', 'constant' (got $(wind))")
+
+    wind_mean_ned =
+        haskey(tbl, "wind_mean_ned") ?
+        _parse_vec3(tbl["wind_mean_ned"], "$ctx.wind_mean_ned") : base.wind_mean_ned
+    wind_sigma_ned =
+        haskey(tbl, "wind_sigma_ned") ?
+        _parse_vec3(tbl["wind_sigma_ned"], "$ctx.wind_sigma_ned") : base.wind_sigma_ned
+    wind_tau_s =
+        haskey(tbl, "wind_tau_s") ? _as_f64(tbl["wind_tau_s"], "$ctx.wind_tau_s") :
+        base.wind_tau_s
+
+    atmosphere =
+        haskey(tbl, "atmosphere") ? _norm_kind(tbl["atmosphere"], "$ctx.atmosphere") :
+        base.atmosphere
+    atmosphere in (:isa1976, :isa) || error("$ctx.atmosphere must be 'isa1976'")
+
+    gravity =
+        haskey(tbl, "gravity") ? _norm_kind(tbl["gravity"], "$ctx.gravity") : base.gravity
+    gravity = gravity in (:uniform, :spherical) ? gravity : gravity
+    gravity in (:uniform, :spherical) ||
+        error("$ctx.gravity must be 'uniform' or 'spherical'")
+
+    g_mps2 =
+        haskey(tbl, "gravity_mps2") ? _as_f64(tbl["gravity_mps2"], "$ctx.gravity_mps2") :
+        base.gravity_mps2
+    g_mu =
+        haskey(tbl, "gravity_mu") ? _as_f64(tbl["gravity_mu"], "$ctx.gravity_mu") :
+        base.gravity_mu
+    g_r0 =
+        haskey(tbl, "gravity_r0_m") ? _as_f64(tbl["gravity_r0_m"], "$ctx.gravity_r0_m") :
+        base.gravity_r0_m
+
+    return EnvironmentSpec(
+        wind = wind,
+        wind_mean_ned = wind_mean_ned,
+        wind_sigma_ned = wind_sigma_ned,
+        wind_tau_s = wind_tau_s,
+        atmosphere = atmosphere == :isa ? :isa1976 : atmosphere,
+        gravity = gravity,
+        gravity_mps2 = g_mps2,
+        gravity_mu = g_mu,
+        gravity_r0_m = g_r0,
+    )
+end
+
+function _parse_scenario(tbl_any; strict::Bool, ctx::AbstractString, base::ScenarioSpec)
+    tbl = _as_table(tbl_any, ctx)
+    allowed = Set(["arm_time_s", "mission_time_s"])
+    strict && _known_keys!(tbl, allowed, ctx)
+    arm_time_s =
+        haskey(tbl, "arm_time_s") ? _as_f64(tbl["arm_time_s"], "$ctx.arm_time_s") :
+        base.arm_time_s
+    mission_time_s =
+        haskey(tbl, "mission_time_s") ?
+        _as_f64(tbl["mission_time_s"], "$ctx.mission_time_s") : base.mission_time_s
+    return ScenarioSpec(arm_time_s = arm_time_s, mission_time_s = mission_time_s)
+end
+
+function _parse_estimator(tbl_any; strict::Bool, ctx::AbstractString, base::EstimatorSpec)
+    tbl = _as_table(tbl_any, ctx)
+    allowed = Set([
+        "kind",
+        "pos_sigma_m",
+        "vel_sigma_mps",
+        "yaw_sigma_rad",
+        "rate_sigma_rad_s",
+        "bias_tau_s",
+        "rate_bias_sigma_rad_s",
+        "delay_s",
+        "dt_est_s",
+    ])
+    strict && _known_keys!(tbl, allowed, ctx)
+
+    kind = haskey(tbl, "kind") ? _norm_kind(tbl["kind"], "$ctx.kind") : base.kind
+    kind = kind in (:none, :no, :off) ? :none : kind
+    kind in (:none, :noisy_delayed) || error("$ctx.kind must be 'noisy_delayed' or 'none'")
+
+    pos_sigma_m =
+        haskey(tbl, "pos_sigma_m") ? _parse_vec3(tbl["pos_sigma_m"], "$ctx.pos_sigma_m") :
+        base.pos_sigma_m
+    vel_sigma_mps =
+        haskey(tbl, "vel_sigma_mps") ?
+        _parse_vec3(tbl["vel_sigma_mps"], "$ctx.vel_sigma_mps") : base.vel_sigma_mps
+    yaw_sigma_rad =
+        haskey(tbl, "yaw_sigma_rad") ? _as_f64(tbl["yaw_sigma_rad"], "$ctx.yaw_sigma_rad") :
+        base.yaw_sigma_rad
+    rate_sigma_rad_s =
+        haskey(tbl, "rate_sigma_rad_s") ?
+        _parse_vec3(tbl["rate_sigma_rad_s"], "$ctx.rate_sigma_rad_s") :
+        base.rate_sigma_rad_s
+    bias_tau_s =
+        haskey(tbl, "bias_tau_s") ? _as_f64(tbl["bias_tau_s"], "$ctx.bias_tau_s") :
+        base.bias_tau_s
+    rate_bias_sigma_rad_s =
+        haskey(tbl, "rate_bias_sigma_rad_s") ?
+        _parse_vec3(tbl["rate_bias_sigma_rad_s"], "$ctx.rate_bias_sigma_rad_s") :
+        base.rate_bias_sigma_rad_s
+    delay_s =
+        haskey(tbl, "delay_s") ?
+        (tbl["delay_s"] === nothing ? nothing : _as_f64(tbl["delay_s"], "$ctx.delay_s")) :
+        base.delay_s
+    dt_est_s =
+        haskey(tbl, "dt_est_s") ?
+        (
+            tbl["dt_est_s"] === nothing ? nothing :
+            _as_f64(tbl["dt_est_s"], "$ctx.dt_est_s")
+        ) : base.dt_est_s
+
+    return EstimatorSpec(
+        kind = kind,
+        pos_sigma_m = pos_sigma_m,
+        vel_sigma_mps = vel_sigma_mps,
+        yaw_sigma_rad = yaw_sigma_rad,
+        rate_sigma_rad_s = rate_sigma_rad_s,
+        bias_tau_s = bias_tau_s,
+        rate_bias_sigma_rad_s = rate_bias_sigma_rad_s,
+        delay_s = delay_s,
+        dt_est_s = dt_est_s,
+    )
+end
+
 function _parse_integrator(x, ctx::AbstractString; strict::Bool)
     if x isa Symbol
         return x
@@ -373,27 +528,42 @@ function _parse_integrator(x, ctx::AbstractString; strict::Bool)
             ])
             strict && _known_keys!(tbl, allowed, ctx)
 
-            integ = kind_sym === :RK23 ? Integrators.RK23Integrator() : Integrators.RK45Integrator()
+            integ =
+                kind_sym === :RK23 ? Integrators.RK23Integrator() :
+                Integrators.RK45Integrator()
             rtol_pos = _as_f64(get(tbl, "rtol_pos", integ.rtol_pos), "$ctx.rtol_pos")
             atol_pos = _as_f64(get(tbl, "atol_pos", integ.atol_pos), "$ctx.atol_pos")
             rtol_vel = _as_f64(get(tbl, "rtol_vel", integ.rtol_vel), "$ctx.rtol_vel")
             atol_vel = _as_f64(get(tbl, "atol_vel", integ.atol_vel), "$ctx.atol_vel")
-            rtol_ω = haskey(tbl, "rtol_ω") ?
-                _as_f64(tbl["rtol_ω"], "$ctx.rtol_ω") :
-                (haskey(tbl, "rtol_omega") ? _as_f64(tbl["rtol_omega"], "$ctx.rtol_omega") : integ.rtol_ω)
-            atol_ω = haskey(tbl, "atol_ω") ?
-                _as_f64(tbl["atol_ω"], "$ctx.atol_ω") :
-                (haskey(tbl, "atol_omega") ? _as_f64(tbl["atol_omega"], "$ctx.atol_omega") : integ.atol_ω)
-            atol_att_rad = _as_f64(get(tbl, "atol_att_rad", integ.atol_att_rad), "$ctx.atol_att_rad")
-            plant_error_control =
-                _as_bool(get(tbl, "plant_error_control", integ.plant_error_control), "$ctx.plant_error_control")
+            rtol_ω =
+                haskey(tbl, "rtol_ω") ? _as_f64(tbl["rtol_ω"], "$ctx.rtol_ω") :
+                (
+                    haskey(tbl, "rtol_omega") ?
+                    _as_f64(tbl["rtol_omega"], "$ctx.rtol_omega") : integ.rtol_ω
+                )
+            atol_ω =
+                haskey(tbl, "atol_ω") ? _as_f64(tbl["atol_ω"], "$ctx.atol_ω") :
+                (
+                    haskey(tbl, "atol_omega") ?
+                    _as_f64(tbl["atol_omega"], "$ctx.atol_omega") : integ.atol_ω
+                )
+            atol_att_rad =
+                _as_f64(get(tbl, "atol_att_rad", integ.atol_att_rad), "$ctx.atol_att_rad")
+            plant_error_control = _as_bool(
+                get(tbl, "plant_error_control", integ.plant_error_control),
+                "$ctx.plant_error_control",
+            )
 
             rtol_act = _as_f64(get(tbl, "rtol_act", integ.rtol_act), "$ctx.rtol_act")
             atol_act = _as_f64(get(tbl, "atol_act", integ.atol_act), "$ctx.atol_act")
-            rtol_actdot = _as_f64(get(tbl, "rtol_actdot", integ.rtol_actdot), "$ctx.rtol_actdot")
-            atol_actdot = _as_f64(get(tbl, "atol_actdot", integ.atol_actdot), "$ctx.atol_actdot")
-            rtol_rotor = _as_f64(get(tbl, "rtol_rotor", integ.rtol_rotor), "$ctx.rtol_rotor")
-            atol_rotor = _as_f64(get(tbl, "atol_rotor", integ.atol_rotor), "$ctx.atol_rotor")
+            rtol_actdot =
+                _as_f64(get(tbl, "rtol_actdot", integ.rtol_actdot), "$ctx.rtol_actdot")
+            atol_actdot =
+                _as_f64(get(tbl, "atol_actdot", integ.atol_actdot), "$ctx.atol_actdot")
+            rtol_rotor =
+                _as_f64(get(tbl, "rtol_rotor", integ.rtol_rotor), "$ctx.rtol_rotor")
+            atol_rotor =
+                _as_f64(get(tbl, "atol_rotor", integ.atol_rotor), "$ctx.atol_rotor")
             rtol_soc = _as_f64(get(tbl, "rtol_soc", integ.rtol_soc), "$ctx.rtol_soc")
             atol_soc = _as_f64(get(tbl, "atol_soc", integ.atol_soc), "$ctx.atol_soc")
             rtol_v1 = _as_f64(get(tbl, "rtol_v1", integ.rtol_v1), "$ctx.rtol_v1")
@@ -402,11 +572,14 @@ function _parse_integrator(x, ctx::AbstractString; strict::Bool)
             h_min = _as_f64(get(tbl, "h_min", integ.h_min), "$ctx.h_min")
             h_max = _as_f64(get(tbl, "h_max", integ.h_max), "$ctx.h_max")
             h_init = _as_f64(get(tbl, "h_init", integ.h_init), "$ctx.h_init")
-            max_substeps =
-                Int(_as_int(get(tbl, "max_substeps", integ.max_substeps), "$ctx.max_substeps"))
+            max_substeps = Int(
+                _as_int(get(tbl, "max_substeps", integ.max_substeps), "$ctx.max_substeps"),
+            )
             safety = _as_f64(get(tbl, "safety", integ.safety), "$ctx.safety")
-            min_factor = _as_f64(get(tbl, "min_factor", integ.min_factor), "$ctx.min_factor")
-            max_factor = _as_f64(get(tbl, "max_factor", integ.max_factor), "$ctx.max_factor")
+            min_factor =
+                _as_f64(get(tbl, "min_factor", integ.min_factor), "$ctx.min_factor")
+            max_factor =
+                _as_f64(get(tbl, "max_factor", integ.max_factor), "$ctx.max_factor")
             quantize_us =
                 _as_bool(get(tbl, "quantize_us", integ.quantize_us), "$ctx.quantize_us")
 
@@ -476,7 +649,9 @@ function _parse_integrator(x, ctx::AbstractString; strict::Bool)
             strict && _known_keys!(tbl, Set(["kind"]), ctx)
             return Integrators.EulerIntegrator()
         else
-            error("$ctx.kind must be one of 'Euler', 'RK4', 'RK23', 'RK45' (got '$kind_str')")
+            error(
+                "$ctx.kind must be one of 'Euler', 'RK4', 'RK23', 'RK45' (got '$kind_str')",
+            )
         end
     else
         error("$ctx must be a string/symbol or table (e.g. 'RK45' or {kind='RK45'})")
@@ -765,9 +940,32 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
                 "inflow_kT",
                 "inflow_kQ",
                 "rotor_dir",
+                "thrust_calibration_mult",
+                "esc",
+                "motor",
             ]),
             "$ctx.propulsion",
         )
+        esc_tbl = haskey(p, "esc") ? _as_table(p["esc"], "$ctx.propulsion.esc") : nothing
+        if esc_tbl !== nothing
+            strict && _known_keys!(esc_tbl, Set(["eta", "deadzone"]), "$ctx.propulsion.esc")
+        end
+        motor_tbl =
+            haskey(p, "motor") ? _as_table(p["motor"], "$ctx.propulsion.motor") : nothing
+        if motor_tbl !== nothing
+            strict && _known_keys!(
+                motor_tbl,
+                Set([
+                    "kv_rpm_per_volt",
+                    "r_ohm",
+                    "j_kgm2",
+                    "i0_a",
+                    "viscous_friction_nm_per_rad_s",
+                    "max_current_a",
+                ]),
+                "$ctx.propulsion.motor",
+            )
+        end
         prop = PropulsionSpec(
             kind = haskey(p, "kind") ?
                    _sym(_as_string(p["kind"], "$ctx.propulsion.kind")) : prop.kind,
@@ -788,6 +986,43 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
             inflow_kQ = haskey(p, "inflow_kQ") ?
                         _as_f64(p["inflow_kQ"], "$ctx.propulsion.inflow_kQ") :
                         prop.inflow_kQ,
+            esc_eta = esc_tbl !== nothing && haskey(esc_tbl, "eta") ?
+                      _as_f64(esc_tbl["eta"], "$ctx.propulsion.esc.eta") : prop.esc_eta,
+            esc_deadzone = esc_tbl !== nothing && haskey(esc_tbl, "deadzone") ?
+                           _as_f64(esc_tbl["deadzone"], "$ctx.propulsion.esc.deadzone") : prop.esc_deadzone,
+            motor_kv_rpm_per_volt = motor_tbl !== nothing &&
+                                    haskey(motor_tbl, "kv_rpm_per_volt") ?
+                                    _as_f64(
+                motor_tbl["kv_rpm_per_volt"],
+                "$ctx.propulsion.motor.kv_rpm_per_volt",
+            ) : prop.motor_kv_rpm_per_volt,
+            motor_r_ohm = motor_tbl !== nothing && haskey(motor_tbl, "r_ohm") ?
+                          _as_f64(motor_tbl["r_ohm"], "$ctx.propulsion.motor.r_ohm") :
+                          prop.motor_r_ohm,
+            motor_j_kgm2 = motor_tbl !== nothing && haskey(motor_tbl, "j_kgm2") ?
+                           _as_f64(motor_tbl["j_kgm2"], "$ctx.propulsion.motor.j_kgm2") : prop.motor_j_kgm2,
+            motor_i0_a = motor_tbl !== nothing && haskey(motor_tbl, "i0_a") ?
+                         _as_f64(motor_tbl["i0_a"], "$ctx.propulsion.motor.i0_a") :
+                         prop.motor_i0_a,
+            motor_viscous_friction_nm_per_rad_s = motor_tbl !== nothing && haskey(
+                motor_tbl,
+                "viscous_friction_nm_per_rad_s",
+            ) ?
+                                                  _as_f64(
+                motor_tbl["viscous_friction_nm_per_rad_s"],
+                "$ctx.propulsion.motor.viscous_friction_nm_per_rad_s",
+            ) : prop.motor_viscous_friction_nm_per_rad_s,
+            motor_max_current_a = motor_tbl !== nothing &&
+                                  haskey(motor_tbl, "max_current_a") ?
+                                  _as_f64(
+                motor_tbl["max_current_a"],
+                "$ctx.propulsion.motor.max_current_a",
+            ) : prop.motor_max_current_a,
+            thrust_calibration_mult = haskey(p, "thrust_calibration_mult") ?
+                                      _as_f64(
+                p["thrust_calibration_mult"],
+                "$ctx.propulsion.thrust_calibration_mult",
+            ) : prop.thrust_calibration_mult,
             rotor_dir = haskey(p, "rotor_dir") ?
                         [
                 Float64(v) for v in _as_array(p["rotor_dir"], "$ctx.propulsion.rotor_dir")
@@ -870,7 +1105,7 @@ end
 
 function _parse_power(tbl_any; strict::Bool, ctx::AbstractString, base::PowerSpec)
     tbl = _as_table(tbl_any, ctx)
-    strict && _known_keys!(tbl, Set(["batteries", "buses"]), ctx)
+    strict && _known_keys!(tbl, Set(["batteries", "buses", "share_mode"]), ctx)
 
     bats = base.batteries
     if haskey(tbl, "batteries")
@@ -991,7 +1226,15 @@ function _parse_power(tbl_any; strict::Bool, ctx::AbstractString, base::PowerSpe
         end
     end
 
-    return PowerSpec(batteries = bats, buses = buses)
+    share_mode = base.share_mode
+    if haskey(tbl, "share_mode")
+        share_mode = _norm_kind(tbl["share_mode"], "$ctx.share_mode")
+        share_mode =
+            share_mode in (:inv_r0, :equal) ? share_mode :
+            error("$ctx.share_mode must be 'inv_r0' or 'equal'")
+    end
+
+    return PowerSpec(batteries = bats, buses = buses, share_mode = share_mode)
 end
 
 
@@ -1065,6 +1308,9 @@ function spec_from_toml_dict(
         "home",
         "px4",
         "timeline",
+        "environment",
+        "scenario",
+        "estimator",
         "plant",
         "airframe",
         "actuation",
@@ -1096,6 +1342,9 @@ function spec_from_toml_dict(
             name = name_sym,
             px4 = base_spec.px4,
             timeline = base_spec.timeline,
+            environment = base_spec.environment,
+            scenario = base_spec.scenario,
+            estimator = base_spec.estimator,
             plant = base_spec.plant,
             airframe = base_spec.airframe,
             actuation = base_spec.actuation,
@@ -1111,6 +1360,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1139,6 +1391,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1221,6 +1476,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1263,6 +1521,90 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
+            plant = spec.plant,
+            airframe = spec.airframe,
+            actuation = spec.actuation,
+            power = spec.power,
+            sensors = spec.sensors,
+            seed = spec.seed,
+            home = spec.home,
+            telemetry = spec.telemetry,
+            log_sinks = spec.log_sinks,
+        )
+    end
+
+    # --- environment ---
+    if haskey(cfg, "environment")
+        env = _parse_environment(
+            cfg["environment"];
+            strict = strict,
+            ctx = "environment",
+            base = spec.environment,
+        )
+        spec = AircraftSpec(
+            name = spec.name,
+            px4 = spec.px4,
+            timeline = spec.timeline,
+            environment = env,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
+            plant = spec.plant,
+            airframe = spec.airframe,
+            actuation = spec.actuation,
+            power = spec.power,
+            sensors = spec.sensors,
+            seed = spec.seed,
+            home = spec.home,
+            telemetry = spec.telemetry,
+            log_sinks = spec.log_sinks,
+        )
+    end
+
+    # --- scenario ---
+    if haskey(cfg, "scenario")
+        scn = _parse_scenario(
+            cfg["scenario"];
+            strict = strict,
+            ctx = "scenario",
+            base = spec.scenario,
+        )
+        spec = AircraftSpec(
+            name = spec.name,
+            px4 = spec.px4,
+            timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = scn,
+            estimator = spec.estimator,
+            plant = spec.plant,
+            airframe = spec.airframe,
+            actuation = spec.actuation,
+            power = spec.power,
+            sensors = spec.sensors,
+            seed = spec.seed,
+            home = spec.home,
+            telemetry = spec.telemetry,
+            log_sinks = spec.log_sinks,
+        )
+    end
+
+    # --- estimator ---
+    if haskey(cfg, "estimator")
+        est = _parse_estimator(
+            cfg["estimator"];
+            strict = strict,
+            ctx = "estimator",
+            base = spec.estimator,
+        )
+        spec = AircraftSpec(
+            name = spec.name,
+            px4 = spec.px4,
+            timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = est,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1292,6 +1634,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1316,6 +1661,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = af,
             actuation = spec.actuation,
@@ -1340,6 +1688,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = act,
@@ -1359,6 +1710,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1379,6 +1733,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = spec.airframe,
             actuation = spec.actuation,
@@ -1411,6 +1768,9 @@ function spec_from_toml_dict(
             name = spec.name,
             px4 = spec.px4,
             timeline = spec.timeline,
+            environment = spec.environment,
+            scenario = spec.scenario,
+            estimator = spec.estimator,
             plant = spec.plant,
             airframe = af,
             actuation = spec.actuation,

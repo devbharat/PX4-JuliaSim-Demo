@@ -373,24 +373,106 @@ Notes:
 * Yaw reaction torque sign is owned by the *propulsion* model (e.g. `Propulsion.QuadRotorSet`).
   The rigid-body model consumes signed per-rotor shaft torque from propulsion.
 """
-Base.@kwdef struct QuadrotorParams{N}
-    mass::Float64 = 1.5
-    inertia_kgm2::Mat3 = @SMatrix [
-        0.029125 0.0 0.0
-        0.0 0.029125 0.0
-        0.0 0.0 0.055225
-    ]
-    inertia_inv_kgm2::Mat3 = @SMatrix [
-        1.0 / 0.029125 0.0 0.0
-        0.0 1.0 / 0.029125 0.0
-        0.0 0.0 1.0 / 0.055225
-    ]
+struct QuadrotorParams{N}
+    mass::Float64
+    inertia_kgm2::Mat3
+    inertia_inv_kgm2::Mat3
     rotor_pos_body::SVector{N,Vec3}
     rotor_axis_body::SVector{N,Vec3}
     rotor_inertia_kgm2::SVector{N,Float64}
     rotor_dir::SVector{N,Float64}
-    linear_drag::Float64 = 0.05             # N/(m/s) per axis (simple model)
-    angular_damping::Vec3 = vec3(0.02, 0.02, 0.01)
+    linear_drag::Float64             # N/(m/s) per axis (simple model)
+    angular_damping::Vec3
+end
+
+"""Construct QuadrotorParams and derive inertia inverse if omitted.
+
+If `inertia_inv_kgm2` is not provided, it is computed from `inertia_kgm2`.
+Set `check_inertia_inv=true` to validate `inertia_kgm2 * inertia_inv_kgm2 ≈ I`.
+"""
+function QuadrotorParams{N}(;
+    mass::Float64 = 1.5,
+    inertia_kgm2::Mat3 = (@SMatrix [
+        0.029125 0.0 0.0
+        0.0 0.029125 0.0
+        0.0 0.0 0.055225
+    ]),
+    inertia_inv_kgm2::Union{Nothing,Mat3} = nothing,
+    rotor_pos_body::SVector{N,Vec3},
+    rotor_axis_body::SVector{N,Vec3},
+    rotor_inertia_kgm2::SVector{N,Float64},
+    rotor_dir::SVector{N,Float64},
+    linear_drag::Float64 = 0.05,
+    angular_damping::Vec3 = vec3(0.02, 0.02, 0.01),
+    check_inertia_inv::Bool = false,
+) where {N}
+    I_inv = inertia_inv_kgm2 === nothing ? inv(inertia_kgm2) : inertia_inv_kgm2
+    if check_inertia_inv
+        I3 = @SMatrix [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
+        err = maximum(abs, inertia_kgm2 * I_inv - I3)
+        err <= 1e-6 ||
+            error("inertia_inv_kgm2 is inconsistent with inertia_kgm2 (max err=$(err))")
+    end
+    return QuadrotorParams{N}(
+        mass,
+        inertia_kgm2,
+        I_inv,
+        rotor_pos_body,
+        rotor_axis_body,
+        rotor_inertia_kgm2,
+        rotor_dir,
+        linear_drag,
+        angular_damping,
+    )
+end
+
+function QuadrotorParams(;
+    mass::Float64 = 1.5,
+    inertia_kgm2::Mat3 = (@SMatrix [
+        0.029125 0.0 0.0
+        0.0 0.029125 0.0
+        0.0 0.0 0.055225
+    ]),
+    inertia_inv_kgm2::Union{Nothing,Mat3} = nothing,
+    rotor_pos_body::AbstractVector{Vec3},
+    rotor_axis_body::AbstractVector{Vec3},
+    rotor_inertia_kgm2::AbstractVector{<:Real},
+    rotor_dir::AbstractVector{<:Real},
+    linear_drag::Float64 = 0.05,
+    angular_damping::Vec3 = vec3(0.02, 0.02, 0.01),
+    check_inertia_inv::Bool = false,
+)
+    N = length(rotor_pos_body)
+    length(rotor_axis_body) == N ||
+        error("rotor_axis_body length must match rotor_pos_body")
+    length(rotor_inertia_kgm2) == N ||
+        error("rotor_inertia_kgm2 length must match rotor_pos_body")
+    length(rotor_dir) == N || error("rotor_dir length must match rotor_pos_body")
+
+    I_inv = inertia_inv_kgm2 === nothing ? inv(inertia_kgm2) : inertia_inv_kgm2
+    if check_inertia_inv
+        I3 = @SMatrix [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
+        err = maximum(abs, inertia_kgm2 * I_inv - I3)
+        err <= 1e-6 ||
+            error("inertia_inv_kgm2 is inconsistent with inertia_kgm2 (max err=$(err))")
+    end
+
+    rotor_pos_sv = SVector{N,Vec3}(rotor_pos_body)
+    rotor_axis_sv = SVector{N,Vec3}(rotor_axis_body)
+    rotor_inertia_sv = SVector{N,Float64}(ntuple(i -> Float64(rotor_inertia_kgm2[i]), N))
+    rotor_dir_sv = SVector{N,Float64}(ntuple(i -> Float64(rotor_dir[i]), N))
+
+    return QuadrotorParams{N}(
+        mass,
+        inertia_kgm2,
+        I_inv,
+        rotor_pos_sv,
+        rotor_axis_sv,
+        rotor_inertia_sv,
+        rotor_dir_sv,
+        linear_drag,
+        angular_damping,
+    )
 end
 
 """A minimal N-propulsor multirotor rigid-body model.

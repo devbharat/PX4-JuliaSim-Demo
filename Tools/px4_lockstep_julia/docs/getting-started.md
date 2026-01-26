@@ -47,7 +47,8 @@ The easiest path is the run helper (it also regenerates `src/UORBGenerated.jl` w
 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
-This produces `sim_log.csv` at the path configured in the spec (see `examples/specs/iris_lockstep.toml`).
+This produces `sim_log.csv` at the path configured in the spec (see `examples/specs/iris_lockstep.toml`,
+which defaults to `Tools/sim_log.csv` from the PX4 root).
 On Linux, update the `.dylib` extension in the example specs to `.so`.
 
 Example output:
@@ -63,7 +64,7 @@ INFO  [navigator] Climb to 12.0 meters above home
 Plot the resulting log:
 
 ```bash
-python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log sim_log.csv
+python Tools/px4_lockstep_julia/scripts/plot_sim_log.py --log Tools/sim_log.csv
 ```
 
 Example output:

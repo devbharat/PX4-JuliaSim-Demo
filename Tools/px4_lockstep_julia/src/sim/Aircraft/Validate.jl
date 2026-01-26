@@ -84,9 +84,8 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     # Inertia tensor sanity (symmetric positive-definite).
     Ixx, Iyy, Izz = spec.airframe.inertia_diag_kgm2
     Ixy, Ixz, Iyz = spec.airframe.inertia_products_kgm2
-    all(isfinite, (Ixx, Iyy, Izz, Ixy, Ixz, Iyz)) || throw(
-        ArgumentError("airframe inertia contains non-finite values"),
-    )
+    all(isfinite, (Ixx, Iyy, Izz, Ixy, Ixz, Iyz)) ||
+        throw(ArgumentError("airframe inertia contains non-finite values"))
     Ixx > 0.0 || throw(ArgumentError("airframe inertia: Ixx must be > 0 (got $Ixx)"))
     Iyy > 0.0 || throw(ArgumentError("airframe inertia: Iyy must be > 0 (got $Iyy)"))
     Izz > 0.0 || throw(ArgumentError("airframe inertia: Izz must be > 0 (got $Izz)"))
@@ -97,8 +96,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
         ),
     )
     detI =
-        Ixx * (Iyy * Izz - Iyz * Iyz) -
-        Ixy * (Ixy * Izz - Iyz * Ixz) +
+        Ixx * (Iyy * Izz - Iyz * Iyz) - Ixy * (Ixy * Izz - Iyz * Ixz) +
         Ixz * (Ixy * Iyz - Iyy * Ixz)
     detI > 0.0 || throw(
         ArgumentError(

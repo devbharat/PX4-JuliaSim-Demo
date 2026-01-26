@@ -25,6 +25,9 @@ multirotor plant models.
   - propulsion owns motor/prop parameters and rotor spin direction for yaw reaction
 - **Calibrated defaults:** `default_multirotor_set` provides a reasonable generic
   multirotor baseline intended for closed-loop testing (not high-fidelity aero).
+- **TOML-driven parameters:** the default motor/prop set is configured via
+  `[airframe.propulsion]` with optional `[airframe.propulsion.esc]` and
+  `[airframe.propulsion.motor]` sub-tables in the aircraft spec.
 
 ## Integration contracts
 

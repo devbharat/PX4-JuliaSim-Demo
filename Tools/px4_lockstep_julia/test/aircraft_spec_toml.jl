@@ -157,3 +157,116 @@ end
         @test_throws ErrorException Sim.Aircraft.load_spec(path_bad; strict = true)
     end
 end
+
+@testset "AircraftSpec environment/scenario/estimator parsing" begin
+    mktempdir() do dir
+        toml_env = """
+        schema_version = 1
+        [environment]
+        wind = "ou"
+        wind_mean_ned = [1.0, 2.0, 3.0]
+        wind_sigma_ned = [0.1, 0.2, 0.3]
+        wind_tau_s = 4.0
+        atmosphere = "isa1976"
+        gravity = "uniform"
+        gravity_mps2 = 9.7
+
+        [scenario]
+        arm_time_s = 0.5
+        mission_time_s = 1.5
+
+        [estimator]
+        kind = "noisy_delayed"
+        pos_sigma_m = [0.1, 0.2, 0.3]
+        vel_sigma_mps = [0.4, 0.5, 0.6]
+        yaw_sigma_rad = 0.02
+        rate_sigma_rad_s = [0.01, 0.02, 0.03]
+        bias_tau_s = 40.0
+        rate_bias_sigma_rad_s = [0.004, 0.005, 0.006]
+        delay_s = 0.008
+        dt_est_s = 0.004
+        """
+        path_env = joinpath(dir, "env_estimator.toml")
+        write(path_env, toml_env)
+        spec = Sim.Aircraft.load_spec(path_env; strict = true)
+        @test spec.environment.wind == :ou
+        @test spec.environment.wind_mean_ned == Sim.Types.vec3(1.0, 2.0, 3.0)
+        @test spec.environment.wind_sigma_ned == Sim.Types.vec3(0.1, 0.2, 0.3)
+        @test spec.environment.wind_tau_s == 4.0
+        @test spec.environment.atmosphere == :isa1976
+        @test spec.environment.gravity == :uniform
+        @test spec.environment.gravity_mps2 == 9.7
+        @test spec.scenario.arm_time_s == 0.5
+        @test spec.scenario.mission_time_s == 1.5
+        @test spec.estimator.kind == :noisy_delayed
+        @test spec.estimator.pos_sigma_m == Sim.Types.vec3(0.1, 0.2, 0.3)
+        @test spec.estimator.vel_sigma_mps == Sim.Types.vec3(0.4, 0.5, 0.6)
+        @test spec.estimator.yaw_sigma_rad == 0.02
+        @test spec.estimator.rate_sigma_rad_s == Sim.Types.vec3(0.01, 0.02, 0.03)
+        @test spec.estimator.bias_tau_s == 40.0
+        @test spec.estimator.rate_bias_sigma_rad_s == Sim.Types.vec3(0.004, 0.005, 0.006)
+        @test spec.estimator.delay_s == 0.008
+        @test spec.estimator.dt_est_s == 0.004
+
+        toml_est_none = """
+        schema_version = 1
+        [estimator]
+        kind = "none"
+        """
+        path_none = joinpath(dir, "estimator_none.toml")
+        write(path_none, toml_est_none)
+        spec_none = Sim.Aircraft.load_spec(path_none; strict = true)
+        @test spec_none.estimator.kind == :none
+    end
+end
+
+@testset "AircraftSpec propulsion + power share_mode parsing" begin
+    mktempdir() do dir
+        toml = """
+        schema_version = 1
+        [airframe.propulsion]
+        km_m = 0.04
+        V_nom = 11.5
+        rho_nom = 1.1
+        rotor_radius_m = 0.2
+        inflow_kT = 7.0
+        inflow_kQ = 6.0
+        thrust_calibration_mult = 2.5
+
+        [airframe.propulsion.esc]
+        eta = 0.95
+        deadzone = 0.05
+
+        [airframe.propulsion.motor]
+        kv_rpm_per_volt = 1000.0
+        r_ohm = 0.2
+        j_kgm2 = 2.0e-5
+        i0_a = 0.4
+        viscous_friction_nm_per_rad_s = 1.0e-6
+        max_current_a = 55.0
+
+        [power]
+        share_mode = "equal"
+        """
+        path = joinpath(dir, "propulsion_power.toml")
+        write(path, toml)
+        spec = Sim.Aircraft.load_spec(path; strict = true)
+        p = spec.airframe.propulsion
+        @test p.km_m == 0.04
+        @test p.V_nom == 11.5
+        @test p.rho_nom == 1.1
+        @test p.rotor_radius_m == 0.2
+        @test p.inflow_kT == 7.0
+        @test p.inflow_kQ == 6.0
+        @test p.thrust_calibration_mult == 2.5
+        @test p.esc_eta == 0.95
+        @test p.esc_deadzone == 0.05
+        @test p.motor_kv_rpm_per_volt == 1000.0
+        @test p.motor_r_ohm == 0.2
+        @test p.motor_j_kgm2 == 2.0e-5
+        @test p.motor_i0_a == 0.4
+        @test p.motor_viscous_friction_nm_per_rad_s == 1.0e-6
+        @test p.motor_max_current_a == 55.0
+        @test spec.power.share_mode == :equal
+    end
+end

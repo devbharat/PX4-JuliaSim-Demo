@@ -174,6 +174,50 @@ contact = "flat_ground"   # flat_ground|no_contact
 # mu = 0.8
 ```
 
+### `[environment]`
+
+```toml
+[environment]
+wind = "ou"                # ou|none|constant
+wind_mean_ned = [0.0, 0.0, 0.0]
+wind_sigma_ned = [1.5, 1.5, 0.5]
+wind_tau_s = 3.0
+
+atmosphere = "isa1976"
+
+gravity = "uniform"        # uniform|spherical
+gravity_mps2 = 9.80665
+# gravity_mu = 3.986004418e14
+# gravity_r0_m = 6_371_000.0
+```
+
+### `[scenario]`
+
+```toml
+[scenario]
+arm_time_s = 1.0
+mission_time_s = 2.0
+```
+
+### `[estimator]`
+
+```toml
+[estimator]
+kind = "noisy_delayed"    # noisy_delayed|none
+pos_sigma_m = [0.02, 0.02, 0.02]
+vel_sigma_mps = [0.05, 0.05, 0.05]
+yaw_sigma_rad = 0.01
+rate_sigma_rad_s = [0.005, 0.005, 0.005]
+bias_tau_s = 50.0
+rate_bias_sigma_rad_s = [0.001, 0.001, 0.001]
+delay_s = 0.008           # must be multiple of dt_est_s
+dt_est_s = 0.004          # defaults to dt_autopilot_s (must match it for now)
+```
+
+**Note:** the estimator is stepped at the autopilot cadence. For now, `dt_est_s`
+must equal `timeline.dt_autopilot_s` to keep the delayed-estimator timing exact.
+Decimated estimator ticks are a future extension.
+
 ### `[airframe]`
 
 ```toml
@@ -209,14 +253,42 @@ omega_body = [0.0, 0.0, 0.0]
 [airframe.propulsion]
 kind = "multirotor_default"
 km_m = 0.05
+V_nom = 12.0
+rho_nom = 1.225
+rotor_radius_m = 0.127
+inflow_kT = 8.0
+inflow_kQ = 8.0
+# thrust_calibration_mult = 2.0
+# rotor_dir = [1, 1, -1, -1]
+
+# ESC + motor internal parameters (optional):
+# [airframe.propulsion.esc]
+# eta = 0.98
+# deadzone = 0.02
+#
+# [airframe.propulsion.motor]
+# kv_rpm_per_volt = 920.0
+# r_ohm = 0.25
+# j_kgm2 = 1.2e-5
+# i0_a = 0.6
+# viscous_friction_nm_per_rad_s = 2.0e-6
+# max_current_a = 60.0
 ```
 
 Currently only `multirotor` is supported; other kinds will error during validation.
+
+**Notes:**
+
+- `rotor_dir` encodes the **reaction torque sign** on the body. Rotor spin direction
+  is opposite this sign and is what the gyro-coupling uses. Values must be ±1.
+- `thrust_calibration_mult` scales the hover thrust target used to calibrate `kT`.
+  The default `2.0` preserves the original tuning (hover at the previous duty).
 
 ### `[power]`
 
 ```toml
 [power]
+share_mode = "inv_r0"   # inv_r0|equal
 
 [[power.batteries]]
 id = "bat1"

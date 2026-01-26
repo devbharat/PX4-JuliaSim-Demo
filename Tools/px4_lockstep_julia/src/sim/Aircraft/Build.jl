@@ -83,50 +83,84 @@ end
     return integ
 end
 
-function _default_env_live(; home)
-    wind = Environment.OUWind(
-        mean = Types.vec3(0.0, 0.0, 0.0),
-        σ = Types.vec3(1.5, 1.5, 0.5),
-        τ_s = 3.0,
-    )
-    atm = Environment.ISA1976()
-    g = Environment.UniformGravity(9.80665)
+function _build_atmosphere(env::EnvironmentSpec)
+    env.atmosphere === :isa1976 || error("Unsupported atmosphere=$(env.atmosphere)")
+    return Environment.ISA1976()
+end
+
+function _build_gravity(env::EnvironmentSpec)
+    if env.gravity === :uniform
+        return Environment.UniformGravity(env.gravity_mps2)
+    elseif env.gravity === :spherical
+        return Environment.SphericalGravity(env.gravity_mu, env.gravity_r0_m)
+    end
+    error("Unsupported gravity=$(env.gravity)")
+end
+
+function _build_wind(env::EnvironmentSpec)
+    if env.wind === :none
+        return Environment.NoWind()
+    elseif env.wind === :ou
+        return Environment.OUWind(
+            mean = env.wind_mean_ned,
+            σ = env.wind_sigma_ned,
+            τ_s = env.wind_tau_s,
+        )
+    elseif env.wind === :constant
+        return Environment.ConstantWind(env.wind_mean_ned)
+    end
+    error("Unsupported wind=$(env.wind)")
+end
+
+function _build_env_live(spec::AircraftSpec)
+    envspec = spec.environment
     return Environment.EnvironmentModel(
-        atmosphere = atm,
-        wind = wind,
-        gravity = g,
-        origin = home,
+        atmosphere = _build_atmosphere(envspec),
+        wind = _build_wind(envspec),
+        gravity = _build_gravity(envspec),
+        origin = spec.home,
     )
 end
 
-function _default_env_replay(; home)
-    atm = Environment.ISA1976()
-    g = Environment.UniformGravity(9.80665)
+function _build_env_replay(spec::AircraftSpec)
+    envspec = spec.environment
     return Environment.EnvironmentModel(
-        atmosphere = atm,
+        atmosphere = _build_atmosphere(envspec),
         wind = Environment.NoWind(),
-        gravity = g,
-        origin = home,
+        gravity = _build_gravity(envspec),
+        origin = spec.home,
     )
 end
 
-function _default_scenario(; arm_time_s::Float64 = 1.0, mission_time_s::Float64 = 2.0)
+function _build_scenario(spec::AircraftSpec)
     s = Scenario.EventScenario()
-    Scenario.arm_at!(s, arm_time_s)
-    Scenario.mission_start_at!(s, mission_time_s)
+    Scenario.arm_at!(s, spec.scenario.arm_time_s)
+    Scenario.mission_start_at!(s, spec.scenario.mission_time_s)
     return s
 end
 
-function _default_estimator(dt_ap_s::Float64)
+function _build_estimator(spec::AircraftSpec)
+    est = spec.estimator
+    if est.kind === :none
+        return nothing
+    end
     base = Estimators.NoisyEstimator(
-        pos_sigma_m = Types.vec3(0.02, 0.02, 0.02),
-        vel_sigma_mps = Types.vec3(0.05, 0.05, 0.05),
-        yaw_sigma_rad = 0.01,
-        rate_sigma_rad_s = Types.vec3(0.005, 0.005, 0.005),
-        bias_tau_s = 50.0,
-        rate_bias_sigma_rad_s = Types.vec3(0.001, 0.001, 0.001),
+        pos_sigma_m = est.pos_sigma_m,
+        vel_sigma_mps = est.vel_sigma_mps,
+        yaw_sigma_rad = est.yaw_sigma_rad,
+        rate_sigma_rad_s = est.rate_sigma_rad_s,
+        bias_tau_s = est.bias_tau_s,
+        rate_bias_sigma_rad_s = est.rate_bias_sigma_rad_s,
     )
-    return Estimators.DelayedEstimator(base; delay_s = 2 * dt_ap_s, dt_est = dt_ap_s)
+    delay_s = est.delay_s === nothing ? 2 * spec.timeline.dt_autopilot_s : est.delay_s
+    dt_est = est.dt_est_s === nothing ? spec.timeline.dt_autopilot_s : est.dt_est_s
+    if abs(dt_est - spec.timeline.dt_autopilot_s) > 1e-12
+        error(
+            "estimator.dt_est_s must match timeline.dt_autopilot_s " *
+            "(dt_est_s=$(dt_est), dt_autopilot_s=$(spec.timeline.dt_autopilot_s))",
+        )
+    end
+    return Estimators.DelayedEstimator(base; delay_s = delay_s, dt_est = dt_est)
 end
 
 function _build_default_timeline(;
@@ -275,7 +309,7 @@ function _build_power_network(spec::AircraftSpec)
         avionics_load_w = SVector{K,Float64}(
             ntuple(i -> Float64(spec.power.buses[i].avionics_load_w), K),
         ),
-        share_mode = :inv_r0,
+        share_mode = spec.power.share_mode,
     )
 end
 
@@ -329,12 +363,25 @@ function _build_vehicle(
         rotor_radius_m = p.rotor_radius_m,
         inflow_kT = p.inflow_kT,
         inflow_kQ = p.inflow_kQ,
+        esc_eta = p.esc_eta,
+        esc_deadzone = p.esc_deadzone,
+        motor_kv_rpm_per_volt = p.motor_kv_rpm_per_volt,
+        motor_r_ohm = p.motor_r_ohm,
+        motor_j_kgm2 = p.motor_j_kgm2,
+        motor_i0_a = p.motor_i0_a,
+        motor_viscous_friction_nm_per_rad_s = p.motor_viscous_friction_nm_per_rad_s,
+        motor_max_current_a = p.motor_max_current_a,
+        thrust_calibration_mult = p.thrust_calibration_mult,
     )
     if p.rotor_dir !== nothing
         length(p.rotor_dir) == N || error(
             "propulsion.rotor_dir length=$(length(p.rotor_dir)) does not match N=$(N)",
         )
         prop.rotor_dir = SVector{N,Float64}(ntuple(i -> Float64(p.rotor_dir[i]), N))
+    end
+    @inbounds for i = 1:N
+        v = prop.rotor_dir[i]
+        abs(abs(v) - 1.0) <= 1e-6 || error("propulsion.rotor_dir[$i] must be ±1 (got $(v))")
     end
 
     # Rigid-body inertia tensor (kg*m^2).
@@ -356,8 +403,7 @@ function _build_vehicle(
         "airframe inertia: leading 2x2 principal minor must be > 0 (got $m2); check Ixy",
     )
     detI =
-        Ixx * (Iyy * Izz - Iyz * Iyz) -
-        Ixy * (Ixy * Izz - Iyz * Ixz) +
+        Ixx * (Iyy * Izz - Iyz * Iyz) - Ixy * (Ixy * Izz - Iyz * Ixz) +
         Ixz * (Ixy * Iyz - Iyy * Ixz)
     detI > 0.0 || error(
         "airframe inertia: determinant must be > 0 (got $detI); inertia tensor is not positive-definite",
@@ -366,7 +412,8 @@ function _build_vehicle(
     I_body_inv = inv(I_body)
 
     # Rotor inertias (kg*m^2) are owned by the propulsion units.
-    rotor_J = SVector{N,Float64}(ntuple(i -> Propulsion.rotor_inertia_kgm2(prop.units[i]), N))
+    rotor_J =
+        SVector{N,Float64}(ntuple(i -> Propulsion.rotor_inertia_kgm2(prop.units[i]), N))
 
     params = Vehicles.QuadrotorParams{N}(
         mass = a.mass_kg,
@@ -537,7 +584,7 @@ function build_aircraft_instance(
         end
 
         # Environment: disable live wind (wind comes from trace).
-        env = _default_env_replay(home = spec.home)
+        env = _build_env_replay(spec)
 
         # Build param objects from spec but override initial RB to match the recording.
         vehicle = _build_vehicle(spec; x0_override = rec.plant0.rb)
@@ -607,10 +654,10 @@ function build_aircraft_instance(
     # ---------
 
     # Environment with live wind.
-    env = _default_env_live(home = spec.home)
+    env = _build_env_live(spec)
 
     # Scenario + timeline.
-    scenario_obj = _default_scenario()
+    scenario_obj = _build_scenario(spec)
     scenario_src = Sources.LiveScenarioSource(scenario_obj)
     timeline = _build_default_timeline(
         t_end_s = spec.timeline.t_end_s,
@@ -624,12 +671,14 @@ function build_aircraft_instance(
     # Wind + estimator.
     wind_src =
         Sources.LiveWindSource(env.wind, Random.Xoshiro(spec.seed), spec.timeline.dt_wind_s)
-    estimator_obj = _default_estimator(spec.timeline.dt_autopilot_s)
-    estimator_src = Sources.LiveEstimatorSource(
-        estimator_obj,
-        Random.Xoshiro(spec.seed + 1),
-        spec.timeline.dt_autopilot_s,
-    )
+    estimator_obj = _build_estimator(spec)
+    estimator_src =
+        estimator_obj === nothing ? Sources.NullEstimatorSource() :
+        Sources.LiveEstimatorSource(
+            estimator_obj,
+            Random.Xoshiro(spec.seed + 1),
+            spec.timeline.dt_autopilot_s,
+        )
 
     # Plant-side param objects.
     vehicle = _build_vehicle(spec)

@@ -25,8 +25,10 @@ gaps so users know what is and is not being simulated.
 
 ## Environment
 
-- **Uniform gravity** and a **simplified ISA atmosphere** are used by default.
-- **Wind is modelled as a stochastic process** (OU wind) without terrain/CFD effects.
+- **Simplified gravity and atmosphere models** (uniform/spherical gravity, ISA1976)
+  are supported; higher‑fidelity geopotential/atmo models are not implemented.
+- **Wind is modeled as a stochastic process** (OU wind or constant wind) without
+  terrain/CFD effects.
 
 ## Sensors and estimation
 

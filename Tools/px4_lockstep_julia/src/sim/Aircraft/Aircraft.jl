@@ -19,8 +19,8 @@ include("TOMLIO.jl")
 export PX4Spec, PX4ParamSpec, TimelineSpec, PlantSpec, AircraftSpec
 
 # Composition specs
-export AirframeSpec, PropulsionSpec
-export ActuationSpec, MotorSpec, ServoSpec
+export AirframeSpec, PropulsionSpec, EscSpec, MotorSpec
+export ActuationSpec, MotorChannelSpec, ServoSpec
 export PowerSpec, PowerBusSpec, BatterySpec
 export AbstractActuatorModelSpec,
     DirectActuatorSpec, FirstOrderActuatorSpec, SecondOrderActuatorSpec

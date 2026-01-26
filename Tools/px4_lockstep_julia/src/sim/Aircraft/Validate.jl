@@ -27,6 +27,62 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
         spec.timeline.dt_phys_s > 0 || throw(ArgumentError("dt_phys_s must be > 0"))
     end
 
+    # Environment sanity
+    env = spec.environment
+    env.wind in (:none, :ou, :constant) ||
+        throw(ArgumentError("environment.wind must be one of :none|:ou|:constant"))
+    all(isfinite, (env.wind_mean_ned[1], env.wind_mean_ned[2], env.wind_mean_ned[3])) ||
+        throw(ArgumentError("environment.wind_mean_ned contains non-finite values"))
+    all(isfinite, (env.wind_sigma_ned[1], env.wind_sigma_ned[2], env.wind_sigma_ned[3])) ||
+        throw(ArgumentError("environment.wind_sigma_ned contains non-finite values"))
+    if env.wind === :ou
+        env.wind_tau_s > 0 ||
+            throw(ArgumentError("environment.wind_tau_s must be > 0 for OU wind"))
+        (
+            env.wind_sigma_ned[1] >= 0 &&
+            env.wind_sigma_ned[2] >= 0 &&
+            env.wind_sigma_ned[3] >= 0
+        ) || throw(ArgumentError("environment.wind_sigma_ned must be >= 0 for OU wind"))
+    end
+    env.atmosphere === :isa1976 ||
+        throw(ArgumentError("environment.atmosphere must be :isa1976"))
+    env.gravity in (:uniform, :spherical) ||
+        throw(ArgumentError("environment.gravity must be :uniform or :spherical"))
+    if env.gravity === :uniform
+        env.gravity_mps2 > 0 || throw(ArgumentError("environment.gravity_mps2 must be > 0"))
+    else
+        env.gravity_mu > 0 || throw(ArgumentError("environment.gravity_mu must be > 0"))
+        env.gravity_r0_m > 0 || throw(ArgumentError("environment.gravity_r0_m must be > 0"))
+    end
+
+    # Scenario sanity
+    function _require_us_quantized(val::Float64, name::AbstractString)
+        val >= 0 || throw(ArgumentError("$name must be >= 0 (got $val)"))
+        us = round(Int64, val * 1e6)
+        abs(val - (Float64(us) * 1e-6)) <= 1e-15 ||
+            throw(ArgumentError("$name must be an integer multiple of 1 µs (got $(val))"))
+    end
+    _require_us_quantized(spec.scenario.arm_time_s, "scenario.arm_time_s")
+    _require_us_quantized(spec.scenario.mission_time_s, "scenario.mission_time_s")
+
+    # Estimator sanity
+    est = spec.estimator
+    est.kind in (:none, :noisy_delayed) ||
+        throw(ArgumentError("estimator.kind must be :none or :noisy_delayed"))
+    if est.kind !== :none
+        if est.dt_est_s !== nothing
+            abs(est.dt_est_s - spec.timeline.dt_autopilot_s) <= 1e-12 || throw(
+                ArgumentError(
+                    "estimator.dt_est_s must match timeline.dt_autopilot_s " *
+                    "(dt_est_s=$(est.dt_est_s), dt_autopilot_s=$(spec.timeline.dt_autopilot_s))",
+                ),
+            )
+        end
+        if est.delay_s !== nothing
+            _require_us_quantized(est.delay_s, "estimator.delay_s")
+        end
+    end
+
     # -----------------------------
     # Instance graph sanity
     # -----------------------------
@@ -121,6 +177,23 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             throw(ArgumentError("airframe.rotor_axis_body_m[$i] is near-zero: $a"))
     end
 
+    # Propulsion rotor direction overrides (optional).
+    if spec.airframe.propulsion.rotor_dir !== nothing
+        rotor_dir = spec.airframe.propulsion.rotor_dir
+        length(rotor_dir) == length(motors) || throw(
+            ArgumentError(
+                "airframe.propulsion.rotor_dir length=$(length(rotor_dir)) must match actuation.motors length=$(length(motors))",
+            ),
+        )
+        for (i, v) in enumerate(rotor_dir)
+            isfinite(v) ||
+                throw(ArgumentError("airframe.propulsion.rotor_dir[$i] is not finite"))
+            abs(abs(v) - 1.0) <= 1e-6 || throw(
+                ArgumentError("airframe.propulsion.rotor_dir[$i] must be ±1 (got $(v))"),
+            )
+        end
+    end
+
     # Power system (multi-battery + multi-bus)
     bats = spec.power.batteries
     isempty(bats) && throw(ArgumentError("power.batteries must be non-empty"))
@@ -170,6 +243,10 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             ArgumentError("Battery id=$bid must be assigned to exactly one bus (got $c)"),
         )
     end
+
+    # Power share mode
+    spec.power.share_mode in (:inv_r0, :equal) ||
+        throw(ArgumentError("power.share_mode must be :inv_r0 or :equal"))
 
     if mode === :replay
         recording_in === nothing &&

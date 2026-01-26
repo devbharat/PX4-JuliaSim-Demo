@@ -71,7 +71,9 @@ end
     elseif name === :RK45
         return Integrators.RK45Integrator()
     else
-        error("Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)")
+        throw(
+            ArgumentError("Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)"),
+        )
     end
 end
 
@@ -84,7 +86,8 @@ end
 end
 
 function _build_atmosphere(env::EnvironmentSpec)
-    env.atmosphere === :isa1976 || error("Unsupported atmosphere=$(env.atmosphere)")
+    env.atmosphere === :isa1976 ||
+        throw(ArgumentError("Unsupported atmosphere=$(env.atmosphere)"))
     return Environment.ISA1976()
 end
 
@@ -94,7 +97,7 @@ function _build_gravity(env::EnvironmentSpec)
     elseif env.gravity === :spherical
         return Environment.SphericalGravity(env.gravity_mu, env.gravity_r0_m)
     end
-    error("Unsupported gravity=$(env.gravity)")
+    throw(ArgumentError("Unsupported gravity=$(env.gravity)"))
 end
 
 function _build_wind(env::EnvironmentSpec)
@@ -109,7 +112,7 @@ function _build_wind(env::EnvironmentSpec)
     elseif env.wind === :constant
         return Environment.ConstantWind(env.wind_mean_ned)
     end
-    error("Unsupported wind=$(env.wind)")
+    throw(ArgumentError("Unsupported wind=$(env.wind)"))
 end
 
 function _build_env_live(spec::AircraftSpec)
@@ -154,12 +157,6 @@ function _build_estimator(spec::AircraftSpec)
     )
     delay_s = est.delay_s === nothing ? 2 * spec.timeline.dt_autopilot_s : est.delay_s
     dt_est = est.dt_est_s === nothing ? spec.timeline.dt_autopilot_s : est.dt_est_s
-    if abs(dt_est - spec.timeline.dt_autopilot_s) > 1e-12
-        error(
-            "estimator.dt_est_s must match timeline.dt_autopilot_s " *
-            "(dt_est_s=$(dt_est), dt_autopilot_s=$(spec.timeline.dt_autopilot_s))",
-        )
-    end
     return Estimators.DelayedEstimator(base; delay_s = delay_s, dt_est = dt_est)
 end
 
@@ -201,7 +198,7 @@ function _build_actuator_model(mspec::AbstractActuatorModelSpec, N::Int)
             rate_limit = mspec.rate_limit,
         )
     else
-        error("Unknown actuator model spec: $(typeof(mspec))")
+        throw(ArgumentError("Unknown actuator model spec: $(typeof(mspec))"))
     end
 end
 
@@ -209,7 +206,7 @@ function _select_battery_spec(spec::AircraftSpec, id::BatteryId)
     for b in spec.power.batteries
         b.id == id && return b
     end
-    error("Battery id=$(id) not found in spec.power.batteries")
+    throw(ArgumentError("Battery id=$(id) not found in spec.power.batteries"))
 end
 
 function _build_battery(bs::BatterySpec)
@@ -240,7 +237,7 @@ function _build_battery(bs::BatterySpec)
             emerg_thr = bs.emerg_thr,
         )
     else
-        error("Unsupported battery model=$(bs.model) (expected :thevenin|:ideal)")
+        throw(ArgumentError("Unsupported battery model=$(bs.model) (expected :thevenin|:ideal)"))
     end
 end
 
@@ -250,7 +247,7 @@ Battery *state* lives in `Plant.PlantState` and is integrated by the plant model
 """
 function _build_batteries(spec::AircraftSpec)
     B = length(spec.power.batteries)
-    B > 0 || error("power.batteries must be non-empty")
+    B > 0 || throw(ArgumentError("power.batteries must be non-empty"))
     return ntuple(i -> _build_battery(spec.power.batteries[i]), Val(B))
 end
 
@@ -284,23 +281,31 @@ function _build_power_network(spec::AircraftSpec)
     for (k, bus) in enumerate(spec.power.buses)
         for mid in bus.motor_ids
             i = get(motor_idx, mid, 0)
-            i != 0 || error("Bus $(bus.id) references unknown motor id=$mid")
-            bus_for_motor[i] == 0 || error("Motor id=$mid is assigned to multiple buses")
+            i != 0 || throw(ArgumentError("Bus $(bus.id) references unknown motor id=$mid"))
+            bus_for_motor[i] == 0 ||
+                throw(ArgumentError("Motor id=$mid is assigned to multiple buses"))
             bus_for_motor[i] = k
         end
         for bid in bus.battery_ids
             i = get(bat_idx, bid, 0)
-            i != 0 || error("Bus $(bus.id) references unknown battery id=$bid")
+            i != 0 ||
+                throw(ArgumentError("Bus $(bus.id) references unknown battery id=$bid"))
             bus_for_battery[i] == 0 ||
-                error("Battery id=$bid is assigned to multiple buses")
+                throw(ArgumentError("Battery id=$bid is assigned to multiple buses"))
             bus_for_battery[i] = k
         end
     end
 
     any(x -> x == 0, bus_for_motor) &&
-        error("Every motor must be assigned to a power bus (missing assignments detected)")
-    any(x -> x == 0, bus_for_battery) && error(
-        "Every battery must be assigned to a power bus (missing assignments detected)",
+        throw(
+            ArgumentError(
+                "Every motor must be assigned to a power bus (missing assignments detected)",
+            ),
+        )
+    any(x -> x == 0, bus_for_battery) && throw(
+        ArgumentError(
+            "Every battery must be assigned to a power bus (missing assignments detected)",
+        ),
     )
 
     return PowerNetwork{N,B,K}(
@@ -319,40 +324,27 @@ function _build_vehicle(
 )
     a = spec.airframe
 
-    # Generic multirotor rigid-body model with arbitrary propulsor count.
-    a.kind === :multirotor ||
-        error("Unsupported airframe.kind=$(a.kind) (supports :multirotor)")
-
     # Motor/servo actuator models are sized to match the PX4 ABI arrays.
     motor_act = _build_actuator_model(spec.actuation.motor_actuators, 12)
     servo_act = _build_actuator_model(spec.actuation.servo_actuators, 8)
 
     # Rigid-body model params.
     N = length(spec.actuation.motors)
-    length(a.rotor_pos_body_m) == N || error(
-        "airframe.rotor_pos_body_m length=$(length(a.rotor_pos_body_m)) must match actuation.motors length=$(N)",
-    )
     rotor_pos = SVector{N,Vec3}(ntuple(i -> a.rotor_pos_body_m[i], N))
 
     # Propulsor axes: required spec field, normalized here.
     axis_src = a.rotor_axis_body_m
-    length(axis_src) == N || error(
-        "airframe.rotor_axis_body_m length=$(length(axis_src)) must match actuation.motors length=$(N)",
-    )
     rotor_axis = SVector{N,Vec3}(
-        ntuple(
-            i -> begin
-                v = axis_src[i]
-                n2 = v[1] * v[1] + v[2] * v[2] + v[3] * v[3]
-                n2 > 1e-12 || error("airframe.rotor_axis_body_m[$i] is near-zero: $v")
-                invn = inv(sqrt(n2))
-                v .* invn
-            end,
-            N,
-        ),
+        ntuple(i -> begin
+            v = axis_src[i]
+            invn = inv(sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3]))
+            v .* invn
+        end, N),
     )
     # Propulsion (generic multirotor default motor+prop set).
-    hover_T = a.mass_kg * 9.80665 / Float64(N)
+    gravity_model = _build_gravity(spec.environment)
+    g_ned = Environment.gravity_accel(gravity_model, Types.vec3(0.0, 0.0, 0.0), 0.0)
+    hover_T = a.mass_kg * g_ned[3] / Float64(N)
     p = a.propulsion
     prop = Propulsion.default_multirotor_set(
         N = N,
@@ -363,25 +355,18 @@ function _build_vehicle(
         rotor_radius_m = p.rotor_radius_m,
         inflow_kT = p.inflow_kT,
         inflow_kQ = p.inflow_kQ,
-        esc_eta = p.esc_eta,
-        esc_deadzone = p.esc_deadzone,
-        motor_kv_rpm_per_volt = p.motor_kv_rpm_per_volt,
-        motor_r_ohm = p.motor_r_ohm,
-        motor_j_kgm2 = p.motor_j_kgm2,
-        motor_i0_a = p.motor_i0_a,
-        motor_viscous_friction_nm_per_rad_s = p.motor_viscous_friction_nm_per_rad_s,
-        motor_max_current_a = p.motor_max_current_a,
+        esc_eta = p.esc.eta,
+        esc_deadzone = p.esc.deadzone,
+        motor_kv_rpm_per_volt = p.motor.kv_rpm_per_volt,
+        motor_r_ohm = p.motor.r_ohm,
+        motor_j_kgm2 = p.motor.j_kgm2,
+        motor_i0_a = p.motor.i0_a,
+        motor_viscous_friction_nm_per_rad_s = p.motor.viscous_friction_nm_per_rad_s,
+        motor_max_current_a = p.motor.max_current_a,
         thrust_calibration_mult = p.thrust_calibration_mult,
     )
     if p.rotor_dir !== nothing
-        length(p.rotor_dir) == N || error(
-            "propulsion.rotor_dir length=$(length(p.rotor_dir)) does not match N=$(N)",
-        )
         prop.rotor_dir = SVector{N,Float64}(ntuple(i -> Float64(p.rotor_dir[i]), N))
-    end
-    @inbounds for i = 1:N
-        v = prop.rotor_dir[i]
-        abs(abs(v) - 1.0) <= 1e-6 || error("propulsion.rotor_dir[$i] must be ±1 (got $(v))")
     end
 
     # Rigid-body inertia tensor (kg*m^2).
@@ -393,21 +378,6 @@ function _build_vehicle(
         Ixz Iyz Izz
     ]
 
-    # Basic sanity checks: inertia must be symmetric positive-definite.
-    # (Sylvester's criterion for 3x3 SPD matrices.)
-    Ixx > 0.0 || error("airframe inertia: Ixx must be > 0 (got $Ixx)")
-    Iyy > 0.0 || error("airframe inertia: Iyy must be > 0 (got $Iyy)")
-    Izz > 0.0 || error("airframe inertia: Izz must be > 0 (got $Izz)")
-    m2 = Ixx * Iyy - Ixy * Ixy
-    m2 > 0.0 || error(
-        "airframe inertia: leading 2x2 principal minor must be > 0 (got $m2); check Ixy",
-    )
-    detI =
-        Ixx * (Iyy * Izz - Iyz * Iyz) - Ixy * (Ixy * Izz - Iyz * Ixz) +
-        Ixz * (Ixy * Iyz - Iyy * Ixz)
-    detI > 0.0 || error(
-        "airframe inertia: determinant must be > 0 (got $detI); inertia tensor is not positive-definite",
-    )
     # Precompute inverse for the hot path.
     I_body_inv = inv(I_body)
 
@@ -450,12 +420,12 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
     N = length(spec.actuation.motors)
     pos = spec.airframe.rotor_pos_body_m
     length(pos) == N ||
-        error("Cannot derive CA params: rotor_pos_body_m length != motor count")
+        throw(ArgumentError("Cannot derive CA params: rotor_pos_body_m length != motor count"))
 
     # Rotor/propulsor axes: required by spec; thrust is applied along -axis_b.
     axis_src = spec.airframe.rotor_axis_body_m
     length(axis_src) == N ||
-        error("Cannot derive CA params: rotor_axis_body_m length != motor count")
+        throw(ArgumentError("Cannot derive CA params: rotor_axis_body_m length != motor count"))
 
     km_mag = spec.airframe.propulsion.km_m
     rotor_dir = vehicle.propulsion.rotor_dir
@@ -470,7 +440,7 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
         a = axis_src[i]
         n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
         n2 > 1e-12 ||
-            error("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a")
+            throw(ArgumentError("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a"))
         invn = inv(sqrt(n2))
         axis_b = a .* invn
         # PX4 CA_ROTOR*_A* expects the *thrust vector direction* in body frame.
@@ -568,8 +538,10 @@ function build_aircraft_instance(
         elseif recording_in isa AbstractString
             Recording.read_recording(recording_in)
         else
-            error(
-                "build_aircraft_instance(mode=:replay) requires recording_in (Tier0Recording or path)",
+            throw(
+                ArgumentError(
+                    "build_aircraft_instance(mode=:replay) requires recording_in (Tier0Recording or path)",
+                ),
             )
         end
 
@@ -577,9 +549,11 @@ function build_aircraft_instance(
         scn_tr = try
             Recording.scenario_traces(rec)
         catch e
-            error(
-                "Recording is missing scenario streams needed for replay (faults/ap_cmd/landed). " *
-                "Re-record with record_faults_evt=true.\n\nOriginal error: $e",
+            throw(
+                ArgumentError(
+                    "Recording is missing scenario streams needed for replay (faults/ap_cmd/landed). " *
+                    "Re-record with record_faults_evt=true.\n\nOriginal error: $e",
+                ),
             )
         end
 
@@ -596,13 +570,17 @@ function build_aircraft_instance(
         # Explicit actuator -> physical propulsor mapping.
         N = length(spec.actuation.motors)
         if length(rec.plant0.rotor_ω) != N
-            error(
-                "Replay recording motor count does not match spec: recording N=$(length(rec.plant0.rotor_ω)) spec N=$(N)",
+            throw(
+                ArgumentError(
+                    "Replay recording motor count does not match spec: recording N=$(length(rec.plant0.rotor_ω)) spec N=$(N)",
+                ),
             )
         end
         if length(rec.plant0.power.soc) != length(batteries)
-            error(
-                "Replay recording battery count does not match spec: recording B=$(length(rec.plant0.power.soc)) spec B=$(length(batteries))",
+            throw(
+                ArgumentError(
+                    "Replay recording battery count does not match spec: recording B=$(length(rec.plant0.power.soc)) spec B=$(length(batteries))",
+                ),
             )
         end
         motor_map = Vehicles.MotorMap{N}(
@@ -908,7 +886,11 @@ function build_engine(
             return eng
 
         else
-            error("build_engine: unknown mode=$(mode) (expected :live|:record|:replay)")
+            throw(
+                ArgumentError(
+                    "build_engine: unknown mode=$(mode) (expected :live|:record|:replay)",
+                ),
+            )
         end
     finally
         ap === nothing || Autopilots.close!(ap)

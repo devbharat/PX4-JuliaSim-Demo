@@ -158,6 +158,20 @@ end
     end
 end
 
+@testset "AircraftSpec integrator string normalization" begin
+    mktempdir() do dir
+        toml = """
+        schema_version = 1
+        [plant]
+        integrator = "rk45"
+        """
+        path = joinpath(dir, "integrator_string.toml")
+        write(path, toml)
+        spec = Sim.Aircraft.load_spec(path; strict = true)
+        @test spec.plant.integrator === :RK45
+    end
+end
+
 @testset "AircraftSpec environment/scenario/estimator parsing" begin
     mktempdir() do dir
         toml_env = """
@@ -220,6 +234,112 @@ end
     end
 end
 
+@testset "AircraftSpec validation errors (environment/scenario/estimator/power)" begin
+    mktempdir() do dir
+        # OU wind requires tau > 0.
+        toml_wind = """
+        schema_version = 1
+        [environment]
+        wind = "ou"
+        wind_tau_s = 0.0
+        """
+        path_wind = joinpath(dir, "wind_bad.toml")
+        write(path_wind, toml_wind)
+        spec_wind = Sim.Aircraft.load_spec(path_wind; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec_wind)
+
+        # Uniform gravity requires g > 0.
+        toml_grav = """
+        schema_version = 1
+        [environment]
+        gravity = "uniform"
+        gravity_mps2 = 0.0
+        """
+        path_grav = joinpath(dir, "grav_bad.toml")
+        write(path_grav, toml_grav)
+        spec_grav = Sim.Aircraft.load_spec(path_grav; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec_grav)
+
+        # Scenario times must be microsecond-quantized.
+        toml_scn = """
+        schema_version = 1
+        [scenario]
+        arm_time_s = 0.0000005
+        mission_time_s = 0.0
+        """
+        path_scn = joinpath(dir, "scenario_bad.toml")
+        write(path_scn, toml_scn)
+        spec_scn = Sim.Aircraft.load_spec(path_scn; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec_scn)
+
+        # Estimator dt must match dt_autopilot_s.
+        toml_est = """
+        schema_version = 1
+        [timeline]
+        dt_autopilot_s = 0.004
+        [estimator]
+        kind = "noisy_delayed"
+        dt_est_s = 0.002
+        """
+        path_est = joinpath(dir, "estimator_bad.toml")
+        write(path_est, toml_est)
+        spec_est = Sim.Aircraft.load_spec(path_est; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec_est)
+
+        # Power share_mode must be recognized.
+        toml_power = """
+        schema_version = 1
+        [power]
+        share_mode = "bogus"
+        """
+        path_power = joinpath(dir, "power_bad.toml")
+        write(path_power, toml_power)
+        @test_throws ErrorException Sim.Aircraft.load_spec(path_power; strict = true)
+    end
+end
+
+@testset "AircraftSpec inertia conflict strict mode" begin
+    mktempdir() do dir
+        toml_conflict = """
+        schema_version = 1
+        [airframe]
+        inertia_kgm2 = [
+          [0.02, 0.001, 0.0],
+          [0.001, 0.03, 0.0],
+          [0.0, 0.0, 0.04],
+        ]
+        inertia_diag_kgm2 = [0.02, 0.03, 0.04]
+        """
+        path = joinpath(dir, "inertia_conflict.toml")
+        write(path, toml_conflict)
+        @test_throws ErrorException Sim.Aircraft.load_spec(path; strict = true, base_spec = :default)
+    end
+end
+
+@testset "AircraftSpec rotor_dir validation" begin
+    mktempdir() do dir
+        toml = """
+        schema_version = 1
+        [airframe]
+        rotor_pos_body_m = [[0.1, 0.0, 0.0], [-0.1, 0.0, 0.0]]
+        rotor_axis_body_m = [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]
+        [actuation]
+        [[actuation.motors]]
+        id = "m1"
+        channel = 1
+        [[actuation.motors]]
+        id = "m2"
+        channel = 2
+        [airframe.propulsion]
+        rotor_dir = [1.0, 0.5]
+        """
+        path = joinpath(dir, "rotor_dir_bad.toml")
+        write(path, toml)
+        spec = Sim.Aircraft.load_spec(path; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec)
+    end
+end
+
 @testset "AircraftSpec propulsion + power share_mode parsing" begin
     mktempdir() do dir
         toml = """
@@ -259,14 +379,14 @@ end
         @test p.inflow_kT == 7.0
         @test p.inflow_kQ == 6.0
         @test p.thrust_calibration_mult == 2.5
-        @test p.esc_eta == 0.95
-        @test p.esc_deadzone == 0.05
-        @test p.motor_kv_rpm_per_volt == 1000.0
-        @test p.motor_r_ohm == 0.2
-        @test p.motor_j_kgm2 == 2.0e-5
-        @test p.motor_i0_a == 0.4
-        @test p.motor_viscous_friction_nm_per_rad_s == 1.0e-6
-        @test p.motor_max_current_a == 55.0
+        @test p.esc.eta == 0.95
+        @test p.esc.deadzone == 0.05
+        @test p.motor.kv_rpm_per_volt == 1000.0
+        @test p.motor.r_ohm == 0.2
+        @test p.motor.j_kgm2 == 2.0e-5
+        @test p.motor.i0_a == 0.4
+        @test p.motor.viscous_friction_nm_per_rad_s == 1.0e-6
+        @test p.motor.max_current_a == 55.0
         @test spec.power.share_mode == :equal
     end
 end

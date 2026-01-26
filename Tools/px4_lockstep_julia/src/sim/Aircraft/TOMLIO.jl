@@ -631,7 +631,14 @@ function _parse_integrator(x, ctx::AbstractString; strict::Bool)
     if x isa Symbol
         return x
     elseif x isa AbstractString
-        return Symbol(x)
+        kind_str = lowercase(_as_string(x, ctx))
+        kind_sym = Symbol(uppercase(kind_str))
+        if kind_sym === :EULER
+            return :Euler
+        elseif kind_sym === :RK4 || kind_sym === :RK23 || kind_sym === :RK45
+            return kind_sym
+        end
+        error("$ctx must be one of 'Euler', 'RK4', 'RK23', 'RK45' (got '$kind_str')")
     elseif x isa AbstractDict
         tbl = _as_table(x, ctx)
         kind_raw = get(tbl, "kind", nothing)
@@ -848,6 +855,12 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
     inertia_prod = base.inertia_products_kgm2
 
     if haskey(tbl, "inertia_kgm2")
+        if strict &&
+           (haskey(tbl, "inertia_diag_kgm2") || haskey(tbl, "inertia_products_kgm2"))
+            error(
+                "$ctx.inertia_kgm2 cannot be combined with inertia_diag_kgm2 or inertia_products_kgm2 in strict mode",
+            )
+        end
         I_any = tbl["inertia_kgm2"]
         arr = _as_array(I_any, "$ctx.inertia_kgm2")
         if length(arr) == 3 && all(x -> x isa AbstractVector, arr)
@@ -965,6 +978,50 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
                 "$ctx.propulsion.motor",
             )
         end
+        esc = prop.esc
+        if esc_tbl !== nothing
+            esc = EscSpec(
+                eta = haskey(esc_tbl, "eta") ?
+                      _as_f64(esc_tbl["eta"], "$ctx.propulsion.esc.eta") : esc.eta,
+                deadzone = haskey(esc_tbl, "deadzone") ?
+                           _as_f64(esc_tbl["deadzone"], "$ctx.propulsion.esc.deadzone") :
+                           esc.deadzone,
+            )
+        end
+
+        motor = prop.motor
+        if motor_tbl !== nothing
+            motor = MotorSpec(
+                kv_rpm_per_volt = haskey(motor_tbl, "kv_rpm_per_volt") ?
+                                  _as_f64(
+                    motor_tbl["kv_rpm_per_volt"],
+                    "$ctx.propulsion.motor.kv_rpm_per_volt",
+                ) : motor.kv_rpm_per_volt,
+                r_ohm = haskey(motor_tbl, "r_ohm") ?
+                        _as_f64(motor_tbl["r_ohm"], "$ctx.propulsion.motor.r_ohm") :
+                        motor.r_ohm,
+                j_kgm2 = haskey(motor_tbl, "j_kgm2") ?
+                         _as_f64(motor_tbl["j_kgm2"], "$ctx.propulsion.motor.j_kgm2") :
+                         motor.j_kgm2,
+                i0_a = haskey(motor_tbl, "i0_a") ?
+                       _as_f64(motor_tbl["i0_a"], "$ctx.propulsion.motor.i0_a") :
+                       motor.i0_a,
+                viscous_friction_nm_per_rad_s = haskey(
+                    motor_tbl,
+                    "viscous_friction_nm_per_rad_s",
+                ) ?
+                                                _as_f64(
+                    motor_tbl["viscous_friction_nm_per_rad_s"],
+                    "$ctx.propulsion.motor.viscous_friction_nm_per_rad_s",
+                ) : motor.viscous_friction_nm_per_rad_s,
+                max_current_a = haskey(motor_tbl, "max_current_a") ?
+                                _as_f64(
+                    motor_tbl["max_current_a"],
+                    "$ctx.propulsion.motor.max_current_a",
+                ) : motor.max_current_a,
+            )
+        end
+
         prop = PropulsionSpec(
             kind = haskey(p, "kind") ?
                    _sym(_as_string(p["kind"], "$ctx.propulsion.kind")) : prop.kind,
@@ -985,38 +1042,8 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
             inflow_kQ = haskey(p, "inflow_kQ") ?
                         _as_f64(p["inflow_kQ"], "$ctx.propulsion.inflow_kQ") :
                         prop.inflow_kQ,
-            esc_eta = esc_tbl !== nothing && haskey(esc_tbl, "eta") ?
-                      _as_f64(esc_tbl["eta"], "$ctx.propulsion.esc.eta") : prop.esc_eta,
-            esc_deadzone = esc_tbl !== nothing && haskey(esc_tbl, "deadzone") ?
-                           _as_f64(esc_tbl["deadzone"], "$ctx.propulsion.esc.deadzone") : prop.esc_deadzone,
-            motor_kv_rpm_per_volt = motor_tbl !== nothing &&
-                                    haskey(motor_tbl, "kv_rpm_per_volt") ?
-                                    _as_f64(
-                motor_tbl["kv_rpm_per_volt"],
-                "$ctx.propulsion.motor.kv_rpm_per_volt",
-            ) : prop.motor_kv_rpm_per_volt,
-            motor_r_ohm = motor_tbl !== nothing && haskey(motor_tbl, "r_ohm") ?
-                          _as_f64(motor_tbl["r_ohm"], "$ctx.propulsion.motor.r_ohm") :
-                          prop.motor_r_ohm,
-            motor_j_kgm2 = motor_tbl !== nothing && haskey(motor_tbl, "j_kgm2") ?
-                           _as_f64(motor_tbl["j_kgm2"], "$ctx.propulsion.motor.j_kgm2") : prop.motor_j_kgm2,
-            motor_i0_a = motor_tbl !== nothing && haskey(motor_tbl, "i0_a") ?
-                         _as_f64(motor_tbl["i0_a"], "$ctx.propulsion.motor.i0_a") :
-                         prop.motor_i0_a,
-            motor_viscous_friction_nm_per_rad_s = motor_tbl !== nothing && haskey(
-                motor_tbl,
-                "viscous_friction_nm_per_rad_s",
-            ) ?
-                                                  _as_f64(
-                motor_tbl["viscous_friction_nm_per_rad_s"],
-                "$ctx.propulsion.motor.viscous_friction_nm_per_rad_s",
-            ) : prop.motor_viscous_friction_nm_per_rad_s,
-            motor_max_current_a = motor_tbl !== nothing &&
-                                  haskey(motor_tbl, "max_current_a") ?
-                                  _as_f64(
-                motor_tbl["max_current_a"],
-                "$ctx.propulsion.motor.max_current_a",
-            ) : prop.motor_max_current_a,
+            esc = esc,
+            motor = motor,
             thrust_calibration_mult = haskey(p, "thrust_calibration_mult") ?
                                       _as_f64(
                 p["thrust_calibration_mult"],
@@ -1055,13 +1082,13 @@ function _parse_actuation(tbl_any; strict::Bool, ctx::AbstractString, base::Actu
     motors = base.motors
     if haskey(tbl, "motors")
         arr = _as_array(tbl["motors"], "$ctx.motors")
-        motors = MotorSpec[]
+        motors = MotorChannelSpec[]
         for (i, m_any) in enumerate(arr)
             m = _as_table(m_any, "$ctx.motors[$i]")
             strict && _known_keys!(m, Set(["id", "channel"]), "$ctx.motors[$i]")
             id = _sym(_as_string(get(m, "id", nothing), "$ctx.motors[$i].id"))
             ch = _as_int(get(m, "channel", nothing), "$ctx.motors[$i].channel")
-            push!(motors, MotorSpec(id = id, channel = ch))
+            push!(motors, MotorChannelSpec(id = id, channel = ch))
         end
     end
 
@@ -1335,43 +1362,24 @@ function spec_from_toml_dict(
     end
 
     # Start from provided base spec (or default struct values).
-    spec =
-        base_spec === nothing ? AircraftSpec(name = name_sym) :
-        AircraftSpec(
-            name = name_sym,
-            px4 = base_spec.px4,
-            timeline = base_spec.timeline,
-            environment = base_spec.environment,
-            scenario = base_spec.scenario,
-            estimator = base_spec.estimator,
-            plant = base_spec.plant,
-            airframe = base_spec.airframe,
-            actuation = base_spec.actuation,
-            power = base_spec.power,
-            sensors = base_spec.sensors,
-            seed = base_spec.seed,
-            home = base_spec.home,
-            telemetry = base_spec.telemetry,
-            log_sinks = base_spec.log_sinks,
-        )
+    base = base_spec === nothing ? AircraftSpec(name = name_sym) : base_spec
+    name = name_sym
+    px4 = base.px4
+    timeline = base.timeline
+    environment = base.environment
+    scenario = base.scenario
+    estimator = base.estimator
+    plant = base.plant
+    airframe = base.airframe
+    actuation = base.actuation
+    power = base.power
+    sensors = base.sensors
+    seed = base.seed
+    home = base.home
+    telemetry = base.telemetry
+    log_sinks = base.log_sinks
     if atbl !== nothing && haskey(atbl, "seed")
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = _as_int(atbl["seed"], "aircraft.seed"),
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
-        )
+        seed = _as_int(atbl["seed"], "aircraft.seed")
     end
 
     # --- home ---
@@ -1380,28 +1388,11 @@ function spec_from_toml_dict(
         strict && _known_keys!(h, Set(["lat_deg", "lon_deg", "alt_msl_m"]), "home")
         home = Autopilots.HomeLocation(
             lat_deg = haskey(h, "lat_deg") ? _as_f64(h["lat_deg"], "home.lat_deg") :
-                      spec.home.lat_deg,
+                      home.lat_deg,
             lon_deg = haskey(h, "lon_deg") ? _as_f64(h["lon_deg"], "home.lon_deg") :
-                      spec.home.lon_deg,
+                      home.lon_deg,
             alt_msl_m = haskey(h, "alt_msl_m") ?
-                        _as_f64(h["alt_msl_m"], "home.alt_msl_m") : spec.home.alt_msl_m,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+                        _as_f64(h["alt_msl_m"], "home.alt_msl_m") : home.alt_msl_m,
         )
     end
 
@@ -1425,16 +1416,16 @@ function spec_from_toml_dict(
                 base_dir,
                 _as_string(p["mission_path"], "px4.mission_path");
                 strict = strict,
-            ) : spec.px4.mission_path
+            ) : px4.mission_path
         libpath =
             haskey(p, "libpath") ?
             _resolve_path(
                 base_dir,
                 _as_string(p["libpath"], "px4.libpath");
                 strict = strict,
-            ) : spec.px4.libpath
+            ) : px4.libpath
 
-        lockstep_cfg = spec.px4.lockstep_config
+        lockstep_cfg = px4.lockstep_config
         if haskey(p, "lockstep")
             lockstep_cfg = _parse_lockstep_cfg(
                 p["lockstep"];
@@ -1444,22 +1435,20 @@ function spec_from_toml_dict(
             )
         end
 
-        uorb_cfg = spec.px4.uorb_cfg
+        uorb_cfg = px4.uorb_cfg
         if haskey(p, "uorb")
             uorb_cfg = _parse_uorb_interface(p["uorb"]; strict = strict, ctx = "px4.uorb")
         end
 
         params =
             haskey(p, "params") ?
-            _parse_px4_params(p["params"]; strict = strict, ctx = "px4.params") :
-            spec.px4.params
+            _parse_px4_params(p["params"]; strict = strict, ctx = "px4.params") : px4.params
         derive_ca =
             haskey(p, "derive_ca_params") ?
-            _as_bool(p["derive_ca_params"], "px4.derive_ca_params") :
-            spec.px4.derive_ca_params
+            _as_bool(p["derive_ca_params"], "px4.derive_ca_params") : px4.derive_ca_params
         edge_trigger =
             haskey(p, "edge_trigger") ? _as_bool(p["edge_trigger"], "px4.edge_trigger") :
-            spec.px4.edge_trigger
+            px4.edge_trigger
 
         px4 = PX4Spec(
             mission_path = mission_path,
@@ -1469,24 +1458,6 @@ function spec_from_toml_dict(
             params = params,
             derive_ca_params = derive_ca,
             edge_trigger = edge_trigger,
-        )
-
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
         )
     end
 
@@ -1500,119 +1471,50 @@ function spec_from_toml_dict(
         )
         timeline = TimelineSpec(
             t_end_s = haskey(t, "t_end_s") ? _as_f64(t["t_end_s"], "timeline.t_end_s") :
-                      spec.timeline.t_end_s,
+                      timeline.t_end_s,
             dt_autopilot_s = haskey(t, "dt_autopilot_s") ?
                              _as_f64(t["dt_autopilot_s"], "timeline.dt_autopilot_s") :
-                             spec.timeline.dt_autopilot_s,
+                             timeline.dt_autopilot_s,
             dt_wind_s = haskey(t, "dt_wind_s") ?
                         _as_f64(t["dt_wind_s"], "timeline.dt_wind_s") :
-                        spec.timeline.dt_wind_s,
+                        timeline.dt_wind_s,
             dt_log_s = haskey(t, "dt_log_s") ?
-                       _as_f64(t["dt_log_s"], "timeline.dt_log_s") :
-                       spec.timeline.dt_log_s,
+                       _as_f64(t["dt_log_s"], "timeline.dt_log_s") : timeline.dt_log_s,
             dt_phys_s = haskey(t, "dt_phys_s") ?
                         (
                 t["dt_phys_s"] === nothing ? nothing :
                 _as_f64(t["dt_phys_s"], "timeline.dt_phys_s")
-            ) : spec.timeline.dt_phys_s,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            ) : timeline.dt_phys_s,
         )
     end
 
     # --- environment ---
     if haskey(cfg, "environment")
-        env = _parse_environment(
+        environment = _parse_environment(
             cfg["environment"];
             strict = strict,
             ctx = "environment",
-            base = spec.environment,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = env,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            base = environment,
         )
     end
 
     # --- scenario ---
     if haskey(cfg, "scenario")
-        scn = _parse_scenario(
+        scenario = _parse_scenario(
             cfg["scenario"];
             strict = strict,
             ctx = "scenario",
-            base = spec.scenario,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = scn,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            base = scenario,
         )
     end
 
     # --- estimator ---
     if haskey(cfg, "estimator")
-        est = _parse_estimator(
+        estimator = _parse_estimator(
             cfg["estimator"];
             strict = strict,
             ctx = "estimator",
-            base = spec.estimator,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = est,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            base = estimator,
         )
     end
 
@@ -1623,166 +1525,80 @@ function spec_from_toml_dict(
         integ =
             haskey(p, "integrator") ?
             _parse_integrator(p["integrator"], "plant.integrator"; strict = strict) :
-            spec.plant.integrator
+            plant.integrator
         contact =
             haskey(p, "contact") ?
             _parse_contact(p["contact"]; strict = strict, ctx = "plant.contact") :
-            spec.plant.contact
+            plant.contact
         plant = PlantSpec(integrator = integ, contact = contact)
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
-        )
     end
 
     # --- airframe ---
     if haskey(cfg, "airframe")
-        af = _parse_airframe(
+        airframe = _parse_airframe(
             cfg["airframe"];
             strict = strict,
             ctx = "airframe",
-            base = spec.airframe,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = af,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            base = airframe,
         )
     end
 
     # --- actuation ---
     if haskey(cfg, "actuation")
-        act = _parse_actuation(
+        actuation = _parse_actuation(
             cfg["actuation"];
             strict = strict,
             ctx = "actuation",
-            base = spec.actuation,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = act,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            base = actuation,
         )
     end
 
     # --- power ---
     if haskey(cfg, "power")
-        pw = _parse_power(cfg["power"]; strict = strict, ctx = "power", base = spec.power)
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = pw,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
-        )
+        power = _parse_power(cfg["power"]; strict = strict, ctx = "power", base = power)
     end
 
     # --- sensors ---
     if haskey(cfg, "sensors")
         # Allow either [sensors] table (with sensors=[...]) or [[sensors]] array at top-level.
-        sens = _parse_sensors(cfg["sensors"]; strict = strict, ctx = "sensors")
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = spec.airframe,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = sens,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
-        )
+        sensors = _parse_sensors(cfg["sensors"]; strict = strict, ctx = "sensors")
     end
 
     # Convenience: if rotor axes not specified, default to classic multirotor axes.
     # This helps keep TOMLs shorter while preserving the required axis fields.
-    if isempty(spec.airframe.rotor_axis_body_m) && !isempty(spec.airframe.rotor_pos_body_m)
-        N = length(spec.airframe.rotor_pos_body_m)
-        af = AirframeSpec(
-            kind = spec.airframe.kind,
-            mass_kg = spec.airframe.mass_kg,
-            inertia_diag_kgm2 = spec.airframe.inertia_diag_kgm2,
-            inertia_products_kgm2 = spec.airframe.inertia_products_kgm2,
-            rotor_pos_body_m = spec.airframe.rotor_pos_body_m,
+    if isempty(airframe.rotor_axis_body_m) && !isempty(airframe.rotor_pos_body_m)
+        N = length(airframe.rotor_pos_body_m)
+        airframe = AirframeSpec(
+            kind = airframe.kind,
+            mass_kg = airframe.mass_kg,
+            inertia_diag_kgm2 = airframe.inertia_diag_kgm2,
+            inertia_products_kgm2 = airframe.inertia_products_kgm2,
+            rotor_pos_body_m = airframe.rotor_pos_body_m,
             rotor_axis_body_m = Vec3[vec3(0.0, 0.0, 1.0) for _ = 1:N],
-            linear_drag = spec.airframe.linear_drag,
-            angular_damping = spec.airframe.angular_damping,
-            x0 = spec.airframe.x0,
-            propulsion = spec.airframe.propulsion,
-        )
-        spec = AircraftSpec(
-            name = spec.name,
-            px4 = spec.px4,
-            timeline = spec.timeline,
-            environment = spec.environment,
-            scenario = spec.scenario,
-            estimator = spec.estimator,
-            plant = spec.plant,
-            airframe = af,
-            actuation = spec.actuation,
-            power = spec.power,
-            sensors = spec.sensors,
-            seed = spec.seed,
-            home = spec.home,
-            telemetry = spec.telemetry,
-            log_sinks = spec.log_sinks,
+            linear_drag = airframe.linear_drag,
+            angular_damping = airframe.angular_damping,
+            x0 = airframe.x0,
+            propulsion = airframe.propulsion,
         )
     end
 
-    return spec
+    return AircraftSpec(
+        name = name,
+        px4 = px4,
+        timeline = timeline,
+        environment = environment,
+        scenario = scenario,
+        estimator = estimator,
+        plant = plant,
+        airframe = airframe,
+        actuation = actuation,
+        power = power,
+        sensors = sensors,
+        seed = seed,
+        home = home,
+        telemetry = telemetry,
+        log_sinks = log_sinks,
+    )
 end
 
 

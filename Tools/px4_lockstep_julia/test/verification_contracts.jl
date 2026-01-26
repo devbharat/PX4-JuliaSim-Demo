@@ -710,9 +710,9 @@ end
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
 
-        motors = Sim.Aircraft.MotorSpec[
-            Sim.Aircraft.MotorSpec(id = :motor1, channel = 1),
-            Sim.Aircraft.MotorSpec(id = :motor2, channel = 2),
+        motors = Sim.Aircraft.MotorChannelSpec[
+            Sim.Aircraft.MotorChannelSpec(id = :motor1, channel = 1),
+            Sim.Aircraft.MotorChannelSpec(id = :motor2, channel = 2),
         ]
 
         actuation = Sim.Aircraft.ActuationSpec(

@@ -68,7 +68,7 @@ end
 # Component instance specs
 # ----------------------
 
-Base.@kwdef struct MotorSpec
+Base.@kwdef struct MotorChannelSpec
     id::MotorId
     """Index into the PX4 lockstep ABI motor array (1..12)."""
     channel::Int
@@ -86,6 +86,28 @@ Kept intentionally small: the builder uses
 `Propulsion.default_multirotor_set(...)` with a hover-thrust derived from
 airframe mass and motor count.
 """
+Base.@kwdef struct EscSpec
+    """ESC efficiency (0..1)."""
+    eta::Float64 = 0.98
+    """ESC deadzone (0..1)."""
+    deadzone::Float64 = 0.02
+end
+
+Base.@kwdef struct MotorSpec
+    """Motor Kv (RPM/V)."""
+    kv_rpm_per_volt::Float64 = 920.0
+    """Motor winding resistance (Ohms)."""
+    r_ohm::Float64 = 0.25
+    """Motor+prop axial inertia (kg*m^2)."""
+    j_kgm2::Float64 = 1.2e-5
+    """Motor no-load current (A)."""
+    i0_a::Float64 = 0.6
+    """Motor viscous friction (Nm per rad/s)."""
+    viscous_friction_nm_per_rad_s::Float64 = 2.0e-6
+    """Motor current limit (A)."""
+    max_current_a::Float64 = 60.0
+end
+
 Base.@kwdef struct PropulsionSpec
     kind::Symbol = :multirotor_default
     km_m::Float64 = 0.05
@@ -94,22 +116,8 @@ Base.@kwdef struct PropulsionSpec
     rotor_radius_m::Float64 = 0.127
     inflow_kT::Float64 = 8.0
     inflow_kQ::Float64 = 8.0
-    """ESC efficiency (0..1)."""
-    esc_eta::Float64 = 0.98
-    """ESC deadzone (0..1)."""
-    esc_deadzone::Float64 = 0.02
-    """Motor Kv (RPM/V)."""
-    motor_kv_rpm_per_volt::Float64 = 920.0
-    """Motor winding resistance (Ohms)."""
-    motor_r_ohm::Float64 = 0.25
-    """Motor+prop axial inertia (kg*m^2)."""
-    motor_j_kgm2::Float64 = 1.2e-5
-    """Motor no-load current (A)."""
-    motor_i0_a::Float64 = 0.6
-    """Motor viscous friction (Nm per rad/s)."""
-    motor_viscous_friction_nm_per_rad_s::Float64 = 2.0e-6
-    """Motor current limit (A)."""
-    motor_max_current_a::Float64 = 60.0
+    esc::EscSpec = EscSpec()
+    motor::MotorSpec = MotorSpec()
     """Multiplier for thrust target used to calibrate prop kT (default 2x hover)."""
     thrust_calibration_mult::Float64 = 2.0
     """Optional override of yaw reaction torque sign pattern (+1/-1 per motor)."""
@@ -173,7 +181,7 @@ This describes *instances* (motors/servos) and how they correspond to the fixed-
 PX4 actuator arrays.
 """
 Base.@kwdef struct ActuationSpec
-    motors::Vector{MotorSpec} = MotorSpec[]
+    motors::Vector{MotorChannelSpec} = MotorChannelSpec[]
     servos::Vector{ServoSpec} = ServoSpec[]
 
     motor_actuators::AbstractActuatorModelSpec = DirectActuatorSpec()
@@ -439,7 +447,8 @@ function octa_spec(;
 
     plant = PlantSpec(integrator = integrator, contact = contact)
 
-    motors = MotorSpec[MotorSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8]
+    motors =
+        MotorChannelSpec[MotorChannelSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8]
 
     actuation = ActuationSpec(
         motors = motors,

@@ -215,6 +215,8 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     motor_bus_count = Dict{MotorId,Int}(mid => 0 for mid in motor_ids)
     bat_bus_count = Dict{BatteryId,Int}(bid => 0 for bid in bat_ids)
     for bus in buses
+        isempty(bus.battery_ids) &&
+            throw(ArgumentError("Bus $(bus.id) must have >= 1 battery"))
         for bid in bus.battery_ids
             bid in bat_id_set ||
                 throw(ArgumentError("Bus $(bus.id) references unknown battery id=$bid"))
@@ -251,6 +253,11 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     if mode === :replay
         recording_in === nothing &&
             throw(ArgumentError("build_engine(mode=:replay) requires recording_in"))
+    end
+    if mode !== :replay
+        libpath = spec.px4.libpath
+        (libpath === nothing || isempty(strip(libpath))) &&
+            throw(ArgumentError("px4.libpath is required for live/record runs"))
     end
 
     # -----------------------------

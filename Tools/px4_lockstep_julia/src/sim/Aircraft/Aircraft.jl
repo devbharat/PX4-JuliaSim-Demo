@@ -16,7 +16,16 @@ include("Validate.jl")
 include("Build.jl")
 include("TOMLIO.jl")
 
-export PX4Spec, PX4ParamSpec, TimelineSpec, PlantSpec, AircraftSpec
+# Long-term preference: TOML is the primary interface; these exports are for
+# internal/programmatic construction convenience.
+export PX4Spec,
+    PX4ParamSpec,
+    TimelineSpec,
+    EnvironmentSpec,
+    ScenarioSpec,
+    EstimatorSpec,
+    PlantSpec,
+    AircraftSpec
 
 # Composition specs
 export AirframeSpec, PropulsionSpec, EscSpec, MotorSpec

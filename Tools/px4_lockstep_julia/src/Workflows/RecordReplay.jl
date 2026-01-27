@@ -68,23 +68,7 @@ function _default_reference_integrator()
 end
 
 function _with_home(spec::Aircraft.AircraftSpec, home)
-    return Aircraft.AircraftSpec(
-        name = spec.name,
-        px4 = spec.px4,
-        timeline = spec.timeline,
-        environment = spec.environment,
-        scenario = spec.scenario,
-        estimator = spec.estimator,
-        plant = spec.plant,
-        airframe = spec.airframe,
-        actuation = spec.actuation,
-        power = spec.power,
-        sensors = spec.sensors,
-        seed = spec.seed,
-        home = home,
-        telemetry = spec.telemetry,
-        log_sinks = spec.log_sinks,
-    )
+    return Aircraft.spec_with(spec; home = home)
 end
 
 function _rms(v::AbstractVector{Float64})
@@ -141,8 +125,14 @@ function _coerce_solver(
     elseif s isa Symbol
         return (String(s), make_integrator(s))
     elseif s isa AbstractString
-        sym = Symbol(strip(String(s)))
-        return (String(strip(String(s))), make_integrator(sym))
+        label = strip(String(s))
+        sym = Symbol(uppercase(label))
+        if sym === :EULER
+            sym = :Euler
+        elseif !(sym === :RK4 || sym === :RK23 || sym === :RK45)
+            error("Unknown integrator name=$label (expected Euler|RK4|RK23|RK45)")
+        end
+        return (label, make_integrator(sym))
     else
         error("Unsupported solver spec type: $(typeof(s))")
     end

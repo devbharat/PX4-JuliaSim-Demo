@@ -52,6 +52,8 @@ Merge rules:
 ### Path resolution
 
 Relative paths are resolved against the TOML file location.
+`extends` entries and `run.recording_in` must resolve to an existing file. Output
+paths like `run.recording_out` and `run.log_csv` are not required to exist.
 
 ## Schema overview
 

@@ -386,6 +386,11 @@ Base.@kwdef struct AircraftSpec
     log_sinks = nothing
 end
 
+# Non-hot-path helper: copy a spec with keyword overrides.
+_as_namedtuple(x::AircraftSpec) =
+    NamedTuple{fieldnames(AircraftSpec)}(getfield.(Ref(x), fieldnames(AircraftSpec)))
+spec_with(x::AircraftSpec; kwargs...) = AircraftSpec(; _as_namedtuple(x)..., kwargs...)
+
 
 # -----------------------
 # Generic multirotor presets (internal)
@@ -447,8 +452,9 @@ function octa_spec(;
 
     plant = PlantSpec(integrator = integrator, contact = contact)
 
-    motors =
-        MotorChannelSpec[MotorChannelSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8]
+    motors = MotorChannelSpec[
+        MotorChannelSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8
+    ]
 
     actuation = ActuationSpec(
         motors = motors,

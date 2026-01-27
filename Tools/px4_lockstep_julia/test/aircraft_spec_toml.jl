@@ -1,5 +1,31 @@
 using Test
 
+@testset "AircraftSpec path resolution (must_exist)" begin
+    mktempdir() do dir
+        toml_extends = """
+        schema_version = 1
+        extends = ["does_not_exist.toml"]
+        """
+        path_extends = joinpath(dir, "extends.toml")
+        write(path_extends, toml_extends)
+        @test_throws ErrorException Sim.Aircraft.load_spec(path_extends; strict = true)
+
+        toml_run = """
+        schema_version = 1
+        [run]
+        mode = "replay"
+        recording_in = "missing_recording.bin"
+        """
+        path_run = joinpath(dir, "run.toml")
+        write(path_run, toml_run)
+        @test_throws ErrorException Sim.Aircraft.run_spec(
+            path_run;
+            strict = true,
+            base_spec = :default,
+        )
+    end
+end
+
 @testset "AircraftSpec TOML uORB instance validation" begin
     mktempdir() do dir
         toml_pub_ok = """
@@ -295,6 +321,22 @@ end
         path_power = joinpath(dir, "power_bad.toml")
         write(path_power, toml_power)
         @test_throws ErrorException Sim.Aircraft.load_spec(path_power; strict = true)
+
+        # Each bus must have at least one battery.
+        toml_bus = """
+        schema_version = 1
+        [power]
+        [[power.buses]]
+        id = "main"
+        battery_ids = []
+        motor_ids = ["motor1", "motor2", "motor3", "motor4"]
+        servo_ids = []
+        avionics_load_w = 0.0
+        """
+        path_bus = joinpath(dir, "bus_no_battery.toml")
+        write(path_bus, toml_bus)
+        spec_bus = Sim.Aircraft.load_spec(path_bus; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec_bus)
     end
 end
 
@@ -388,5 +430,55 @@ end
         @test p.motor.viscous_friction_nm_per_rad_s == 1.0e-6
         @test p.motor.max_current_a == 55.0
         @test spec.power.share_mode == :equal
+    end
+end
+
+@testset "AircraftSpec hover calibration uses environment gravity" begin
+    mktempdir() do dir
+        toml = """
+        schema_version = 1
+        [environment]
+        gravity = "uniform"
+        gravity_mps2 = 3.71
+        """
+        path = joinpath(dir, "gravity.toml")
+        write(path, toml)
+        spec = Sim.Aircraft.load_spec(path; strict = true, base_spec = :default)
+        veh = Sim.Aircraft._build_vehicle(spec)
+
+        p = spec.airframe.propulsion
+        N = length(spec.actuation.motors)
+        expected = Sim.Propulsion.default_multirotor_set(
+            N = N,
+            km_m = p.km_m,
+            V_nom = p.V_nom,
+            ρ_nom = p.rho_nom,
+            thrust_hover_per_rotor_n = spec.airframe.mass_kg * spec.environment.gravity_mps2 / N,
+            rotor_radius_m = p.rotor_radius_m,
+            inflow_kT = p.inflow_kT,
+            inflow_kQ = p.inflow_kQ,
+            esc_eta = p.esc.eta,
+            esc_deadzone = p.esc.deadzone,
+            motor_kv_rpm_per_volt = p.motor.kv_rpm_per_volt,
+            motor_r_ohm = p.motor.r_ohm,
+            motor_j_kgm2 = p.motor.j_kgm2,
+            motor_i0_a = p.motor.i0_a,
+            motor_viscous_friction_nm_per_rad_s = p.motor.viscous_friction_nm_per_rad_s,
+            motor_max_current_a = p.motor.max_current_a,
+            thrust_calibration_mult = p.thrust_calibration_mult,
+        )
+
+        @test isapprox(
+            veh.propulsion.units[1].prop.kT,
+            expected.units[1].prop.kT;
+            rtol = 0.0,
+            atol = 1e-12,
+        )
+        @test isapprox(
+            veh.propulsion.units[1].prop.kQ,
+            expected.units[1].prop.kQ;
+            rtol = 0.0,
+            atol = 1e-12,
+        )
     end
 end

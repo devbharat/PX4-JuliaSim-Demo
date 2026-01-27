@@ -113,14 +113,18 @@ end
 function _resolve_path(
     base_dir::AbstractString,
     p::Union{Nothing,AbstractString};
-    strict::Bool,
+    must_exist::Bool = false,
 )
     p === nothing && return nothing
     s = String(p)
     s = Base.expanduser(s)
     # Empty string is almost always accidental; treat as "unset".
     isempty(strip(s)) && return nothing
-    return isabspath(s) ? normpath(s) : normpath(joinpath(base_dir, s))
+    resolved = isabspath(s) ? normpath(s) : normpath(joinpath(base_dir, s))
+    if must_exist && !isfile(resolved)
+        error("File not found: $resolved")
+    end
+    return resolved
 end
 
 
@@ -174,7 +178,7 @@ function _load_toml_with_extends(path::AbstractString; strict::Bool, _stack = St
     if ex !== nothing
         ex_arr = _as_array(ex, "extends")
         for (i, e) in enumerate(ex_arr)
-            epath = _resolve_path(base_dir, _as_string(e, "extends[$i]"); strict = strict)
+            epath = _resolve_path(base_dir, _as_string(e, "extends[$i]"); must_exist = true)
             epath === nothing && error("extends[$i] resolved to nothing")
             base_cfg = _load_toml_with_extends(epath; strict = strict, _stack = _stack)
             merged = _deep_merge(merged, base_cfg)
@@ -984,8 +988,7 @@ function _parse_airframe(tbl_any; strict::Bool, ctx::AbstractString, base::Airfr
                 eta = haskey(esc_tbl, "eta") ?
                       _as_f64(esc_tbl["eta"], "$ctx.propulsion.esc.eta") : esc.eta,
                 deadzone = haskey(esc_tbl, "deadzone") ?
-                           _as_f64(esc_tbl["deadzone"], "$ctx.propulsion.esc.deadzone") :
-                           esc.deadzone,
+                           _as_f64(esc_tbl["deadzone"], "$ctx.propulsion.esc.deadzone") : esc.deadzone,
             )
         end
 
@@ -1415,14 +1418,14 @@ function spec_from_toml_dict(
             _resolve_path(
                 base_dir,
                 _as_string(p["mission_path"], "px4.mission_path");
-                strict = strict,
+                must_exist = false,
             ) : px4.mission_path
         libpath =
             haskey(p, "libpath") ?
             _resolve_path(
                 base_dir,
                 _as_string(p["libpath"], "px4.libpath");
-                strict = strict,
+                must_exist = false,
             ) : px4.libpath
 
         lockstep_cfg = px4.lockstep_config
@@ -1695,7 +1698,7 @@ function run_spec(
         rec_in = _resolve_path(
             base_dir,
             _as_string(run_tbl["recording_in"], "run.recording_in");
-            strict = strict,
+            must_exist = true,
         )
     end
 
@@ -1704,7 +1707,7 @@ function run_spec(
         rec_out = _resolve_path(
             base_dir,
             _as_string(run_tbl["recording_out"], "run.recording_out");
-            strict = strict,
+            must_exist = false,
         )
     end
 
@@ -1714,7 +1717,7 @@ function run_spec(
         log_path = _resolve_path(
             base_dir,
             _as_string(run_tbl["log_csv"], "run.log_csv");
-            strict = strict,
+            must_exist = false,
         )
         log_path === nothing || (logs = Logging.CSVLogSink(log_path))
     end

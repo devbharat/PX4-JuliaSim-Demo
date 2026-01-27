@@ -72,7 +72,9 @@ end
         return Integrators.RK45Integrator()
     else
         throw(
-            ArgumentError("Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)"),
+            ArgumentError(
+                "Unknown integrator name=$name (expected :Euler|:RK4|:RK23|:RK45)",
+            ),
         )
     end
 end
@@ -237,7 +239,11 @@ function _build_battery(bs::BatterySpec)
             emerg_thr = bs.emerg_thr,
         )
     else
-        throw(ArgumentError("Unsupported battery model=$(bs.model) (expected :thevenin|:ideal)"))
+        throw(
+            ArgumentError(
+                "Unsupported battery model=$(bs.model) (expected :thevenin|:ideal)",
+            ),
+        )
     end
 end
 
@@ -275,38 +281,25 @@ function _build_power_network(spec::AircraftSpec)
     end
 
     # Assign each motor/battery to exactly one bus.
+    # (Spec validation already enforces topology; keep only internal assertions here.)
     bus_for_motor = fill(0, N)
     bus_for_battery = fill(0, B)
 
     for (k, bus) in enumerate(spec.power.buses)
         for mid in bus.motor_ids
-            i = get(motor_idx, mid, 0)
-            i != 0 || throw(ArgumentError("Bus $(bus.id) references unknown motor id=$mid"))
-            bus_for_motor[i] == 0 ||
-                throw(ArgumentError("Motor id=$mid is assigned to multiple buses"))
+            i = motor_idx[mid]
+            @assert bus_for_motor[i] == 0
             bus_for_motor[i] = k
         end
         for bid in bus.battery_ids
-            i = get(bat_idx, bid, 0)
-            i != 0 ||
-                throw(ArgumentError("Bus $(bus.id) references unknown battery id=$bid"))
-            bus_for_battery[i] == 0 ||
-                throw(ArgumentError("Battery id=$bid is assigned to multiple buses"))
+            i = bat_idx[bid]
+            @assert bus_for_battery[i] == 0
             bus_for_battery[i] = k
         end
     end
 
-    any(x -> x == 0, bus_for_motor) &&
-        throw(
-            ArgumentError(
-                "Every motor must be assigned to a power bus (missing assignments detected)",
-            ),
-        )
-    any(x -> x == 0, bus_for_battery) && throw(
-        ArgumentError(
-            "Every battery must be assigned to a power bus (missing assignments detected)",
-        ),
-    )
+    @assert all(x -> x != 0, bus_for_motor)
+    @assert all(x -> x != 0, bus_for_battery)
 
     return PowerNetwork{N,B,K}(
         bus_for_motor = SVector{N,Int}(ntuple(i -> bus_for_motor[i], N)),
@@ -419,13 +412,15 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
 
     N = length(spec.actuation.motors)
     pos = spec.airframe.rotor_pos_body_m
-    length(pos) == N ||
-        throw(ArgumentError("Cannot derive CA params: rotor_pos_body_m length != motor count"))
+    length(pos) == N || throw(
+        ArgumentError("Cannot derive CA params: rotor_pos_body_m length != motor count"),
+    )
 
     # Rotor/propulsor axes: required by spec; thrust is applied along -axis_b.
     axis_src = spec.airframe.rotor_axis_body_m
-    length(axis_src) == N ||
-        throw(ArgumentError("Cannot derive CA params: rotor_axis_body_m length != motor count"))
+    length(axis_src) == N || throw(
+        ArgumentError("Cannot derive CA params: rotor_axis_body_m length != motor count"),
+    )
 
     km_mag = spec.airframe.propulsion.km_m
     rotor_dir = vehicle.propulsion.rotor_dir
@@ -439,8 +434,11 @@ function _derive_ca_params(spec::AircraftSpec, vehicle::Vehicles.VehicleInstance
         p = pos[i]
         a = axis_src[i]
         n2 = a[1] * a[1] + a[2] * a[2] + a[3] * a[3]
-        n2 > 1e-12 ||
-            throw(ArgumentError("Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a"))
+        n2 > 1e-12 || throw(
+            ArgumentError(
+                "Cannot derive CA params: rotor_axis_body_m[$i] is near-zero: $a",
+            ),
+        )
         invn = inv(sqrt(n2))
         axis_b = a .* invn
         # PX4 CA_ROTOR*_A* expects the *thrust vector direction* in body frame.

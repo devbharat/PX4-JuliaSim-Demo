@@ -46,6 +46,9 @@ import ..plant_outputs
 import ..plant_project
 import ..plant_on_autopilot_tick
 
+# If true, always run the fixed iteration count for cross-platform determinism.
+const DETERMINISTIC_SOLVE = true
+
 
 """Coupled multirotor model (RHS functor + algebraic outputs + projection).
 
@@ -593,7 +596,7 @@ function _solve_bus_voltage(
             break
         end
 
-        if abs(V_new - V) < 1e-9
+        if !DETERMINISTIC_SOLVE && abs(V_new - V) < 1e-9
             V = V_new
             break
         end

@@ -25,6 +25,9 @@ multirotor plant models.
   - propulsion owns motor/prop parameters and rotor spin direction for yaw reaction
 - **Calibrated defaults:** `default_multirotor_set` provides a reasonable generic
   multirotor baseline intended for closed-loop testing (not high-fidelity aero).
+- **TOML-driven parameters:** the default motor/prop set is configured via
+  `[airframe.propulsion]` with optional `[airframe.propulsion.esc]` and
+  `[airframe.propulsion.motor]` sub-tables in the aircraft spec.
 
 ## Integration contracts
 
@@ -32,10 +35,14 @@ multirotor plant models.
   expressed via the bus-level `Faults.FaultState` and applied by the plant model
   (e.g. duty clamping, battery disconnect), not by mutating propulsion objects.
 - The primary output is `RotorOutput{N}`:
-  - `thrust_n`, `shaft_torque_nm`, `ω_rad_s`
+  - `thrust_n`, `shaft_torque_nm`, `ω_rad_s`, `ω_dot_rad_s2`
   - `motor_current_a` (per rotor)
   - `bus_current_a` (total draw, sign convention: positive = discharge)
 - Rotor direction for yaw reaction torque is encoded in `QuadRotorSet.rotor_dir`.
+  Rotor **spin** direction is opposite this sign (reaction torque is on the body),
+  which is what vehicle dynamics use for gyroscopic coupling.
+- Rotor axial inertia (kg·m²) is exposed via `rotor_inertia_kgm2(unit)` and is used
+  by vehicle dynamics for rotor gyroscopic coupling.
 
 ## Caveats
 

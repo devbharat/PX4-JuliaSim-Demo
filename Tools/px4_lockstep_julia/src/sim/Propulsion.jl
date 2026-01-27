@@ -28,6 +28,7 @@ export ESCParams,
     QuadraticPropParams,
     MotorPropUnit,
     RotorOutput,
+    rotor_inertia_kgm2,
     QuadRotorSet,
     default_multirotor_set
 
@@ -160,9 +161,28 @@ Base.@kwdef struct RotorOutput{N}
     thrust_n::SVector{N,Float64}
     shaft_torque_nm::SVector{N,Float64}
     ω_rad_s::SVector{N,Float64}
+    ω_dot_rad_s2::SVector{N,Float64} = zero(SVector{N,Float64})
     motor_current_a::SVector{N,Float64}
     bus_current_a::Float64
 end
+
+"""Rotor spin inertia about the propulsor axis (kg*m^2).
+
+This is used both for rotor-speed dynamics and (optionally) for rigid-body
+gyroscopic coupling.
+
+Notes
+-----
+- For the default multirotor plant, this is the motor/prop assembly inertia stored
+  in `BLDCMotorParams.J_kgm2`.
+- If a custom `MotorParams` type does not define an axial inertia, provide a
+  `rotor_inertia_kgm2(::MotorPropUnit)` method for it. The fallback returns 0.0.
+"""
+rotor_inertia_kgm2(::MotorPropUnit) = 0.0
+
+@inline rotor_inertia_kgm2(
+    u::MotorPropUnit{M,P},
+) where {M<:BLDCMotorParams,P<:AbstractPropParams} = u.motor.J_kgm2
 
 ############################
 # Quad set (N rotors)
@@ -212,16 +232,25 @@ function default_multirotor_set(;
     rotor_radius_m::Float64 = 0.127,
     inflow_kT::Float64 = 8.0,
     inflow_kQ::Float64 = 8.0,
+    esc_eta::Float64 = 0.98,
+    esc_deadzone::Float64 = 0.02,
+    motor_kv_rpm_per_volt::Float64 = 920.0,
+    motor_r_ohm::Float64 = 0.25,
+    motor_j_kgm2::Float64 = 1.2e-5,
+    motor_i0_a::Float64 = 0.6,
+    motor_viscous_friction_nm_per_rad_s::Float64 = 2.0e-6,
+    motor_max_current_a::Float64 = 60.0,
+    thrust_calibration_mult::Float64 = 2.0,
 )
 
-    esc = ESCParams(η = 0.98, deadzone = 0.02)
+    esc = ESCParams(η = esc_eta, deadzone = esc_deadzone)
     motor = BLDCMotorParams(
-        Kv_rpm_per_volt = 920.0,
-        R_ohm = 0.25,
-        J_kgm2 = 1.2e-5,
-        I0_a = 0.6,
-        viscous_friction_nm_per_rad_s = 2.0e-6,
-        max_current_a = 60.0,
+        Kv_rpm_per_volt = motor_kv_rpm_per_volt,
+        R_ohm = motor_r_ohm,
+        J_kgm2 = motor_j_kgm2,
+        I0_a = motor_i0_a,
+        viscous_friction_nm_per_rad_s = motor_viscous_friction_nm_per_rad_s,
+        max_current_a = motor_max_current_a,
     )
 
     # Calibrate kT so that at ~hover the thrust is reasonable at nominal density.
@@ -229,7 +258,7 @@ function default_multirotor_set(;
         motor,
         V_nom,
         ρ_nom,
-        thrust_hover_per_rotor_n*2.0,
+        thrust_hover_per_rotor_n * thrust_calibration_mult,
         km_m;
         radius_m = rotor_radius_m,
         inflow_kT = inflow_kT,

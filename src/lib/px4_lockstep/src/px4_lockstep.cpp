@@ -15,6 +15,7 @@
 #include <utility>
 
 #include <new>
+#include <atomic>
 #include <pthread.h>
 
 #include <px4_platform_common/init.h>
@@ -84,6 +85,7 @@ extern "C" PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
+static std::atomic<int> g_lockstep_active{0};
 
 static inline float deg2rad(float deg) { return deg * (kPi / 180.0f); }
 
@@ -136,6 +138,10 @@ struct StepRateLimiter {
 	bool should_run(uint64_t now_us)
 	{
 		if (period_us == 0) {
+			return true;
+		}
+		if (last_run_us == 0) {
+			last_run_us = now_us;
 			return true;
 		}
 		if ((now_us - last_run_us) >= period_us) {
@@ -241,6 +247,19 @@ struct LockstepRuntime {
 		delete mc_rate;
 		delete flight_mode_mgr;
 		delete control_alloc;
+
+		for (auto &s : ext_subs) {
+			if (s.handle >= 0) {
+				(void)orb_unsubscribe(s.handle);
+				s.handle = -1;
+			}
+		}
+		for (auto &p : ext_pubs) {
+			if (p.handle != nullptr) {
+				(void)orb_unadvertise(p.handle);
+				p.handle = nullptr;
+			}
+		}
 	}
 };
 
@@ -450,16 +469,22 @@ int apply_param_f32(const char *name, float value)
 	return (param_set(h, &value) == 0) ? 0 : -4;
 }
 
-void apply_preinit_params()
+bool apply_preinit_params()
 {
+	bool ok = true;
 	for (const auto &p : g_preinit_params) {
+		int ret = 0;
 		if (p.is_int) {
-			(void)apply_param_i32(p.name.c_str(), p.i32);
+			ret = apply_param_i32(p.name.c_str(), p.i32);
 		} else {
-			(void)apply_param_f32(p.name.c_str(), p.f32);
+			ret = apply_param_f32(p.name.c_str(), p.f32);
+		}
+		if (ret != 0) {
+			ok = false;
 		}
 	}
 	g_preinit_params.clear();
+	return ok;
 }
 
 } // namespace
@@ -567,6 +592,11 @@ int px4_lockstep_control_alloc_update_params(px4_lockstep_handle_t handle)
 px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 {
 	static bool platform_initialized = false;
+	int expected = 0;
+	if (!g_lockstep_active.compare_exchange_strong(expected, 1)) {
+		PX4_ERR("lockstep: only one runtime handle is allowed per process");
+		return nullptr;
+	}
 	if (!platform_initialized) {
 		if (px4_platform_init() != PX4_OK) {
 			PX4_ERR("px4_platform_init failed");
@@ -576,6 +606,7 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	LockstepRuntime *rt = new (std::nothrow) LockstepRuntime();
 	if (!rt) {
+		g_lockstep_active.store(0);
 		return nullptr;
 	}
 
@@ -585,8 +616,7 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	if (rt->cfg.enable_commander != 0) {
 		PX4_ERR("lockstep: commander-in-loop is not supported; set enable_commander=0");
-		delete rt;
-		return nullptr;
+		goto fail;
 	}
 
 	rt->debug_enabled = env_flag_enabled("PX4_LOCKSTEP_DEBUG");
@@ -639,7 +669,10 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 	}
 
 	// Apply any pre-init parameters queued by the host (e.g. CA_* geometry).
-	apply_preinit_params();
+	if (!apply_preinit_params()) {
+		PX4_ERR("lockstep: preinit param application failed");
+		goto fail;
+	}
 
 	// Create PX4 modules (do NOT start their tasks).
 	if (rt->cfg.enable_commander) {
@@ -662,8 +695,7 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 		|| !rt->mc_rate
 		|| (rt->cfg.enable_control_allocator && !rt->control_alloc)) {
 		PX4_ERR("lockstep: failed to allocate modules");
-		px4_lockstep_destroy(rt);
-		return nullptr;
+		goto fail;
 	}
 
 	// Put modules into lockstep mode (patched API in each module).
@@ -694,6 +726,11 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	PX4_INFO("px4_lockstep created");
 	return reinterpret_cast<px4_lockstep_handle_t>(rt);
+
+fail:
+	delete rt;
+	g_lockstep_active.store(0);
+	return nullptr;
 }
 
 void px4_lockstep_destroy(px4_lockstep_handle_t handle)
@@ -704,6 +741,7 @@ void px4_lockstep_destroy(px4_lockstep_handle_t handle)
 	}
 
 	delete rt;
+	g_lockstep_active.store(0);
 }
 
 int px4_lockstep_load_mission_qgc_wpl(px4_lockstep_handle_t handle, const char *mission_path)
@@ -1155,11 +1193,22 @@ PX4_LOCKSTEP_EXPORT int px4_lockstep_orb_create_publisher_ex(px4_lockstep_handle
 	if (!rt || (topic_name == nullptr) || (out_pub_id == nullptr)) {
 		return -1;
 	}
+	if (priority > 0) {
+		PX4_ERR("uORB priority not supported for %s", topic_name);
+		return -5;
+	}
 
 	const struct orb_metadata *meta = orb_meta_from_name(topic_name);
 	if (meta == nullptr) {
 		PX4_ERR("unknown uORB topic: %s", topic_name);
 		return -2;
+	}
+	if (queue_size > 0 && meta->o_queue != queue_size) {
+		PX4_ERR("uORB queue size mismatch for %s (requested %u, topic %u)",
+			topic_name,
+			(unsigned)queue_size,
+			(unsigned)meta->o_queue);
+		return -6;
 	}
 
 	LockstepRuntime::ExtPublisher pub{};

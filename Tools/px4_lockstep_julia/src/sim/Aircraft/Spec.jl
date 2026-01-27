@@ -68,7 +68,7 @@ end
 # Component instance specs
 # ----------------------
 
-Base.@kwdef struct MotorSpec
+Base.@kwdef struct MotorChannelSpec
     id::MotorId
     """Index into the PX4 lockstep ABI motor array (1..12)."""
     channel::Int
@@ -86,6 +86,28 @@ Kept intentionally small: the builder uses
 `Propulsion.default_multirotor_set(...)` with a hover-thrust derived from
 airframe mass and motor count.
 """
+Base.@kwdef struct EscSpec
+    """ESC efficiency (0..1)."""
+    eta::Float64 = 0.98
+    """ESC deadzone (0..1)."""
+    deadzone::Float64 = 0.02
+end
+
+Base.@kwdef struct MotorSpec
+    """Motor Kv (RPM/V)."""
+    kv_rpm_per_volt::Float64 = 920.0
+    """Motor winding resistance (Ohms)."""
+    r_ohm::Float64 = 0.25
+    """Motor+prop axial inertia (kg*m^2)."""
+    j_kgm2::Float64 = 1.2e-5
+    """Motor no-load current (A)."""
+    i0_a::Float64 = 0.6
+    """Motor viscous friction (Nm per rad/s)."""
+    viscous_friction_nm_per_rad_s::Float64 = 2.0e-6
+    """Motor current limit (A)."""
+    max_current_a::Float64 = 60.0
+end
+
 Base.@kwdef struct PropulsionSpec
     kind::Symbol = :multirotor_default
     km_m::Float64 = 0.05
@@ -94,6 +116,10 @@ Base.@kwdef struct PropulsionSpec
     rotor_radius_m::Float64 = 0.127
     inflow_kT::Float64 = 8.0
     inflow_kQ::Float64 = 8.0
+    esc::EscSpec = EscSpec()
+    motor::MotorSpec = MotorSpec()
+    """Multiplier for thrust target used to calibrate prop kT (default 2x hover)."""
+    thrust_calibration_mult::Float64 = 2.0
     """Optional override of yaw reaction torque sign pattern (+1/-1 per motor)."""
     rotor_dir::Union{Nothing,Vector{Float64}} = nothing
 end
@@ -104,6 +130,26 @@ Base.@kwdef struct AirframeSpec
 
     mass_kg::Float64 = 1.0
     inertia_diag_kgm2::Vec3 = vec3(1.0, 1.0, 1.0)
+
+    """Off-diagonal inertia terms (kg*m^2) in body frame.
+
+    Conventions
+    -----------
+    This stores the symmetric products of inertia as:
+
+    * `inertia_products_kgm2[1] = Ixy`
+    * `inertia_products_kgm2[2] = Ixz`
+    * `inertia_products_kgm2[3] = Iyz`
+
+    The full inertia tensor used by the rigid-body dynamics is:
+
+    ```
+    I = [ Ixx  Ixy  Ixz
+          Ixy  Iyy  Iyz
+          Ixz  Iyz  Izz ]
+    ```
+    """
+    inertia_products_kgm2::Vec3 = vec3(0.0, 0.0, 0.0)
     rotor_pos_body_m::Vector{Vec3} = Vec3[]
 
     """Per-rotor axis vectors in body frame (unit).
@@ -115,8 +161,9 @@ Base.@kwdef struct AirframeSpec
     The rigid-body dynamics interpret this as the *propulsor axis* `axis_b` such that the
     thrust force applied to the vehicle is `F_i = -T_i * axis_b[i]`.
 
-    This must be provided explicitly (one axis per rotor). For a classic multirotor,
-    use `(0,0,1)` for all rotors (thrust along **-body Z**).
+    For TOML specs, if this is omitted but `rotor_pos_body_m` is provided, the loader
+    defaults to `(0,0,1)` for all rotors (thrust along **-body Z**). When constructing
+    specs programmatically, you should set this explicitly.
     """
     rotor_axis_body_m::Vector{Vec3} = Vec3[]
     linear_drag::Float64 = 0.0
@@ -134,7 +181,7 @@ This describes *instances* (motors/servos) and how they correspond to the fixed-
 PX4 actuator arrays.
 """
 Base.@kwdef struct ActuationSpec
-    motors::Vector{MotorSpec} = MotorSpec[]
+    motors::Vector{MotorChannelSpec} = MotorChannelSpec[]
     servos::Vector{ServoSpec} = ServoSpec[]
 
     motor_actuators::AbstractActuatorModelSpec = DirectActuatorSpec()
@@ -180,6 +227,8 @@ end
 Base.@kwdef struct PowerSpec
     batteries::Vector{BatterySpec} = BatterySpec[]
     buses::Vector{PowerBusSpec} = PowerBusSpec[]
+    """Battery current sharing rule on a bus (:inv_r0 or :equal)."""
+    share_mode::Symbol = :inv_r0
 end
 
 
@@ -263,6 +312,43 @@ Base.@kwdef struct TimelineSpec
     dt_phys_s::Union{Nothing,Float64} = nothing
 end
 
+"""Environment spec (wind + atmosphere + gravity)."""
+Base.@kwdef struct EnvironmentSpec
+    """Wind model kind (:ou | :none | :constant)."""
+    wind::Symbol = :ou
+    wind_mean_ned::Vec3 = vec3(0.0, 0.0, 0.0)
+    wind_sigma_ned::Vec3 = vec3(1.5, 1.5, 0.5)
+    wind_tau_s::Float64 = 3.0
+
+    """Atmosphere model kind (:isa1976)."""
+    atmosphere::Symbol = :isa1976
+
+    """Gravity model kind (:uniform | :spherical)."""
+    gravity::Symbol = :uniform
+    gravity_mps2::Float64 = 9.80665
+    gravity_mu::Float64 = 3.986004418e14
+    gravity_r0_m::Float64 = 6_371_000.0
+end
+
+"""Scenario scheduling spec (mission arm/start)."""
+Base.@kwdef struct ScenarioSpec
+    arm_time_s::Float64 = 1.0
+    mission_time_s::Float64 = 2.0
+end
+
+"""Estimator spec (noise + delay model)."""
+Base.@kwdef struct EstimatorSpec
+    kind::Symbol = :noisy_delayed
+    pos_sigma_m::Vec3 = vec3(0.02, 0.02, 0.02)
+    vel_sigma_mps::Vec3 = vec3(0.05, 0.05, 0.05)
+    yaw_sigma_rad::Float64 = 0.01
+    rate_sigma_rad_s::Vec3 = vec3(0.005, 0.005, 0.005)
+    bias_tau_s::Float64 = 50.0
+    rate_bias_sigma_rad_s::Vec3 = vec3(0.001, 0.001, 0.001)
+    delay_s::Union{Nothing,Float64} = nothing
+    dt_est_s::Union{Nothing,Float64} = nothing
+end
+
 Base.@kwdef struct PlantSpec
     """Integrator used for plant integration."""
     integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45
@@ -277,6 +363,9 @@ Base.@kwdef struct AircraftSpec
 
     px4::PX4Spec = PX4Spec()
     timeline::TimelineSpec = TimelineSpec()
+    environment::EnvironmentSpec = EnvironmentSpec()
+    scenario::ScenarioSpec = ScenarioSpec()
+    estimator::EstimatorSpec = EstimatorSpec()
     plant::PlantSpec = PlantSpec()
 
     airframe::AirframeSpec = AirframeSpec()
@@ -296,6 +385,11 @@ Base.@kwdef struct AircraftSpec
     """Optional log sinks (passed through to Runtime.Engine)."""
     log_sinks = nothing
 end
+
+# Non-hot-path helper: copy a spec with keyword overrides.
+_as_namedtuple(x::AircraftSpec) =
+    NamedTuple{fieldnames(AircraftSpec)}(getfield.(Ref(x), fieldnames(AircraftSpec)))
+spec_with(x::AircraftSpec; kwargs...) = AircraftSpec(; _as_namedtuple(x)..., kwargs...)
 
 
 # -----------------------
@@ -338,6 +432,7 @@ function octa_spec(;
     radius_m::Float64 = 0.25,
     mass_kg::Float64 = 2.0,
     inertia_diag_kgm2::Vec3 = vec3(0.05, 0.05, 0.10),
+    inertia_products_kgm2::Vec3 = vec3(0.0, 0.0, 0.0),
 )
     px4 = PX4Spec(
         mission_path = mission_path === nothing ? nothing : String(mission_path),
@@ -357,7 +452,9 @@ function octa_spec(;
 
     plant = PlantSpec(integrator = integrator, contact = contact)
 
-    motors = MotorSpec[MotorSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8]
+    motors = MotorChannelSpec[
+        MotorChannelSpec(id = Symbol("motor$(i)"), channel = i) for i = 1:8
+    ]
 
     actuation = ActuationSpec(
         motors = motors,
@@ -387,7 +484,7 @@ function octa_spec(;
         avionics_load_w = 15.0,
     ),]
 
-    power = PowerSpec(batteries = batteries, buses = buses)
+    power = PowerSpec(batteries = batteries, buses = buses, share_mode = :inv_r0)
 
     rotor_pos_body_m = Vec3[
         vec3(
@@ -401,6 +498,7 @@ function octa_spec(;
         kind = :multirotor,
         mass_kg = mass_kg,
         inertia_diag_kgm2 = inertia_diag_kgm2,
+        inertia_products_kgm2 = inertia_products_kgm2,
         rotor_pos_body_m = rotor_pos_body_m,
         rotor_axis_body_m = Vec3[vec3(0.0, 0.0, 1.0) for _ = 1:8],
     )

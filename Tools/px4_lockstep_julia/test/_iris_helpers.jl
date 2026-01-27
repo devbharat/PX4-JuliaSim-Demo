@@ -14,14 +14,30 @@ end
 
 function iris_env_live_for_tests(; home = nothing)
     spec = iris_spec_for_tests()
-    h = home === nothing ? spec.home : home
-    return Sim.Aircraft._default_env_live(home = h)
+    env = Sim.Aircraft._build_env_live(spec)
+    if home === nothing
+        return env
+    end
+    return Sim.Environment.EnvironmentModel(
+        atmosphere = env.atmosphere,
+        wind = env.wind,
+        gravity = env.gravity,
+        origin = home,
+    )
 end
 
 function iris_env_replay_for_tests(; home = nothing)
     spec = iris_spec_for_tests()
-    h = home === nothing ? spec.home : home
-    return Sim.Aircraft._default_env_replay(home = h)
+    env = Sim.Aircraft._build_env_replay(spec)
+    if home === nothing
+        return env
+    end
+    return Sim.Environment.EnvironmentModel(
+        atmosphere = env.atmosphere,
+        wind = env.wind,
+        gravity = env.gravity,
+        origin = home,
+    )
 end
 
 function iris_vehicle_for_tests(; x0_override = nothing, x0 = nothing)

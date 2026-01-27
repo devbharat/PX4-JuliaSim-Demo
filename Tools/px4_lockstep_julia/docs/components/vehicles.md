@@ -6,7 +6,7 @@ See also: **[Frames and sign conventions](../reference/conventions.md)**.
 
 `src/sim/Vehicles.jl` defines:
 
-- the vehicle model interface (`mass`, `inertia_diag`, `dynamics`)
+- the vehicle model interface (`mass`, `inertia`, `inertia_diag`, `dynamics`)
 - reusable actuator dynamics (direct/first-order/second-order)
 - a minimal multirotor rigid-body model (including the Iris defaults)
 
@@ -27,8 +27,9 @@ shaft torques; vehicle models consume those and produce rigid-body derivatives.
 
 - `mass(model) -> Float64` exposes vehicle mass so external forces (e.g. contact)
   can be applied without hard-coding airframe types.
-- `inertia_diag(model) -> Vec3` returns the diagonal body-frame inertia used by the
-  rigid-body integrators.
+- `inertia(model) -> Mat3` returns the full body-frame inertia tensor (kg·m²) used by
+  the rigid-body integrators.
+- `inertia_diag(model) -> Vec3` returns the diagonal of that tensor (convenience).
 - `dynamics(model, env, t_s, x, u, wind_ned) -> RigidBodyDeriv` computes the 6DOF
   rigid-body derivative.
 
@@ -42,10 +43,9 @@ shaft torques; vehicle models consume those and produce rigid-body derivatives.
 
 - The multirotor model is intentionally low fidelity (simple drag and damping) and is
   not a validated aero model.
-- Rigid-body inertia is modeled as **diagonal only** (`inertia_diag`); off-diagonal
-  products of inertia are not represented.
-- Rotor inertia is modeled inside propulsion units (`BLDCMotorParams.J`) for rotor-speed
-  dynamics, but **gyroscopic coupling into the rigid body is not modeled** (no rotor
-  angular momentum effects on body rates).
+- Rigid-body inertia is assumed **constant in body frame** (no structural flex or
+  moving-mass effects).
+- Rotor gyroscopic coupling is modeled using each rotor's axial inertia `J` and the
+  rotor speed/acceleration reported by propulsion (assumes fixed rotor axes in body).
 - Second-order actuator dynamics use a semi-implicit Euler step; large `dt` can reduce
   accuracy or stability.

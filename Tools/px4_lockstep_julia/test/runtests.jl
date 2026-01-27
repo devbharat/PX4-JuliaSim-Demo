@@ -20,6 +20,7 @@ include("verification_contracts.jl")
 
 # uORB interface + injection scheduling checks (no PX4 binary required).
 include("uorb_injection.jl")
+include("lockstep_runtime.jl")
 
 # Record/replay engine (Option A) checks.
 
@@ -33,6 +34,9 @@ include("aircraft_spec_toml.jl")
 
 # Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
 include("multirotor_motor_map.jl")
+
+# Vehicle dynamics unit coverage (inertia tensor + rotor gyroscopic coupling).
+include("vehicles_inertia_gyro.jl")
 
 """Return the geodesic rotation error (rad) between two quaternions.
 

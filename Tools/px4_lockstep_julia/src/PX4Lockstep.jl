@@ -719,6 +719,8 @@ end
 
 This is the preferred, type-driven API. The topic name is obtained from
 `uorb_topic(T)` and the default queue length comes from `uorb_queue_length(T)`.
+Queue length is validated against the PX4 topic metadata; it cannot be overridden
+at runtime in the current C API.
 
 Returns `(pub, instance)`.
 """

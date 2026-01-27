@@ -50,9 +50,12 @@ function _iris_fullplant(
         params = veh.model.params
         params_new = Sim.Vehicles.QuadrotorParams{4}(
             mass = params.mass,
-            inertia_diag = params.inertia_diag,
+            inertia_kgm2 = params.inertia_kgm2,
+            inertia_inv_kgm2 = params.inertia_inv_kgm2,
             rotor_pos_body = params.rotor_pos_body,
             rotor_axis_body = params.rotor_axis_body,
+            rotor_inertia_kgm2 = params.rotor_inertia_kgm2,
+            rotor_dir = params.rotor_dir,
             linear_drag = linear_drag === nothing ? params.linear_drag : linear_drag,
             angular_damping =
                 angular_damping === nothing ? params.angular_damping : angular_damping,
@@ -448,12 +451,16 @@ end
         env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
         rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
         rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
+        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
 
         params = Sim.Vehicles.QuadrotorParams{1}(
             mass = 1.0,
-            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            inertia_kgm2 = I,
+            inertia_inv_kgm2 = I,
             rotor_pos_body = rotor_pos,
             rotor_axis_body = rotor_axis,
+            rotor_inertia_kgm2 = SVector{1,Float64}(0.0),
+            rotor_dir = SVector{1,Float64}(1.0),
             linear_drag = 0.0,
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
@@ -481,12 +488,16 @@ end
         env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
         rotor_pos = SVector{2,T.Vec3}(T.vec3(1.0, 0.0, 0.0), T.vec3(0.0, 1.0, 0.0))
         rotor_axis = SVector{2,T.Vec3}(T.vec3(0.0, 0.0, 1.0), T.vec3(0.0, 1.0, 0.0))
+        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
 
         params = Sim.Vehicles.QuadrotorParams{2}(
             mass = 1.0,
-            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            inertia_kgm2 = I,
+            inertia_inv_kgm2 = I,
             rotor_pos_body = rotor_pos,
             rotor_axis_body = rotor_axis,
+            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
+            rotor_dir = SVector{2,Float64}(1.0, 1.0),
             linear_drag = 0.0,
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
@@ -521,12 +532,16 @@ end
         env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
         rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
         rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
+        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
 
         params = Sim.Vehicles.QuadrotorParams{1}(
             mass = 1.0,
-            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            inertia_kgm2 = I,
+            inertia_inv_kgm2 = I,
             rotor_pos_body = rotor_pos,
             rotor_axis_body = rotor_axis,
+            rotor_inertia_kgm2 = SVector{1,Float64}(0.0),
+            rotor_dir = SVector{1,Float64}(1.0),
             linear_drag = 0.0,
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
@@ -596,12 +611,16 @@ end
         rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
         # Axis chosen so F = -T * axis gives forward +X force.
         rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
+        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
 
         params = Sim.Vehicles.QuadrotorParams{2}(
             mass = 1.0,
-            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            inertia_kgm2 = I,
+            inertia_inv_kgm2 = I,
             rotor_pos_body = rotor_pos,
             rotor_axis_body = rotor_axis,
+            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
+            rotor_dir = SVector{2,Float64}(1.0, 1.0),
             linear_drag = 0.0,
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
@@ -639,12 +658,16 @@ end
         r = 0.5
         rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
         rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
+        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
 
         params = Sim.Vehicles.QuadrotorParams{2}(
             mass = 1.0,
-            inertia_diag = T.vec3(1.0, 1.0, 1.0),
+            inertia_kgm2 = I,
+            inertia_inv_kgm2 = I,
             rotor_pos_body = rotor_pos,
             rotor_axis_body = rotor_axis,
+            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
+            rotor_dir = SVector{2,Float64}(1.0, 1.0),
             linear_drag = 0.0,
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
@@ -687,9 +710,9 @@ end
             angular_damping = T.vec3(0.0, 0.0, 0.0),
         )
 
-        motors = Sim.Aircraft.MotorSpec[
-            Sim.Aircraft.MotorSpec(id = :motor1, channel = 1),
-            Sim.Aircraft.MotorSpec(id = :motor2, channel = 2),
+        motors = Sim.Aircraft.MotorChannelSpec[
+            Sim.Aircraft.MotorChannelSpec(id = :motor1, channel = 1),
+            Sim.Aircraft.MotorChannelSpec(id = :motor2, channel = 2),
         ]
 
         actuation = Sim.Aircraft.ActuationSpec(

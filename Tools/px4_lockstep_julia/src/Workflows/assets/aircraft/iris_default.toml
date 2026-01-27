@@ -38,6 +38,30 @@ dt_log_s = 0.01
 integrator = "RK45"
 contact = "flat_ground"
 
+[environment]
+wind = "ou"
+wind_mean_ned = [0.0, 0.0, 0.0]
+wind_sigma_ned = [1.5, 1.5, 0.5]
+wind_tau_s = 3.0
+atmosphere = "isa1976"
+gravity = "uniform"
+gravity_mps2 = 9.80665
+
+[scenario]
+arm_time_s = 1.0
+mission_time_s = 2.0
+
+[estimator]
+kind = "noisy_delayed"
+pos_sigma_m = [0.02, 0.02, 0.02]
+vel_sigma_mps = [0.05, 0.05, 0.05]
+yaw_sigma_rad = 0.01
+rate_sigma_rad_s = [0.005, 0.005, 0.005]
+bias_tau_s = 50.0
+rate_bias_sigma_rad_s = [0.001, 0.001, 0.001]
+delay_s = 0.008
+dt_est_s = 0.004
+
 [airframe]
 kind = "multirotor"
 mass_kg = 1.5
@@ -75,6 +99,20 @@ rho_nom = 1.225
 rotor_radius_m = 0.127
 inflow_kT = 8.0
 inflow_kQ = 8.0
+thrust_calibration_mult = 2.0
+rotor_dir = [1, 1, -1, -1]
+
+[airframe.propulsion.esc]
+eta = 0.98
+deadzone = 0.02
+
+[airframe.propulsion.motor]
+kv_rpm_per_volt = 920.0
+r_ohm = 0.25
+j_kgm2 = 1.2e-5
+i0_a = 0.6
+viscous_friction_nm_per_rad_s = 2.0e-6
+max_current_a = 60.0
 
 [actuation]
 
@@ -101,6 +139,7 @@ kind = "direct"
 kind = "direct"
 
 [power]
+share_mode = "inv_r0"
 
 [[power.batteries]]
 id = "bat1"

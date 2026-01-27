@@ -31,6 +31,14 @@ There are no code-side presets; TOML is the only source of uORB configuration.
 Determinism note: uORB publisher `instance` defaults to auto (`-1`) when omitted. For
 reproducible wiring, prefer explicit instances (e.g., `instance = 0` for singletons).
 
+## Injection scheduling
+
+The bridge currently publishes **all configured injection topics every autopilot tick**
+(period = 0). This keeps behavior simple but means per-tick uORB traffic grows as
+you add topics. The per-topic period machinery exists internally but is not exposed
+via TOML yet. For latched topics (e.g., `home_position`), a “publish once” option would
+be more efficient.
+
 ## Where the bridge lives
 
 - ABI wrapper: `src/PX4Lockstep.jl`

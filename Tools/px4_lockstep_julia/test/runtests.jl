@@ -20,6 +20,7 @@ include("verification_contracts.jl")
 
 # uORB interface + injection scheduling checks (no PX4 binary required).
 include("uorb_injection.jl")
+include("lockstep_runtime.jl")
 
 # Record/replay engine (Option A) checks.
 

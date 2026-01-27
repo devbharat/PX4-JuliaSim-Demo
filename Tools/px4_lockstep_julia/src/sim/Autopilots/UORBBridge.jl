@@ -330,7 +330,7 @@ end
 @inline function _vehicle_attitude_msg(time_us::UInt64, q_bn::Quat)
     return VehicleAttitudeMsg(
         time_us,
-        0,
+        time_us,
         (Float32(q_bn[1]), Float32(q_bn[2]), Float32(q_bn[3]), Float32(q_bn[4])),
         ZERO_Q_F32,
         UInt8(0),
@@ -437,7 +437,7 @@ end
 @inline function _vehicle_angular_velocity_msg(time_us::UInt64, ω_body::Vec3)
     return VehicleAngularVelocityMsg(
         time_us,
-        0,
+        time_us,
         (Float32(ω_body[1]), Float32(ω_body[2]), Float32(ω_body[3])),
         ZERO_VEC3_F32,
     )
@@ -511,7 +511,7 @@ end
     time_us::UInt64,
     cmd::AutopilotCommand,
     auto_mode::Bool,
-    nav_state::UInt8,
+    _nav_state::UInt8,
     control_allocator_enabled::Bool,
 )
     return VehicleControlModeMsg(
@@ -530,7 +530,7 @@ end
         true,
         control_allocator_enabled,
         false,
-        nav_state,
+        UInt8(0),
         ZERO_PAD_U8_1,
     )
 end

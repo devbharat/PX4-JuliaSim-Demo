@@ -1,7 +1,11 @@
 # PX4 Lockstep (Strategy A)
 
-Goal: run **Commander + Navigator + flight_mode_manager + Mission + mc_pos_control + mc_att_control + mc_rate_control + control_allocator**
+Goal: run **Navigator + flight_mode_manager + Mission + mc_pos_control + mc_att_control + mc_rate_control + control_allocator**
 **single-threaded and deterministic** in a Julia-driven lockstep loop.
+
+⚠️ **Commander-in-loop is not supported yet.** `enable_commander != 0` is a hard error.
+That means this lockstep sim does not validate arming/failsafe/mode logic unless you
+implement it in the bridge.
 
 Key principles:
 

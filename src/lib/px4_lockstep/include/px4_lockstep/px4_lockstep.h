@@ -178,8 +178,9 @@ typedef int32_t px4_lockstep_uorb_sub_t;
 
 // Create a uORB publisher (advertisement is deferred until first queued publish).
 //
-// priority: ignored on PX4 builds without uORB priority support; if <=0, defaults to 0.
-// queue_size: ignored on PX4 builds without uORB queue support (will behave as 1).
+// priority: currently not supported by the C API; must be 0.
+// queue_size: currently cannot override the compiled uORB queue size. If >0 it must
+// match the topic's queue size; pass 0 to skip the check.
 //
 // out_instance is -1 until the first publish (uORB assigns instances on advertise).
 // out_msg_size returns the expected sizeof(topic_struct).

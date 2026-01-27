@@ -97,6 +97,7 @@ Base.@kwdef mutable struct UORBOutputs
     mission_seq::Int32 = 0
     mission_count::Int32 = 0
     mission_finished::Int32 = 0
+    mission_valid::Int32 = 0
     nav_state::Int32 = 0
     arming_state::Int32 = 0
     battery_warning::Int32 = 0
@@ -254,6 +255,7 @@ function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
         out.mission_seq = Int32(mission_msg.seq_current)
         out.mission_count = Int32(mission_msg.seq_total)
         out.mission_finished = mission_msg.finished ? Int32(1) : Int32(0)
+        out.mission_valid = mission_msg.valid ? Int32(1) : Int32(0)
     end
 
     vstatus_msg = _read_uorb(bridge, :vehicle_status)
@@ -411,9 +413,10 @@ end
     lon::Float64,
     alt::Float64,
 )
+    t = time_us == 0 ? UInt64(1) : time_us
     return VehicleGlobalPositionMsg(
-        time_us,
-        time_us,
+        t,
+        t,
         lat,
         lon,
         Float32(alt),
@@ -550,7 +553,8 @@ end
 end
 
 @inline function _geofence_status_msg(time_us::UInt64)
-    return GeofenceStatusMsg(time_us, UInt32(0), UInt8(1), ZERO_PAD_U8_3)
+    t = time_us == 0 ? UInt64(1) : time_us
+    return GeofenceStatusMsg(t, UInt32(0), UInt8(1), ZERO_PAD_U8_3)
 end
 
 @inline function _home_position_msg(
@@ -560,8 +564,9 @@ end
     alt_msl_m::Float64,
     update_count::UInt32,
 )
+    t = time_us == 0 ? UInt64(1) : time_us
     return HomePositionMsg(
-        time_us,
+        t,
         lat_deg,
         lon_deg,
         Float32(alt_msl_m),

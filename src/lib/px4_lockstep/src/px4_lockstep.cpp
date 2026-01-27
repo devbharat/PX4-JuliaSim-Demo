@@ -616,7 +616,9 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	if (rt->cfg.enable_commander != 0) {
 		PX4_ERR("lockstep: commander-in-loop is not supported; set enable_commander=0");
-		goto fail;
+		delete rt;
+		g_lockstep_active.store(0);
+		return nullptr;
 	}
 
 	rt->debug_enabled = env_flag_enabled("PX4_LOCKSTEP_DEBUG");
@@ -671,7 +673,9 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 	// Apply any pre-init parameters queued by the host (e.g. CA_* geometry).
 	if (!apply_preinit_params()) {
 		PX4_ERR("lockstep: preinit param application failed");
-		goto fail;
+		delete rt;
+		g_lockstep_active.store(0);
+		return nullptr;
 	}
 
 	// Create PX4 modules (do NOT start their tasks).
@@ -695,7 +699,9 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 		|| !rt->mc_rate
 		|| (rt->cfg.enable_control_allocator && !rt->control_alloc)) {
 		PX4_ERR("lockstep: failed to allocate modules");
-		goto fail;
+		delete rt;
+		g_lockstep_active.store(0);
+		return nullptr;
 	}
 
 	// Put modules into lockstep mode (patched API in each module).
@@ -726,11 +732,6 @@ px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg)
 
 	PX4_INFO("px4_lockstep created");
 	return reinterpret_cast<px4_lockstep_handle_t>(rt);
-
-fail:
-	delete rt;
-	g_lockstep_active.store(0);
-	return nullptr;
 }
 
 void px4_lockstep_destroy(px4_lockstep_handle_t handle)

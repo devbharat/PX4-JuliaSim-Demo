@@ -97,6 +97,8 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     home::HomeLocation
     edge_trigger::Bool
     last_cmd::AutopilotCommand
+    mission_rearm_pending::Bool
+    mission_rearm_until_us::UInt64
     uorb::UORBBridge
     uorb_outputs::UORBOutputs
     injector::PX4UORBInjector
@@ -189,6 +191,8 @@ function init!(;
         home,
         edge_trigger,
         AutopilotCommand(),
+        false,
+        UInt64(0),
         uorb,
         uorb_outputs,
         injector,
@@ -257,6 +261,31 @@ function autopilot_step(
         cmd.request_mission
     req_rtl =
         ap.edge_trigger ? (cmd.request_rtl && !ap.last_cmd.request_rtl) : cmd.request_rtl
+
+    if !ap.edge_trigger
+        if cmd.request_mission
+            mission_valid = ap.uorb_outputs.mission_valid != 0
+            if !mission_valid
+                ap.mission_rearm_pending = true
+            elseif ap.mission_rearm_pending
+                # Hold manual for at least one navigator tick so activation re-triggers.
+                nav_rate = ap.handle.config.navigator_rate_hz
+                hold_us = nav_rate > 0 ? UInt64(cld(1_000_000, nav_rate)) : UInt64(1)
+                ap.mission_rearm_until_us = time_us + hold_us
+                ap.mission_rearm_pending = false
+            end
+            if ap.mission_rearm_until_us != 0
+                if time_us < ap.mission_rearm_until_us
+                    req_mission = false
+                else
+                    ap.mission_rearm_until_us = 0
+                end
+            end
+        else
+            ap.mission_rearm_pending = false
+            ap.mission_rearm_until_us = 0
+        end
+    end
 
     auto_mode = req_mission || req_rtl
     nav_state =

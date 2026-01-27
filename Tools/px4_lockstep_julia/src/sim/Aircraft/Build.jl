@@ -762,7 +762,7 @@ function build_aircraft_instance(
         battery = Powertrain.BatteryStatus(),
     )
 
-    # Load mission if provided.
+    # Load mission if provided (after uORB topics are initialized).
     if spec.px4.mission_path !== nothing
         Autopilots.load_mission!(ap, spec.px4.mission_path)
     end

@@ -294,9 +294,17 @@ function param_get_f32(handle::LockstepHandle, name::AbstractString)::Float32
 end
 
 """Queue an int32 PX4 parameter to be applied before module init."""
-function param_preinit_set_i32(name::AbstractString, value::Integer)
+function param_preinit_set_i32(
+    name::AbstractString,
+    value::Integer;
+    libpath::Union{Nothing,AbstractString} = nothing,
+)
+    lib = _load_library(libpath)
+    if libpath !== nothing && _LIB_HANDLE[] == C_NULL
+        _LIB_HANDLE[] = lib
+    end
     fn = try
-        _resolve_symbol(_load_library(), :px4_lockstep_param_preinit_set_i32)
+        _resolve_symbol(lib, :px4_lockstep_param_preinit_set_i32)
     catch
         error("px4_lockstep_param_preinit_set_i32 unavailable; rebuild libpx4_lockstep")
     end
@@ -307,9 +315,17 @@ function param_preinit_set_i32(name::AbstractString, value::Integer)
 end
 
 """Queue a float32 PX4 parameter to be applied before module init."""
-function param_preinit_set_f32(name::AbstractString, value::Real)
+function param_preinit_set_f32(
+    name::AbstractString,
+    value::Real;
+    libpath::Union{Nothing,AbstractString} = nothing,
+)
+    lib = _load_library(libpath)
+    if libpath !== nothing && _LIB_HANDLE[] == C_NULL
+        _LIB_HANDLE[] = lib
+    end
     fn = try
-        _resolve_symbol(_load_library(), :px4_lockstep_param_preinit_set_f32)
+        _resolve_symbol(lib, :px4_lockstep_param_preinit_set_f32)
     catch
         error("px4_lockstep_param_preinit_set_f32 unavailable; rebuild libpx4_lockstep")
     end
@@ -320,11 +336,15 @@ function param_preinit_set_f32(name::AbstractString, value::Real)
 end
 
 """Queue a PX4 parameter to be applied before module init."""
-function param_preinit_set!(name::AbstractString, value)
+function param_preinit_set!(
+    name::AbstractString,
+    value;
+    libpath::Union{Nothing,AbstractString} = nothing,
+)
     if value isa Integer
-        return param_preinit_set_i32(name, value)
+        return param_preinit_set_i32(name, value; libpath = libpath)
     else
-        return param_preinit_set_f32(name, Float32(value))
+        return param_preinit_set_f32(name, Float32(value); libpath = libpath)
     end
 end
 

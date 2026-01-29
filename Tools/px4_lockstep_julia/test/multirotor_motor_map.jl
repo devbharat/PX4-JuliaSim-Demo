@@ -37,7 +37,9 @@ const Sim = PX4Lockstep.Sim
 
     hover_T = params.mass * 9.80665 / Float64(N)
     prop = Sim.Propulsion.default_multirotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
-    battery = Sim.Powertrain.IdealBattery()
+    battery = Sim.Aircraft.build_battery(
+        Sim.Aircraft.BatterySpec(model = :ideal, voltage_v = 12.0),
+    )
 
     # Swap channels: physical motor #1 reads channel 2, physical motor #2 reads channel 1.
     motor_map = Sim.Vehicles.MotorMap{N}(SVector{N,Int}(2, 1, 3, 4))
@@ -116,7 +118,9 @@ end
 
     hover_T = params.mass * 9.80665 / Float64(N)
     prop = Sim.Propulsion.default_multirotor_set(N = N, thrust_hover_per_rotor_n = hover_T)
-    battery = Sim.Powertrain.IdealBattery()
+    battery = Sim.Aircraft.build_battery(
+        Sim.Aircraft.BatterySpec(model = :ideal, voltage_v = 12.0),
+    )
 
     motor_map = Sim.Vehicles.MotorMap{N}(SVector{N,Int}(ntuple(i -> i, N)))
 

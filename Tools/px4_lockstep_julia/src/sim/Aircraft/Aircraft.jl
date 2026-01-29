@@ -12,12 +12,13 @@ parameter injection (allocator geometry) on top of the instance + wiring model.
 module Aircraft
 
 include("Spec.jl")
+include("BatteryAssets.jl")
 include("Validate.jl")
 include("Build.jl")
 include("TOMLIO.jl")
 
-# Long-term preference: TOML is the primary interface; these exports are for
-# internal/programmatic construction convenience.
+# Long-term preference: TOML/spec is the primary interface; direct Powertrain
+# constructors are deprecated in favor of `BatterySpec` + `build_battery`.
 export PX4Spec,
     PX4ParamSpec,
     TimelineSpec,
@@ -30,12 +31,12 @@ export PX4Spec,
 # Composition specs
 export AirframeSpec, PropulsionSpec, EscSpec, MotorSpec
 export ActuationSpec, MotorChannelSpec, ServoSpec
-export PowerSpec, PowerBusSpec, BatterySpec
+export PowerSpec, PowerBusSpec, BatterySpec, BatteryThermalSpec
 export AbstractActuatorModelSpec,
     DirectActuatorSpec, FirstOrderActuatorSpec, SecondOrderActuatorSpec
 export AbstractSensorSpec, GpsSpec, RangefinderSpec, RadarSpec
 
-export validate_spec, build_engine
+export validate_spec, build_engine, build_battery
 
 # Declarative specs
 export load_spec, spec_from_toml_dict, run_spec

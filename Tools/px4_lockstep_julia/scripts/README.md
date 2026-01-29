@@ -51,6 +51,18 @@ Run the live Iris mission with uORB injection flags (uses `examples/specs/iris_l
 Tools/px4_lockstep_julia/scripts/run_iris_lockstep.sh
 ```
 
+Run the Iris mission with the Example 8S 10 Ah battery spec:
+
+```bash
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_example_10ah.sh
+```
+
+Run the Iris mission with the Example 3S2P 10 Ah battery spec (voltage matches default Iris, higher capacity):
+
+```bash
+Tools/px4_lockstep_julia/scripts/run_iris_lockstep_example_3s2p_10ah.sh
+```
+
 Pass a custom spec path as the only argument:
 
 ```bash

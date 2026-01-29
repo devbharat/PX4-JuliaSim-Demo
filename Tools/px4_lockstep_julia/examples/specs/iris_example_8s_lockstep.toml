@@ -1,0 +1,31 @@
+schema_version = 1
+extends = ["../../src/Workflows/assets/aircraft/iris_default.toml"]
+
+[px4]
+libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.dylib"
+mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
+
+# NOTE: This example shows the asset-based Example pack workflow (OCV + DCIR surface).
+# The rest of the Iris parameters (motors/props) are still the default 3S-ish Iris
+# configuration and will not represent a realistic 8S aircraft.
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+
+# Asset-driven Example 8S1P pack (OCV + DCIR surface).
+pack_asset = "../../src/Workflows/assets/battery/packs/example_8s1p_3290mah/meta.toml"
+temp_c = 25.0
+soc0 = 1.0
+
+# Use DCIR as the effective droop resistance (default r0_col in the asset).
+# Override if you want the early dip term:
+# r0_surface_r0_col = "r0_ohm"
+
+# 1st-order Thevenin polarization (R1,C1) not provided -> disabled.
+r1 = 0.0
+c1 = 0.0
+v1_0 = 0.0
+
+# Minimum terminal voltage clamp (set based on your cutoff). 0 disables clamping.
+min_voltage_v = 0.0

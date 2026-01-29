@@ -197,6 +197,72 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
     # Power system (multi-battery + multi-bus)
     bats = spec.power.batteries
     isempty(bats) && throw(ArgumentError("power.batteries must be non-empty"))
+    for b in bats
+        if b.model === :thevenin_surface
+            throw(
+                ArgumentError(
+                    "Battery $(b.id) model=:thevenin_surface is deprecated; use model=:thevenin with r0_surface_csv_path instead",
+                ),
+            )
+        end
+        b.series >= 1 || throw(ArgumentError("Battery $(b.id) series must be >= 1"))
+        b.parallel >= 1 || throw(ArgumentError("Battery $(b.id) parallel must be >= 1"))
+        b.capacity_ah > 0.0 ||
+            throw(ArgumentError("Battery $(b.id) capacity_ah must be > 0"))
+        if b.model === :ideal
+            b.voltage_v !== nothing ||
+                throw(ArgumentError("Battery $(b.id) model=:ideal requires voltage_v"))
+        end
+        if b.cell_capacity_ah !== nothing
+            b.cell_capacity_ah > 0.0 ||
+                throw(ArgumentError("Battery $(b.id) cell_capacity_ah must be > 0"))
+        end
+        if b.ocv_csv_step !== nothing
+            (b.ocv_csv_step > 0.0 && b.ocv_csv_step <= 1.0) || throw(
+                ArgumentError(
+                    "Battery $(b.id) ocv_csv_step must be in (0,1] (got $(b.ocv_csv_step))",
+                ),
+            )
+        end
+        b.r0_overhead_ohm >= 0.0 || throw(
+            ArgumentError(
+                "Battery $(b.id) r0_overhead_ohm must be >= 0 (got $(b.r0_overhead_ohm))",
+            ),
+        )
+
+        # Optional thermal hook (Phase 7): validate user-provided overrides.
+        th = b.thermal
+        if th.enabled
+            if th.c_th_j_per_k !== nothing
+                th.c_th_j_per_k > 0.0 || throw(
+                    ArgumentError(
+                        "Battery $(b.id) thermal.c_th_j_per_k must be > 0 (got $(th.c_th_j_per_k))",
+                    ),
+                )
+            end
+            if th.k_to_ambient_w_per_k !== nothing
+                th.k_to_ambient_w_per_k >= 0.0 || throw(
+                    ArgumentError(
+                        "Battery $(b.id) thermal.k_to_ambient_w_per_k must be >= 0 (got $(th.k_to_ambient_w_per_k))",
+                    ),
+                )
+            end
+        end
+        if th.ambient_temp_c !== nothing
+            isfinite(th.ambient_temp_c) || throw(
+                ArgumentError(
+                    "Battery $(b.id) thermal.ambient_temp_c must be finite (got $(th.ambient_temp_c))",
+                ),
+            )
+        end
+        if th.initial_temp_c !== nothing
+            isfinite(th.initial_temp_c) || throw(
+                ArgumentError(
+                    "Battery $(b.id) thermal.initial_temp_c must be finite (got $(th.initial_temp_c))",
+                ),
+            )
+        end
+    end
     bat_ids = [b.id for b in bats]
     length(unique(bat_ids)) == length(bat_ids) ||
         throw(ArgumentError("Duplicate battery IDs in power.batteries"))
@@ -258,6 +324,13 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
         libpath = spec.px4.libpath
         (libpath === nothing || isempty(strip(libpath))) &&
             throw(ArgumentError("px4.libpath is required for live/record runs"))
+    end
+    if spec.px4.lockstep_config.enable_commander != 0
+        throw(
+            ArgumentError(
+                "Commander-in-loop lockstep is not supported; set px4.lockstep.enable_commander=0",
+            ),
+        )
     end
 
     # -----------------------------

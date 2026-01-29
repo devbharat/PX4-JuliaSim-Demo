@@ -1,0 +1,194 @@
+schema_version = 1
+extends = ["iris_uorb.toml"]
+
+[aircraft]
+name = "iris"
+seed = 1
+
+[home]
+lat_deg = 47.397742
+lon_deg = 8.545594
+alt_msl_m = 488.0
+
+[px4]
+# Path to a QGC WPL mission file.
+mission_path = "../missions/simple_mission.waypoints"
+edge_trigger = false
+derive_ca_params = true
+
+[px4.lockstep]
+dataman_use_ram = 1
+enable_commander = 0
+commander_rate_hz = 100
+navigator_rate_hz = 20
+mc_pos_control_rate_hz = 100
+mc_att_control_rate_hz = 250
+mc_rate_control_rate_hz = 250
+enable_control_allocator = 1
+control_allocator_rate_hz = 250
+
+
+[timeline]
+t_end_s = 20.0
+dt_autopilot_s = 0.004
+dt_wind_s = 0.001
+dt_log_s = 0.01
+
+[plant]
+integrator = "RK45"
+contact = "flat_ground"
+
+[environment]
+wind = "ou"
+wind_mean_ned = [0.0, 0.0, 0.0]
+wind_sigma_ned = [1.5, 1.5, 0.5]
+wind_tau_s = 3.0
+atmosphere = "isa1976"
+gravity = "uniform"
+gravity_mps2 = 9.80665
+
+[scenario]
+arm_time_s = 1.0
+mission_time_s = 2.0
+
+[estimator]
+kind = "noisy_delayed"
+pos_sigma_m = [0.02, 0.02, 0.02]
+vel_sigma_mps = [0.05, 0.05, 0.05]
+yaw_sigma_rad = 0.01
+rate_sigma_rad_s = [0.005, 0.005, 0.005]
+bias_tau_s = 50.0
+rate_bias_sigma_rad_s = [0.001, 0.001, 0.001]
+delay_s = 0.008
+dt_est_s = 0.004
+
+[airframe]
+kind = "multirotor"
+mass_kg = 1.5
+inertia_diag_kgm2 = [0.029125, 0.029125, 0.055225]
+
+rotor_pos_body_m = [
+  [ 0.1515,  0.2450, 0.0],
+  [-0.1515, -0.1875, 0.0],
+  [ 0.1515, -0.2450, 0.0],
+  [-0.1515,  0.1875, 0.0],
+]
+
+# Body axes are FRD; thrust force is applied as F_i = -T_i * axis_b[i].
+rotor_axis_body_m = [
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+]
+
+linear_drag = 0.05
+angular_damping = [0.02, 0.02, 0.01]
+
+[airframe.x0]
+pos_ned = [0.0, 0.0, 0.0]
+vel_ned = [0.0, 0.0, 0.0]
+q_bn = [1.0, 0.0, 0.0, 0.0]
+omega_body = [0.0, 0.0, 0.0]
+
+[airframe.propulsion]
+kind = "multirotor_default"
+km_m = 0.05
+V_nom = 12.0
+rho_nom = 1.225
+rotor_radius_m = 0.127
+inflow_kT = 8.0
+inflow_kQ = 8.0
+thrust_calibration_mult = 2.0
+rotor_dir = [1, 1, -1, -1]
+
+[airframe.propulsion.esc]
+eta = 0.98
+deadzone = 0.02
+
+[airframe.propulsion.motor]
+kv_rpm_per_volt = 920.0
+r_ohm = 0.25
+j_kgm2 = 1.2e-5
+i0_a = 0.6
+viscous_friction_nm_per_rad_s = 2.0e-6
+max_current_a = 60.0
+
+[actuation]
+
+[[actuation.motors]]
+id = "motor1"
+channel = 1
+
+[[actuation.motors]]
+id = "motor2"
+channel = 2
+
+[[actuation.motors]]
+id = "motor3"
+channel = 3
+
+[[actuation.motors]]
+id = "motor4"
+channel = 4
+
+[actuation.motor_actuators]
+kind = "direct"
+
+[actuation.servo_actuators]
+kind = "direct"
+
+[power]
+share_mode = "inv_r0"
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+
+# Pull OCV(SOC) + DCIR(T,SOC) from the built-in battery assets.
+pack_asset = "../../assets/battery/packs/example_8s1p_3290mah/meta.toml"
+
+# These are redundant with the pack asset metadata, but keeping them explicit here
+# makes the airframe TOML self-describing.
+series = 8
+parallel = 1
+capacity_ah = 3.18
+
+# Initial operating point.
+soc0 = 1.0
+temp_c = 25.0
+
+[power.batteries.thermal]
+# Phase 7 thermal hook (optional)
+#
+# If enabled, the simulator will integrate a simple 1-node pack temperature state
+# and feed it into the resistance model (R0(SOC,T)).
+#
+# By default (with no overrides here), C_th and k_to_ambient are loaded from the
+# pack asset [thermal] table.
+enabled = false
+
+# Optional overrides (uncomment to override pack-asset defaults):
+# ambient_temp_c = 25.0
+# initial_temp_c = 25.0
+# c_th_j_per_k = 600.0
+# k_to_ambient_w_per_k = 1.0
+
+# NOTE: A validated RC (R1/C1) dynamic fit is not available in the qualification
+# package yet. Set to 0 to disable the RC branch and behave like OCV + R0.
+r1 = 0.0
+c1 = 0.0
+v1_0 = 0.0
+
+# Conservative no-load minimum voltage (8S * 3.0V/cell).
+min_voltage_v = 24.0
+low_thr = 0.15
+crit_thr = 0.10
+emerg_thr = 0.05
+
+[[power.buses]]
+id = "main"
+battery_ids = ["bat1"]
+motor_ids = ["motor1", "motor2", "motor3", "motor4"]
+servo_ids = []
+avionics_load_w = 0.0

@@ -30,7 +30,7 @@ Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 using ..Types: Vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize, validate
-using ..Plant: PlantInput, PlantOutputs, PlantState
+using ..Plant: PlantInput, PlantOutputs, PlantState, battery_temp_c
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
 
 import ..plant_outputs
@@ -618,6 +618,7 @@ function _emit_logs_to_sinks!(sim::Engine)
     ap_tel = autopilot_telemetry(sim.autopilot)
 
     batt = sim.bus.batteries[1]
+    batt_temp_c = battery_temp_c(sim.plant)
     for sink in sim.log_sinks
         Logging.log!(
             sink,
@@ -629,6 +630,7 @@ function _emit_logs_to_sinks!(sim::Engine)
             rho = sim.bus.env.rho_kgm3,
             air_vel_body = air_vel_body,
             battery = batt,
+            battery_temp_c = Float64(batt_temp_c),
             rotor_omega = rotor_omega,
             rotor_thrust = rotor_thrust,
             pos_sp = ap_tel.pos_sp,

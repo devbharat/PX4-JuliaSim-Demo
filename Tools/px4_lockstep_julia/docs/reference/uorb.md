@@ -39,6 +39,12 @@ you add topics. The per-topic period machinery exists internally but is not expo
 via TOML yet. For latched topics (e.g., `home_position`), a “publish once” option would
 be more efficient.
 
+Scheduling constraint: if you do configure nonzero injection periods (via code or a
+custom interface), they **must be integer multiples of the autopilot cadence**
+`dt_ap_us`. Otherwise publishes are skipped because the modulo schedule can never
+hit the requested boundary. The runtime validates this and warns (or errors in
+strict mode) when `period_us % dt_ap_us != 0`.
+
 ## Where the bridge lives
 
 - ABI wrapper: `src/PX4Lockstep.jl`

@@ -16,9 +16,14 @@ const V = Sim.Verification
 const T = Sim.Types
 const Env = Sim.Environment
 const PT = Sim.Powertrain
+const AC = Sim.Aircraft
 const RB = Sim.RigidBody
 const Scen = Sim.Scenario
 const Ev = Sim.Events
+
+build_battery_spec(; kwargs...) = AC.build_battery(AC.BatterySpec(; kwargs...))
+build_thevenin(; kwargs...) = build_battery_spec(model = :thevenin; kwargs...)
+build_ideal(; kwargs...) = build_battery_spec(model = :ideal; kwargs...)
 
 """Test-only prop model that makes thrust/torque depend on Vax sign."""
 struct SignProp <: Sim.Propulsion.AbstractPropParams
@@ -139,7 +144,7 @@ end
         # Closed form for V1 and SOC:
         #   SOC(t) = SOC0 - I*t/Q,  Q=Ah*3600
         #   V1(t)  = V1(0)*exp(-t/τ) + I*R1*(1-exp(-t/τ)), τ=R1*C1
-        batt = PT.TheveninBattery(
+        batt = build_thevenin(
             capacity_ah=2.0,
             soc0=1.0,
             ocv_soc=[0.0, 1.0],
@@ -173,7 +178,8 @@ end
             @test isapprox(st.v1, v1_expected; atol=1e-11)
 
             # Terminal voltage check (OCV is constant here).
-            V_expected = 12.0 - I * batt.r0 - v1_expected
+            r0_eff = PT.r0_ohm(batt.r0_model, st.soc, batt.temp_c)
+            V_expected = 12.0 - I * r0_eff - v1_expected
             @test isapprox(PT.status(batt, st).voltage_v, V_expected; atol=1e-10)
         end
 
@@ -218,8 +224,8 @@ end
 
     @testset "Phase 5.1 - init_plant_state with multiple batteries" begin
         veh = iris_vehicle_for_tests()
-        b1 = PT.TheveninBattery(soc0 = 0.9, v1_0 = 0.12)
-        b2 = PT.TheveninBattery(soc0 = 0.8, v1_0 = 0.34)
+        b1 = build_thevenin(soc0 = 0.9, v1_0 = 0.12)
+        b2 = build_thevenin(soc0 = 0.8, v1_0 = 0.34)
         x0 = Sim.Plant.init_plant_state(
             veh.state,
             veh.motor_actuators,
@@ -271,7 +277,7 @@ end
 
     @testset "Phase 5.2 - power network current sharing + avionics load" begin
         # Two batteries on one bus, no motors. Verify current sharing under a pure avionics load.
-        b1 = PT.TheveninBattery(
+        b1 = build_thevenin(
             capacity_ah = 2.0,
             soc0 = 1.0,
             ocv_soc = [0.0, 1.0],
@@ -282,7 +288,7 @@ end
             v1_0 = 0.0,
             min_voltage_v = 0.0,
         )
-        b2 = PT.TheveninBattery(
+        b2 = build_thevenin(
             capacity_ah = 2.0,
             soc0 = 1.0,
             ocv_soc = [0.0, 1.0],
@@ -355,7 +361,7 @@ end
 
     @testset "Phase 5.2 - multi-bus voltage mapping" begin
         # Two buses, two batteries. Apply motor load only on bus 1 and verify bus 1 voltage droops.
-        b1 = PT.TheveninBattery(
+        b1 = build_thevenin(
             capacity_ah = 2.0,
             soc0 = 1.0,
             ocv_soc = [0.0, 1.0],
@@ -366,7 +372,7 @@ end
             v1_0 = 0.0,
             min_voltage_v = 0.0,
         )
-        b2 = PT.TheveninBattery(
+        b2 = build_thevenin(
             capacity_ah = 2.0,
             soc0 = 1.0,
             ocv_soc = [0.0, 1.0],
@@ -553,7 +559,7 @@ end
         motor = Sim.Propulsion.BLDCMotorParams()
         units = [Sim.Propulsion.MotorPropUnit(esc = esc, motor = motor, prop = SignProp(1.0, 0.5))]
         prop = Sim.Propulsion.QuadRotorSet(units, SVector{1,Float64}(1.0))
-        battery = PT.IdealBattery()
+        battery = build_ideal(voltage_v = 12.0)
 
         motor_map = Sim.Vehicles.MotorMap{1}(SVector{1,Int}(1))
         dynfun = Sim.PlantModels.CoupledMultirotorModel(
@@ -605,7 +611,7 @@ end
         @test y_neg.rotors.thrust_n[1] > 0.0
     end
 
-    @testset "Phase 4 - Wingtra-style twin forward props (yaw via differential thrust)" begin
+    @testset "Phase 4 - twin forward props (yaw via differential thrust)" begin
         env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
         r = 0.5
         rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
@@ -749,12 +755,13 @@ end
     batt_snap = (
         soc0 = batt.soc0,
         v1_0 = batt.v1_0,
-        ocv_soc = copy(batt.ocv_soc),
-        ocv_v = copy(batt.ocv_v),
-        r0 = batt.r0,
+        ocv_soc = copy(batt.ocv.soc),
+        ocv_v = copy(batt.ocv.v),
+        r0_model = batt.r0_model,
         r1 = batt.r1,
         c1 = batt.c1,
         min_voltage_v = batt.min_voltage_v,
+        temp_c = batt.temp_c,
     )
     prop = model.propulsion
     prop_snap = copy(prop.units)
@@ -766,12 +773,13 @@ end
     @test (
         soc0 = batt.soc0,
         v1_0 = batt.v1_0,
-        ocv_soc = copy(batt.ocv_soc),
-        ocv_v = copy(batt.ocv_v),
-        r0 = batt.r0,
+        ocv_soc = copy(batt.ocv.soc),
+        ocv_v = copy(batt.ocv.v),
+        r0_model = batt.r0_model,
         r1 = batt.r1,
         c1 = batt.c1,
         min_voltage_v = batt.min_voltage_v,
+        temp_c = batt.temp_c,
     ) == batt_snap
     @test prop.units == prop_snap
 

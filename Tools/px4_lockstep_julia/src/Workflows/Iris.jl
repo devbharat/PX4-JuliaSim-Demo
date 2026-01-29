@@ -23,6 +23,7 @@ function simulate_iris_mission(;
     mode::Symbol = :live,
     recording_in::Union{Nothing,AbstractString} = nothing,
     recording_out::Union{Nothing,AbstractString} = nothing,
+    report_timing::Bool = false,
 )
     if spec_path === nothing && spec_name === nothing
         error("spec_path or spec_name is required (e.g. spec_name=:iris_default).")
@@ -35,6 +36,7 @@ function simulate_iris_mission(;
         recording_in = recording_in,
         recording_out = recording_out,
         strict = true,
+        report_timing = report_timing,
     )
 end
 

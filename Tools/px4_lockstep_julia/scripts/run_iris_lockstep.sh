@@ -22,4 +22,5 @@ run_julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" \
   -e "using PX4Lockstep.Workflows; \
       Workflows.simulate_iris_mission( \
         spec_path=\"${SPEC_PATH}\", \
-        mode=:live)"
+        mode=:live, \
+        report_timing=true)"

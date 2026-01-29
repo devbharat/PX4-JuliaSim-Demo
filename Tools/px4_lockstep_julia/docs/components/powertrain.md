@@ -13,14 +13,18 @@ The interface is intentionally small to keep the plant RHS deterministic.
 
 - **Ideal battery baseline:** constant voltage with coulomb counting provides a stable,
   deterministic reference for regression tests.
-- **Thevenin model:** adds OCV sag and RC polarization without thermal dynamics, which
-  captures the dominant effects PX4 uses for battery logic.
+- **Thevenin model:** adds OCV sag and RC polarization with an optional lumped thermal
+  hook (temperature state integrated in the plant). `R0` can be a constant, a
+  temperature-only curve, or a SOC+temperature surface (CSV) while keeping the
+  plant RHS deterministic.
 - **Explicit warning mapping:** SOC thresholds map to PX4 warning levels so status
   semantics remain consistent across battery models.
 
 ## Integration Contracts
 
 - Battery model objects (`IdealBattery`, `TheveninBattery`) are **parameter-only**.
+- Canonical construction is TOML/spec-driven; for programmatic use, build batteries
+  via `Aircraft.BatterySpec` + `Aircraft.build_battery` (direct constructors are deprecated).
 - `step!(model, state, I_bus_a, dt)` advances SOC/polarization in a provided
   `Powertrain.BatteryState` (stand-alone stepping helper).
 - In the event-driven plant engine, SOC and polarization voltage are integrated as part
@@ -41,9 +45,13 @@ The interface is intentionally small to keep the plant RHS deterministic.
 - Regenerative or negative bus currents are clamped to zero in `step!`.
 - `status` reflects the provided state. In the canonical engine, battery telemetry is
   derived via `plant_outputs(...)` and published on the bus.
-- The Thevenin model omits thermal effects and aging; it should not be used for
-  high-fidelity energy studies.
+- Stand-alone `status(model, state)` uses the model's `temp_c`; thermal state only
+  exists in the integrated plant.
+- The Thevenin model includes a simple thermal hook but omits aging, OCV(T), and
+  capacity(T); it should not be used for high-fidelity energy studies.
+- Dense OCV curves (e.g. cell characterization tables) are supported: the OCV helper
+  uses a binary search and aircraft specs can load curves from CSV at build time.
 - Invalid battery parameters can break the bus solve in the plant engine; expect
   explicit errors in that case.
- - PowerNetwork models a single-bus assignment per battery; cross-feed or diode OR-ing
-   is intentionally out of scope.
+- PowerNetwork models a single-bus assignment per battery; cross-feed or diode OR-ing
+  is intentionally out of scope.

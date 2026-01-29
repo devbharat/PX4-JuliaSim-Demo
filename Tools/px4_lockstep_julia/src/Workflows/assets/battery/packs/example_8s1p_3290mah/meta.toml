@@ -1,0 +1,66 @@
+# Example 8S1P 3290 mAh pack asset (built from cell + DCIR dataset)
+#
+# Runtime consumption:
+# - This file IS consumed by the runtime simulator via
+#   `Sim.Aircraft.BatteryAssets.load_pack_asset(".../meta.toml")`.
+# - It wires the pack to its cell OCV curve and provides an optional resistance surface.
+#
+# Note: The DCIR/R0 measurement was taken at the pack terminals (downstream of the BMS
+# FETs, and includes the BMS power path + main connector per test context). Therefore
+# this is best treated as a **pack-level** resistance model.
+
+schema_version = 1
+id = "example_8s1p_3290mah"
+manufacturer = "Example"
+description = "Example 8S1P pack made from the Example 3290 mAh HV LiPo cell."
+
+series = 8
+parallel = 1
+
+# Derived pack capacity (Ah) for 1P is the cell capacity.
+nominal_capacity_ah = 3.29
+qualified_capacity_ah = 3.18
+
+[cell]
+ref = "../../cells/example_3290mah_hv/meta.toml"
+
+[thevenin_fit]
+# Phase 5 mapping policy (see docs / plan):
+# - We want to match **loaded voltage under thrust**, not the instantaneous dip.
+# - Use end-of-pulse DCIR (Rdc) as the effective series droop resistance.
+# - Disable the RC branch unless/until a validated (R1,C1) dynamic fit is added.
+method = "rdc_as_r0"
+notes = "Use DCIR (end-of-pulse) as the effective series droop resistance: R0 := Rdc, R1 := 0. Matches loaded voltage under thrust."
+
+[resistance_surface_pack]
+csv = "resistance_surface_pack.csv"
+temp_col = "temp_c"
+soc_col = "soc"
+# IMPORTANT: for this pack we default to the DCIR column (end-of-pulse), because the aim is
+# to match loaded bus voltage under thrust. If you want the 'early dip' ohmic term instead,
+# override this to \"r0_ohm\" in a BatterySpec / TOML.
+r0_col = "rdc_ohm"
+soc_units = "fraction"
+soc_convention = "remaining"
+columns = ["temp_c", "soc", "r0_ohm", "rdc_ohm", "r1_ohm", "n"]
+units = "ohm"
+notes = "Direct pack-level aggregation from the dashboard extraction (no additional scaling). r0_col selects which column is used as the sim's series droop resistance."
+
+[thermal]
+# Simple 1-node lumped thermal hook (Phase 7)
+#
+# The plant integrates a battery temperature state when enabled:
+#   dT/dt = (P_loss - k*(T - T_amb)) / C_th
+#
+# Where P_loss is approximated from the electrical model:
+#   P_loss ≈ I^2*R0(soc,temp) + V1^2/R1
+#
+# These defaults are intentionally conservative placeholders and should be
+# overridden once you have validated thermal data for the pack/installation.
+c_th_j_per_k = 600.0
+k_to_ambient_w_per_k = 1.0
+notes = "Placeholder defaults: C_th ~ m*c_p with m≈0.54 kg, c_p≈1 kJ/kgK. k_to_ambient is a rough convection term for light airflow. Override in the aircraft TOML if you have better data."
+
+[raw_extraction]
+pulses_csv = "dcir_extracted_pulses_pack.csv"
+notes = "Raw extracted pulse metrics for traceability / debugging."

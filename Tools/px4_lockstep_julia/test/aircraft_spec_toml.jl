@@ -26,6 +26,54 @@ using Test
     end
 end
 
+@testset "AircraftSpec battery explicit keys" begin
+    mktempdir() do dir
+        assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+        pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
+        toml = """
+        schema_version = 1
+        [power]
+        [[power.batteries]]
+        id = "bat1"
+        model = "thevenin"
+        pack_asset = "$(pack_meta)"
+        series = 4
+        r0_surface_r0_col = "r0_ohm"
+        [power.batteries.thermal]
+        c_th_j_per_k = 700.0
+        """
+        path = joinpath(dir, "battery_explicit.toml")
+        write(path, toml)
+
+        spec = Sim.Aircraft.load_spec(path; strict = true, base_spec = :default)
+        batt = spec.power.batteries[1]
+
+        @test :series in batt.explicit_keys
+        @test :r0_surface_r0_col in batt.explicit_keys
+        @test :c_th_j_per_k in batt.thermal.explicit_keys
+    end
+end
+
+@testset "AircraftSpec battery model deprecations" begin
+    mktempdir() do dir
+        assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+        pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
+        toml = """
+        schema_version = 1
+        [power]
+        [[power.batteries]]
+        id = "bat1"
+        model = "thevenin_surface"
+        pack_asset = "$(pack_meta)"
+        """
+        path = joinpath(dir, "battery_model.toml")
+        write(path, toml)
+
+        spec = Sim.Aircraft.load_spec(path; strict = true, base_spec = :default)
+        @test_throws ArgumentError Sim.Aircraft.validate_spec(spec)
+    end
+end
+
 @testset "AircraftSpec TOML uORB instance validation" begin
     mktempdir() do dir
         toml_pub_ok = """
@@ -196,6 +244,55 @@ end
         spec = Sim.Aircraft.load_spec(path; strict = true)
         @test spec.plant.integrator === :RK45
     end
+end
+
+@testset "Battery OCV CSV parsing + cell-to-pack scaling" begin
+    csv_path = normpath(
+        joinpath(
+            @__DIR__,
+            "..",
+            "src",
+            "Workflows",
+            "assets",
+            "battery",
+            "raw",
+            "example_3290mah_8s1p",
+            "example_cell_ocv_soc.csv",
+        ),
+    )
+    @test isfile(csv_path)
+
+    soc, v = Sim.Powertrain.load_ocv_curve_csv(
+        csv_path;
+        soc_col = "used_soc",
+        v_col = "cell_ocv",
+        soc_units = :percent,
+        soc_convention = :used,
+        step = 0.1,
+    )
+    @test length(soc) == 11
+    @test soc[1] == 0.0
+    @test soc[end] == 1.0
+    @test issorted(soc)
+    @test v[end] > v[1]
+
+    spec = Sim.Aircraft.BatterySpec(
+        model = :thevenin,
+        series = 3,
+        parallel = 2,
+        cell_capacity_ah = 5.0,
+        ocv_csv_path = csv_path,
+        ocv_csv_soc_col = "used_soc",
+        ocv_csv_v_col = "cell_ocv",
+        ocv_csv_soc_units = :percent,
+        ocv_csv_soc_convention = :used,
+        ocv_csv_step = 0.1,
+        ocv_is_cell = true,
+        min_voltage_v = 0.0,
+    )
+    batt = Sim.Aircraft.build_battery(spec)
+    @test batt.capacity_c == 5.0 * 2.0 * 3600.0
+    @test isapprox(batt.ocv.v[end], 4.4 * 3.0; atol = 1e-6)
 end
 
 @testset "AircraftSpec environment/scenario/estimator parsing" begin

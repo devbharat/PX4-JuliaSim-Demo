@@ -1,0 +1,76 @@
+# Example 3290 mAh HV LiPo cell asset
+#
+# Runtime consumption:
+# - This file IS consumed by the runtime simulator via
+#   `Sim.Aircraft.BatteryAssets.load_cell_asset(".../meta.toml")`.
+#
+# Notes:
+# - OCV curve comes from the provided dense CSV:
+#   src/Workflows/assets/battery/raw/example_3290mah_8s1p/example_cell_ocv_soc.csv
+# - Resistance values were extracted from the DCIR Plotly dashboard (R0 @ 0.05s/0.1s, Rdc @ ~5s/min marker).
+# - The raw DCIR data is **pack-level for an 8S1P pack** (measured at pack terminals and includes the BMS
+#   power path + main connector per test context). The cell resistance surface is therefore a *derived*
+#   approximation obtained by scaling:
+#
+#       r_cell ≈ r_pack * parallel / series   (here: /8)
+#
+#   This is only strictly valid if cell resistance dominates and pack overhead is negligible.
+#
+# Default modeling choice (Phase 5):
+# - The simulator's "series resistance" term is whatever column is selected by `r0_col`.
+# - To match **loaded voltage under thrust**, we default to using the end-of-pulse DCIR column:
+#       r0_col = "rdc_ohm"
+#   If you specifically want the early "ohmic dip" term, override to:
+#       r0_col = "r0_ohm"
+
+schema_version = 1
+id = "example_3290mah_hv"
+manufacturer = "Example"
+chemistry = "LiPo (HV)"
+description = "Example 3290 mAh HV LiPo cell (derived from an 8S1P pack dataset)."
+
+# Capacity
+# Vendor label: 3290 mAh. The qualification report suggests discharge capacity in the ~3.15–3.23 Ah range
+# (depending on temperature and test conditions).
+nominal_capacity_ah = 3.29
+qualified_capacity_ah = 3.18  # approx fleet mean from qualification report (use as a conservative value)
+
+# Voltage limits for the OCV curve provided
+max_ocv_v = 4.40
+min_ocv_v = 3.00
+
+[thevenin_fit]
+method = "rdc_as_r0"
+notes = "Use DCIR (end-of-pulse) as the effective series droop resistance to match loaded voltage."
+
+[ocv_curve]
+csv = "ocv_soc.csv"
+soc_col = "soc"
+v_col = "ocv_v"
+soc_units = "fraction"
+soc_convention = "remaining"
+notes = "SOC is fraction remaining: 0=empty, 1=full. OCV is per-cell voltage."
+
+[resistance_surface_cell]
+csv = "resistance_surface_cell.csv"
+temp_col = "temp_c"
+soc_col = "soc"
+r0_col = "rdc_ohm"
+soc_units = "fraction"
+soc_convention = "remaining"
+columns = ["temp_c", "soc", "r0_ohm", "rdc_ohm", "r1_ohm", "n"]
+units = "ohm"
+notes = """R0 is computed from the average of voltage at 0.05s and 0.1s after the discharge step.
+Rdc is computed from the 'Min Voltage' marker (≈ end-of-pulse). R1 is derived as (Rdc - R0).
+SOC is estimated by inverting the OCV curve on (V_pre/series).
+"""
+
+[raw_sources]
+ocv_csv = "../../raw/example_3290mah_8s1p/example_cell_ocv_soc.csv"
+dcir_dashboard_html = "../../raw/example_3290mah_8s1p/IMPROVED_DCIR_Dashboard.html"
+dcir_characterisation_xlsx = "../../raw/example_3290mah_8s1p/DCI_R_Characterisation_Results.xlsx"
+
+[scaling]
+measured_pack_series = 8
+measured_pack_parallel = 1
+cell_resistance_from_pack = "r_cell = r_pack * parallel / series (assumes resistance dominated by cells; wiring/BMS not separated)"

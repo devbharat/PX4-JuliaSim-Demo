@@ -137,6 +137,7 @@ function max_internal_rate_hz(ap::PX4LockstepAutopilot)
     max_hz = Int32(0)
     # Only consider enabled modules. Rate <= 0 means "every tick", so it does not
     # constrain dt_autopilot.
+    # Commander-in-loop is currently disabled; branch retained for future bring-up.
     if cfg.enable_commander != 0 && cfg.commander_rate_hz > 0
         max_hz = max(max_hz, cfg.commander_rate_hz)
     end
@@ -293,6 +294,7 @@ function autopilot_step(
         req_mission ? NAV_STATE_AUTO_MISSION : NAV_STATE_MANUAL
     arming_state = cmd.armed ? ARMING_STATE_ARMED : ARMING_STATE_DISARMED
 
+    # Commander-in-loop is currently disabled; keep this switch for future re-enable.
     use_home = ap.handle.config.enable_commander == 0
     ref_lat = use_home ? ap.home.lat_deg : lat
     ref_lon = use_home ? ap.home.lon_deg : lon

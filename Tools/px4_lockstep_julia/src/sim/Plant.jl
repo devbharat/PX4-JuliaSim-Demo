@@ -67,26 +67,30 @@ Fields:
 struct PowerState{B}
     soc::SVector{B,Float64}
     v1::SVector{B,Float64}
+    temp_c::SVector{B,Float64}
 end
 
 function PowerState{B}(;
     soc::SVector{B,Float64} = SVector{B,Float64}(ntuple(_ -> 1.0, B)),
     v1::SVector{B,Float64} = zero(SVector{B,Float64}),
+    temp_c::SVector{B,Float64} = SVector{B,Float64}(ntuple(_ -> 25.0, B)),
 ) where {B}
-    return PowerState{B}(soc, v1)
+    return PowerState{B}(soc, v1, temp_c)
 end
 
 """Time derivative for `PowerState{B}`."""
 struct PowerDeriv{B}
     soc_dot::SVector{B,Float64}
     v1_dot::SVector{B,Float64}
+    temp_dot::SVector{B,Float64}
 end
 
 function PowerDeriv{B}(;
     soc_dot::SVector{B,Float64} = zero(SVector{B,Float64}),
     v1_dot::SVector{B,Float64} = zero(SVector{B,Float64}),
+    temp_dot::SVector{B,Float64} = zero(SVector{B,Float64}),
 ) where {B}
-    return PowerDeriv{B}(soc_dot, v1_dot)
+    return PowerDeriv{B}(soc_dot, v1_dot, temp_dot)
 end
 
 """Continuous-time plant state.
@@ -158,6 +162,10 @@ function PlantDeriv{N,B}(;
     )
 end
 
+@inline battery_temp_c(ps::PlantState) = ps.power.temp_c[1]
+@inline battery_temp_c(::RigidBodyState) = NaN
+@inline battery_temp_c(::Any) = NaN
+
 ############################
 # Inputs and algebraic outputs
 ############################
@@ -207,6 +215,7 @@ end
     p = PowerState{B}(
         soc = x.power.soc + k.power.soc_dot * h,
         v1 = x.power.v1 + k.power.v1_dot * h,
+        temp_c = x.power.temp_c + k.power.temp_dot * h,
     )
     return PlantState{N,B}(
         rb = rb_add(x.rb, k.rb, h),
@@ -236,6 +245,10 @@ end
         ) * w,
         v1 = x.power.v1 +
              (k1.power.v1_dot + 2k2.power.v1_dot + 2k3.power.v1_dot + k4.power.v1_dot) * w,
+        temp_c = x.power.temp_c +
+                 (
+            k1.power.temp_dot + 2k2.power.temp_dot + 2k3.power.temp_dot + k4.power.temp_dot
+        ) * w,
     )
     return PlantState{N,B}(
         rb = rb_scale_add(x.rb, k1.rb, k2.rb, k3.rb, k4.rb, h),
@@ -290,6 +303,7 @@ end
     rotor_ω = x.rotor_ω
     soc = x.power.soc
     v1 = x.power.v1
+    temp_c = x.power.temp_c
 
     @inbounds for i = 1:K
         w = as[i] * h
@@ -305,11 +319,12 @@ end
         rotor_ω = rotor_ω + ks[i].rotor_ω_dot * w
         soc = soc + ks[i].power.soc_dot * w
         v1 = v1 + ks[i].power.v1_dot * w
+        temp_c = temp_c + ks[i].power.temp_dot * w
     end
 
     rb = RigidBodyState(pos_ned = pos, vel_ned = vel, q_bn = quat_normalize(q), ω_body = ω)
 
-    p = PowerState{B}(soc = soc, v1 = v1)
+    p = PowerState{B}(soc = soc, v1 = v1, temp_c = temp_c)
     return PlantState{N,B}(
         rb = rb,
         motors_y = motors_y,
@@ -336,10 +351,10 @@ end
 #
 # Battery model objects are parameter-only; state lives in PlantState.
 @inline function _battery_state(b::Powertrain.IdealBattery)
-    return (b.soc0, 0.0)
+    return (b.soc0, 0.0, b.temp_c)
 end
 @inline function _battery_state(b::Powertrain.TheveninBattery)
-    return (b.soc0, b.v1_0)
+    return (b.soc0, b.v1_0, b.temp_c)
 end
 
 """Initialize a PlantState from initial actuator + propulsion + battery parameters.
@@ -364,10 +379,11 @@ function init_plant_state(
 ) where {N}
     my, mydot = _act_state(motor_actuators, Val(12))
     sy, sydot = _act_state(servo_actuators, Val(8))
-    soc, v1 = _battery_state(battery)
+    soc, v1, temp_c = _battery_state(battery)
     power = PowerState{1}(
         soc = SVector{1,Float64}(Float64(soc)),
         v1 = SVector{1,Float64}(Float64(v1)),
+        temp_c = SVector{1,Float64}(Float64(temp_c)),
     )
 
     # Rotor angular rates are owned by the integrated plant state.
@@ -402,7 +418,8 @@ function init_plant_state(
 
     soc = SVector{B,Float64}(ntuple(i -> Float64(_battery_state(batteries[i])[1]), B))
     v1 = SVector{B,Float64}(ntuple(i -> Float64(_battery_state(batteries[i])[2]), B))
-    power = PowerState{B}(soc = soc, v1 = v1)
+    temp_c = SVector{B,Float64}(ntuple(i -> Float64(_battery_state(batteries[i])[3]), B))
+    power = PowerState{B}(soc = soc, v1 = v1, temp_c = temp_c)
 
     # Rotor angular rates are owned by the integrated plant state.
     ω = zero(SVector{N,Float64})

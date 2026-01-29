@@ -1,0 +1,42 @@
+schema_version = 1
+extends = ["iris_lockstep.toml"]
+
+# Iris lockstep run with Example cell OCV curve and a 3S2P pack.
+# Keep Iris defaults for parameters we do not know about this cell type.
+
+[px4]
+mission_path = "../../src/Workflows/assets/missions/iris_long_mission.waypoints"
+
+[timeline]
+t_end_s = 602.0
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+
+# Pack configuration (3S2P -> ~12 V nominal, 10 Ah if cell is 5 Ah)
+series = 3
+parallel = 2
+cell_capacity_ah = 5.0
+soc0 = 1.0
+
+# Example OCV curve provided as *cell* voltage vs used SOC (DoD).
+# The builder converts used SOC -> SOC remaining, then scales voltage by `series`.
+ocv_csv_path = "../../src/Workflows/assets/battery/raw/example_3290mah_8s1p/example_cell_ocv_soc.csv"
+ocv_csv_soc_col = "used_soc"
+ocv_csv_v_col = "cell_ocv"
+ocv_csv_soc_units = "percent"          # curve is 0..100
+ocv_csv_soc_convention = "used"        # 0% = full, 100% = empty
+ocv_csv_step = 0.01                     # resample to 1% SOC grid for speed
+ocv_is_cell = true
+
+# Unknown parameters for this cell type -> keep Iris defaults.
+r0 = 0.020
+r1 = 0.010
+c1 = 2000.0
+v1_0 = 0.0
+min_voltage_v = 3.0
+min_voltage_is_cell = true
+low_thr = 0.15
+crit_thr = 0.10
+emerg_thr = 0.05

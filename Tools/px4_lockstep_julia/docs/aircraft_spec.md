@@ -160,6 +160,8 @@ contact = "flat_ground"   # flat_ground|no_contact
 # atol_soc = 1.0e-4
 # rtol_v1 = 0.0
 # atol_v1 = 1.0
+# rtol_temp = 0.0
+# atol_temp = 1.0
 # h_min = 1.0e-6
 # h_max = 0.01
 # h_init = 0.0
@@ -295,14 +297,78 @@ share_mode = "inv_r0"   # inv_r0|equal
 [[power.batteries]]
 id = "bat1"
 model = "thevenin"
+
+# Instead of embedding OCV/DCIR data inline, you can reference asset meta.toml files:
+# pack_asset = "../../src/Workflows/assets/battery/packs/example_8s1p_3290mah/meta.toml"
+# cell_asset = "../../src/Workflows/assets/battery/cells/example_3290mah_hv/meta.toml"
+
+# To use a SOC+temperature-dependent ohmic resistance surface:
+# - model = "thevenin" (supports optional r0_surface_csv_path)
+# - model = "thevenin" will also use the surface if provided (otherwise constant r0)
+# temp_c = 25.0
+
+# Optional pack configuration (used for scaling *cell-referenced* parameters)
+# Examples: 4S2P -> series=4, parallel=2
+series = 1
+parallel = 1
+
+# Optional single-cell capacity. If set, pack capacity becomes cell_capacity_ah * parallel.
+# cell_capacity_ah = 5.0
+
 capacity_ah = 5.0
 soc0 = 1.0
+voltage_v = 12.0         # required for model="ideal" (ignored by thevenin)
+
+# OCV curve can be provided inline...
 ocv_soc = [0.0, 1.0]
 ocv_v = [10.8, 12.6]
+
+# ...or loaded from a CSV file (useful for dense curves).
+# ocv_csv_path = "path/to/curve.csv"
+# ocv_csv_soc_col = "used_soc"         # column name
+# ocv_csv_v_col = "cell_ocv"           # column name
+# ocv_csv_soc_units = "percent"        # fraction|percent
+# ocv_csv_soc_convention = "used"      # remaining|used (DoD)
+# ocv_csv_step = 0.01                   # optional resampling step in SOC fraction
+
+# If true, the provided OCV curve voltages are *cell* voltages and will be scaled by `series`.
+ocv_is_cell = false
+
+# SOC+temperature-dependent ohmic resistance (optional for model="thevenin").
+# r0_surface_csv_path = "path/to/resistance_surface.csv"
+# r0_surface_temp_col = "temp_c"
+# r0_surface_soc_col = "soc"
+# r0_surface_r0_col = "r0_ohm"          # or "rdc_ohm" to match loaded voltage (DCIR)
+# r0_surface_soc_units = "fraction"          # fraction|percent
+# r0_surface_soc_convention = "remaining"    # remaining|used
+# r0_surface_is_cell = false
+
 r0 = 0.020
+# Optional pack-level ohmic overhead (connectors/wiring/BMS). This is added after
+# any series/parallel scaling of cell-referenced parameters.
+# r0_overhead_ohm = 0.0
 r1 = 0.010
 c1 = 2000.0
+v1_0 = 0.0
+
+# If true, (r0,r1,c1,v1_0) are specified per-cell and will be scaled to pack-equivalent.
+thevenin_is_cell = false
+
 min_voltage_v = 9.9
+
+# If true, min_voltage_v is per-cell and will be scaled by `series`.
+min_voltage_is_cell = false
+
+# Optional thermal hook (Phase 7).
+# When enabled, the plant integrates a per-battery temperature state:
+#   dT/dt = (P_loss - k*(T - T_amb)) / C_th
+# where P_loss ≈ I^2*R0 + (V1^2 / R1 if RC is enabled).
+[power.batteries.thermal]
+enabled = false
+# ambient_temp_c = 25.0
+# initial_temp_c = 25.0
+# c_th_j_per_k = 600.0
+# k_to_ambient_w_per_k = 1.0
 
 [[power.buses]]
 id = "main"

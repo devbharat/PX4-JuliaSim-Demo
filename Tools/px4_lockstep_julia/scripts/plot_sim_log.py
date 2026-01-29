@@ -65,12 +65,17 @@ def summarize(data: dict[str, list[float]]) -> None:
     batt_v = data.get("batt_v", [])
     batt_a = data.get("batt_a", [])
     batt_rem = data.get("batt_rem", [])
+    batt_temp = data.get("batt_temp_c", [])
     if batt_v:
         print(f"Battery voltage: min {min(batt_v):.2f} V, max {max(batt_v):.2f} V")
     if batt_a:
         print(f"Battery current: max {max(batt_a):.2f} A")
     if batt_rem:
         print(f"Battery remaining: min {min(batt_rem):.2f}")
+    if batt_temp:
+        finite = [v for v in batt_temp if not math.isnan(v)]
+        if finite:
+            print(f"Battery temp: min {min(finite):.2f} C, max {max(finite):.2f} C")
 
 
 def _avg_series(data: dict[str, list[float]], keys: list[str]) -> list[float] | None:
@@ -191,6 +196,73 @@ def plot(data: dict[str, list[float]], output: Path, show: bool) -> None:
     plt.close(fig)
 
 
+def plot_battery(data: dict[str, list[float]], output: Path, show: bool) -> None:
+    t = data.get("time_s", [])
+    if not t:
+        return
+
+    batt_v = data.get("batt_v", [])
+    batt_a = data.get("batt_a", [])
+    batt_temp = data.get("batt_temp_c", [])
+    batt_rem = data.get("batt_rem", [])
+    batt_warn = data.get("batt_warn", [])
+
+    batt_p = []
+    if batt_v and batt_a and len(batt_v) == len(t) and len(batt_a) == len(t):
+        batt_p = [v * a for v, a in zip(batt_v, batt_a)]
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    ax_vi, ax_soc, ax_temp = axes
+
+    handles: list[plt.Line2D] = []
+    labels: list[str] = []
+    if batt_v and len(batt_v) == len(t):
+        (line_v,) = ax_vi.plot(t, batt_v, label="voltage_v")
+        handles.append(line_v)
+        labels.append("voltage_v")
+    ax_vi2 = None
+    if batt_a and len(batt_a) == len(t):
+        ax_vi2 = ax_vi.twinx()
+        (line_a,) = ax_vi2.plot(t, batt_a, color="tab:red", label="current_a")
+        handles.append(line_a)
+        labels.append("current_a")
+        ax_vi2.set_ylabel("A")
+    if batt_p and len(batt_p) == len(t):
+        ax_vi3 = ax_vi.twinx()
+        ax_vi3.spines["right"].set_position(("axes", 1.1))
+        (line_p,) = ax_vi3.plot(t, batt_p, color="tab:purple", label="power_w")
+        handles.append(line_p)
+        labels.append("power_w")
+        ax_vi3.set_ylabel("W")
+    if handles:
+        ax_vi.legend(handles, labels)
+    ax_vi.set_ylabel("V")
+    ax_vi.set_title("Battery Voltage / Current / Power")
+    ax_vi.grid(True, alpha=0.3)
+
+    if batt_rem and len(batt_rem) == len(t):
+        ax_soc.plot(t, batt_rem, label="remaining")
+    if batt_warn and len(batt_warn) == len(t):
+        ax_soc.step(t, batt_warn, where="post", label="warning")
+    ax_soc.set_ylabel("fraction / warning")
+    ax_soc.set_title("Battery Remaining / Warning")
+    ax_soc.legend()
+    ax_soc.grid(True, alpha=0.3)
+
+    if batt_temp and len(batt_temp) == len(t):
+        ax_temp.plot(t, batt_temp, label="temp_c", color="tab:green")
+    ax_temp.set_xlabel("time (s)")
+    ax_temp.set_ylabel("C")
+    ax_temp.set_title("Battery Temperature")
+    ax_temp.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_inflow(data: dict[str, list[float]], output: Path, show: bool) -> None:
     t = data["time_s"]
     vz = data.get("vel_z", [])
@@ -267,6 +339,11 @@ def main() -> int:
         default="",
         help="Optional output path for inflow/propulsion debug plot",
     )
+    parser.add_argument(
+        "--battery-output",
+        default="",
+        help="Optional output path for a battery/thermal summary plot",
+    )
     parser.add_argument("--show", action="store_true", help="Display plot window")
     args = parser.parse_args()
 
@@ -276,10 +353,18 @@ def main() -> int:
 
     data = load_log(log_path)
     summarize(data)
-    plot(data, Path(args.output), args.show)
+    output_path = Path(args.output)
+    plot(data, output_path, args.show)
     if args.inflow_output:
         plot_inflow(data, Path(args.inflow_output), args.show)
+    battery_output = args.battery_output
+    if args.show and not battery_output:
+        battery_output = output_path.with_name(f"{output_path.stem}_battery{output_path.suffix}")
+    if battery_output:
+        plot_battery(data, Path(battery_output), args.show)
     print(f"Saved plot to {args.output}")
+    if battery_output:
+        print(f"Saved battery plot to {battery_output}")
     return 0
 
 

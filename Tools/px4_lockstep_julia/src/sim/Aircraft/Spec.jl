@@ -188,26 +188,91 @@ Base.@kwdef struct ActuationSpec
     servo_actuators::AbstractActuatorModelSpec = DirectActuatorSpec()
 end
 
+"""Battery thermal hook specification.
+
+This enables a simple 1-node lumped thermal model in the coupled plant:
+
+`dT/dt = (P_loss - k*(T - T_amb)) / C_th`
+
+When `enabled=false` (default), temperature is treated as constant and the
+thermal parameters are ignored.
+
+All fields except `enabled` are optional overrides; if omitted and a battery
+`pack_asset` provides `[thermal]` parameters, those defaults will be used.
+"""
+Base.@kwdef struct BatteryThermalSpec
+    enabled::Bool = false
+    ambient_temp_c::Union{Nothing,Float64} = nothing
+    initial_temp_c::Union{Nothing,Float64} = nothing
+    c_th_j_per_k::Union{Nothing,Float64} = nothing
+    k_to_ambient_w_per_k::Union{Nothing,Float64} = nothing
+    explicit_keys::Set{Symbol} = Set{Symbol}()
+end
+
 """Battery model spec (one entry per battery)."""
 Base.@kwdef struct BatterySpec
     id::BatteryId = :bat1
     model::Symbol = :thevenin
 
+    # Optional asset references (explicit meta.toml paths).
+    pack_asset::Union{Nothing,String} = nothing
+    cell_asset::Union{Nothing,String} = nothing
+
+    # Cell/pack temperature used by temperature-dependent resistance models.
+    # If the thermal hook is disabled, this is treated as a constant parameter.
+    temp_c::Float64 = 25.0
+
+    # Optional thermal hook. When enabled, the plant integrates a 1-node
+    # temperature state per battery and feeds it into the resistance model.
+    # (See `Powertrain.ThermalParams` for the equation.)
+    thermal::BatteryThermalSpec = BatteryThermalSpec()
+
+    series::Int = 1
+    parallel::Int = 1
+
     capacity_ah::Float64 = 5.0
+    cell_capacity_ah::Union{Nothing,Float64} = nothing
     soc0::Float64 = 1.0
+    voltage_v::Union{Nothing,Float64} = nothing
 
     ocv_soc::Vector{Float64} = [0.0, 1.0]
     ocv_v::Vector{Float64} = [10.8, 12.6]
 
+    ocv_csv_path::Union{Nothing,String} = nothing
+    ocv_csv_soc_col::String = "soc"
+    ocv_csv_v_col::String = "ocv_v"
+    ocv_csv_soc_units::Symbol = :fraction
+    ocv_csv_soc_convention::Symbol = :remaining
+    ocv_csv_step::Union{Nothing,Float64} = nothing
+    ocv_is_cell::Bool = false
+
+    # Optional resistance surface (used by model=:thevenin when provided).
+    # The CSV is expected to define a 2D table over (temp, soc) with an R0 column.
+    r0_surface_csv_path::Union{Nothing,String} = nothing
+    r0_surface_temp_col::Union{Nothing,String} = nothing
+    r0_surface_soc_col::Union{Nothing,String} = nothing
+    r0_surface_r0_col::Union{Nothing,String} = nothing
+    r0_surface_soc_units::Union{Nothing,Symbol} = nothing
+    r0_surface_soc_convention::Union{Nothing,Symbol} = nothing
+    r0_surface_is_cell::Union{Nothing,Bool} = nothing
+
     r0::Float64 = 0.020
+    # Pack-level series/parallel independent ohmic overhead (e.g. connectors, wiring,
+    # BMS/FET). Added after any cell scaling.
+    r0_overhead_ohm::Float64 = 0.0
     r1::Float64 = 0.010
     c1::Float64 = 2000.0
     v1_0::Float64 = 0.0
     min_voltage_v::Float64 = 9.9
+    thevenin_is_cell::Bool = false
+    min_voltage_is_cell::Bool = false
 
     low_thr::Float64 = 0.15
     crit_thr::Float64 = 0.10
     emerg_thr::Float64 = 0.05
+
+    # Track explicit TOML keys so assets can supply defaults without clobbering overrides.
+    explicit_keys::Set{Symbol} = Set{Symbol}()
 end
 
 """Power bus wiring spec.

@@ -295,7 +295,7 @@ end
         Float32(battery.remaining),
         0.0f0,
         0.0f0,
-        0.0f0,
+        Float32(battery.temperature_c),
         ZERO_CELL_V_F32,
         0.0f0,
         0.0f0,

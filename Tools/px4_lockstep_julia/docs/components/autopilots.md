@@ -38,10 +38,8 @@ and optional injection scheduling) lives in:
   `bus.ap_cmd`, `bus.landed`, and `bus.batteries` (vector; `batteries[1]` is the legacy primary).
 - Outputs are treated as sample-and-hold until the next autopilot tick.
 - Home/reference fields:
-  - When `LockstepConfig.enable_commander == 0`, the bridge publishes `home_position`
-    and uses `home` for the `vehicle_global_position.ref_*` fields.
-  - When commander is enabled, `ref_*` fields follow the current LLA computed from the
-    provided NED state.
+  - The bridge publishes `home_position` and uses `home` for the
+    `vehicle_local_position.ref_*` fields. Commander-in-loop is currently disabled.
 
 ## Caveats
 
@@ -49,14 +47,18 @@ and optional injection scheduling) lives in:
   (small geographic extent).
 - With `edge_trigger=true`, mission/RTL requests become pulses; callers that want a
   sustained request must reassert it.
-- When Commander is disabled, the bridge currently injects `vehicle_status.nav_state`
-  directly; a one-tick pulse is unlikely to latch a mode change inside PX4. If you
-  need “send once and it sticks” behavior, keep a latch in the bridge or publish a
-  proper `vehicle_command` and let Commander handle it.
+- Commander-in-loop is currently **not supported** (hard error). The bridge injects
+  `vehicle_status.nav_state` directly; a one-tick pulse is unlikely to latch a mode
+  change inside PX4. If you need “send once and it sticks” behavior, keep a latch in
+  the bridge or publish a proper `vehicle_command` and let Commander handle it once
+  Commander is re-enabled.
 - uORB injections are currently scheduled **every autopilot tick** (period = 0) and
   the per-topic period is not exposed via TOML. As the boundary grows, consider adding
   per-topic periods or “publish once” semantics for latched topics like
   `home_position` to reduce per-tick uORB traffic.
+- If you do configure nonzero injection periods, they **must divide** the autopilot
+  cadence `dt_ap_us`. The scheduler is modulo-based and will otherwise skip publishes
+  (a warning/error is emitted at runtime).
 - Only one lockstep handle is allowed per process by default (unless
   `allow_multiple_handles=true` is used and the underlying lockstep runtime is known to
   be re-entrant).

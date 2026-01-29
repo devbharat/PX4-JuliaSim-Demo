@@ -1,0 +1,48 @@
+schema_version = 1
+extends = ["iris_lockstep.toml"]
+
+# Iris lockstep run with Example cell assets, full SOC/temperature R0 surface,
+# assumed RC transient branch, and thermal modeling enabled.
+
+[px4]
+mission_path = "../../src/Workflows/assets/missions/iris_long_mission.waypoints"
+
+[timeline]
+t_end_s = 600.0
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+
+# Use the Example cell asset and build a 3S2P pack (~12 V nominal, ~10 Ah).
+cell_asset = "../../src/Workflows/assets/battery/cells/example_3290mah_hv/meta.toml"
+series = 3
+parallel = 2
+cell_capacity_ah = 5.0
+soc0 = 1.0
+
+# Use the full SOC/temperature resistance surface from the asset (DCIR by default).
+# Override explicitly to make the surface selection visible in the example.
+r0_surface_r0_col = "rdc_ohm"
+
+# Assumed transient RC branch for load spikes (NOT data-fitted).
+# Tune with real pulse traces if available.
+r1 = 0.015
+c1 = 120.0
+v1_0 = 0.0
+
+# Per-cell cutoff with pack scaling.
+min_voltage_v = 3.0
+min_voltage_is_cell = true
+
+low_thr = 0.15
+crit_thr = 0.10
+emerg_thr = 0.05
+
+[power.batteries.thermal]
+enabled = true
+# Assumed thermal parameters (not yet fit to data).
+ambient_temp_c = 25.0
+initial_temp_c = 25.0
+c_th_j_per_k = 600.0
+k_to_ambient_w_per_k = 1.0

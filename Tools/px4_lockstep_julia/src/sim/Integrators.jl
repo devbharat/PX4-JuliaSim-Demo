@@ -113,6 +113,8 @@ Base.@kwdef mutable struct RK23Integrator <: AbstractIntegrator
     atol_soc::Float64 = Inf
     rtol_v1::Float64 = 0.0
     atol_v1::Float64 = Inf
+    rtol_temp::Float64 = 0.0
+    atol_temp::Float64 = Inf
 
     # Step-size bounds.
     h_min::Float64 = 1e-6
@@ -165,6 +167,8 @@ Base.@kwdef mutable struct RK45Integrator <: AbstractIntegrator
     atol_soc::Float64 = Inf
     rtol_v1::Float64 = 0.0
     atol_v1::Float64 = Inf
+    rtol_temp::Float64 = 0.0
+    atol_temp::Float64 = Inf
 
     # Step-size bounds.
     h_min::Float64 = 1e-6
@@ -361,7 +365,7 @@ This extends rigid-body error control with optional additional state groups:
 * actuator outputs (`motors_y`, `servos_y`)
 * actuator rates (`motors_ydot`, `servos_ydot`)
 * rotor speeds (`rotor_ω`)
-* battery states (`power.soc`, `power.v1`)
+* battery states (`power.soc`, `power.v1`, `power.temp_c`)
 
 To preserve legacy behavior, all of these are **ignored by default** because:
 * `plant_error_control` defaults to `false`, and
@@ -461,6 +465,17 @@ Design intent:
         @inbounds for k = 1:B
             Δ = x_hi.power.v1[k] - x_lo.power.v1[k]
             s = i.atol_v1 + i.rtol_v1 * max(abs(x_ref.power.v1[k]), abs(x_hi.power.v1[k]))
+            s = max(s, 1e-15)
+            err = max(err, abs(Δ) / s)
+        end
+    end
+
+    if isfinite(i.atol_temp)
+        @inbounds for k = 1:B
+            Δ = x_hi.power.temp_c[k] - x_lo.power.temp_c[k]
+            s =
+                i.atol_temp +
+                i.rtol_temp * max(abs(x_ref.power.temp_c[k]), abs(x_hi.power.temp_c[k]))
             s = max(s, 1e-15)
             err = max(err, abs(Δ) / s)
         end

@@ -3,3 +3,4 @@
 examples/replay/out/
 *.csv
 *.png
+!src/Workflows/assets/battery/**/*.csv

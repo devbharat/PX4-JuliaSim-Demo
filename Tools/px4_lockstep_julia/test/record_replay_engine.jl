@@ -331,7 +331,9 @@ end
     motor_act = Sim.Vehicles.DirectActuators()
     servo_act = Sim.Vehicles.DirectActuators()
     propulsion = Sim.Propulsion.default_multirotor_set()
-    battery = Sim.Powertrain.IdealBattery()
+    battery = Sim.Aircraft.build_battery(
+        Sim.Aircraft.BatterySpec(model = :ideal, voltage_v = 12.0),
+    )
 
     rb0 = Sim.RigidBody.RigidBodyState()
     plant0 = Sim.Plant.init_plant_state(rb0, motor_act, servo_act, propulsion, battery)

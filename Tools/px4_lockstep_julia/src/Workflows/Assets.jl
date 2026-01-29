@@ -11,6 +11,8 @@ const _SPEC_MAP = Dict{Symbol,String}(
     :iris_uorb => joinpath(_ASSETS_ROOT, "aircraft", "iris_uorb.toml"),
     :minimal_uorb => joinpath(_ASSETS_ROOT, "aircraft", "minimal_uorb.toml"),
     :octa_default => joinpath(_ASSETS_ROOT, "aircraft", "octa_default.toml"),
+    :example_8s1p_example =>
+        joinpath(_ASSETS_ROOT, "aircraft", "example_8s1p_example.toml"),
 )
 
 const _MISSION_MAP = Dict{Symbol,String}(
@@ -20,7 +22,8 @@ const _MISSION_MAP = Dict{Symbol,String}(
 
 """Return a named built-in spec path.
 
-Supported names: :iris_default, :iris_uorb, :minimal_uorb, :octa_default.
+Supported names: :iris_default, :iris_uorb, :minimal_uorb, :octa_default,
+:example_8s1p_example.
 """
 function spec_path(name::Symbol)
     path = get(_SPEC_MAP, name, nothing)

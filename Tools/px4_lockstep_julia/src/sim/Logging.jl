@@ -25,7 +25,7 @@ export reserve!
 export LogColumn, LogSchema, csv_schema, csv_header_line, write_csv_header
 
 # Update this when CSV columns are added, removed, or renamed.
-const CSV_SCHEMA_VERSION = 3
+const CSV_SCHEMA_VERSION = 4
 
 # Logging currently records actuator motor commands as 12 channels (PX4 lockstep ABI).
 # For consistency (and to avoid silently dropping info for hex/octo/VTOL), rotor
@@ -147,6 +147,7 @@ const CSV_LOG_SCHEMA = LogSchema(
         # battery
         LogColumn("batt_v", "V", "battery voltage"),
         LogColumn("batt_a", "A", "battery current"),
+        LogColumn("batt_temp_c", "C", "battery temperature"),
         LogColumn("batt_rem", "frac", "battery remaining fraction"),
         LogColumn("batt_warn", "enum", "battery warning"),
         # px4 status
@@ -229,6 +230,7 @@ mutable struct SimLog <: AbstractLogSink
     # battery
     batt_voltage_v::Vector{Float64}
     batt_current_a::Vector{Float64}
+    batt_temp_c::Vector{Float64}
     batt_remaining::Vector{Float64}
     batt_warning::Vector{Int32}
 
@@ -260,6 +262,7 @@ function SimLog()
         NTuple{3,Float64}[],
         Float64[],
         NTuple{3,Float64}[],
+        Float64[],
         Float64[],
         Float64[],
         Float64[],
@@ -299,6 +302,7 @@ function reserve!(log::SimLog, n::Int)
     sizehint!(log.air_vel_body, n)
     sizehint!(log.batt_voltage_v, n)
     sizehint!(log.batt_current_a, n)
+    sizehint!(log.batt_temp_c, n)
     sizehint!(log.batt_remaining, n)
     sizehint!(log.batt_warning, n)
     sizehint!(log.nav_state, n)
@@ -362,6 +366,7 @@ function log!(
     rho::Float64,
     air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
     battery::BatteryStatus = BatteryStatus(),
+    battery_temp_c::Float64 = NaN,
     nav_state::Int32 = Int32(-1),
     arming_state::Int32 = Int32(-1),
     mission_seq::Int32 = Int32(0),
@@ -400,6 +405,7 @@ function log!(
 
     push!(sink.batt_voltage_v, battery.voltage_v)
     push!(sink.batt_current_a, battery.current_a)
+    push!(sink.batt_temp_c, battery_temp_c)
     push!(sink.batt_remaining, battery.remaining)
     push!(sink.batt_warning, Int32(battery.warning))
 
@@ -421,6 +427,7 @@ function log!(
     rho::Float64,
     air_vel_body::NTuple{3,Float64} = (NaN, NaN, NaN),
     battery::BatteryStatus = BatteryStatus(),
+    battery_temp_c::Float64 = NaN,
     nav_state::Int32 = Int32(-1),
     arming_state::Int32 = Int32(-1),
     mission_seq::Int32 = Int32(0),
@@ -486,9 +493,10 @@ function log!(
     # battery
     @printf(
         io,
-        "%.6f,%.6f,%.6f,%d,",
+        "%.6f,%.6f,%.6f,%.6f,%d,",
         battery.voltage_v,
         battery.current_a,
+        battery_temp_c,
         battery.remaining,
         battery.warning
     )
@@ -578,9 +586,10 @@ function write_csv(log::SimLog, path::AbstractString)
 
             @printf(
                 io,
-                "%.6f,%.6f,%.6f,%d,",
+                "%.6f,%.6f,%.6f,%.6f,%d,",
                 log.batt_voltage_v[i],
                 log.batt_current_a[i],
+                log.batt_temp_c[i],
                 log.batt_remaining[i],
                 log.batt_warning[i]
             )

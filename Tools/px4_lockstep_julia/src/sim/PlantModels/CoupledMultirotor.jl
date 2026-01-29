@@ -241,8 +241,7 @@ end
 end
 
 @inline function _battery_ocv(b::Powertrain.TheveninBattery, soc::Float64)
-    # Use the internal OCV curve helper for now.
-    return Powertrain._interp_ocv(b.ocv_soc, b.ocv_v, soc)
+    return Powertrain._interp_ocv(b.ocv, soc)
 end
 
 @inline function _battery_capacity_c(b::Powertrain.IdealBattery)
@@ -259,11 +258,12 @@ end
     return b.min_voltage_v
 end
 
-@inline function _battery_r0(b::Powertrain.IdealBattery)
+@inline function _battery_r0(b::Powertrain.IdealBattery, soc::Float64, temp_c::Float64)
     return 0.0
 end
-@inline function _battery_r0(b::Powertrain.TheveninBattery)
-    return b.r0
+
+@inline function _battery_r0(b::Powertrain.TheveninBattery, soc::Float64, temp_c::Float64)
+    return Powertrain.r0_ohm(b.r0_model, soc, temp_c)
 end
 
 @inline function _battery_v1_dot(::Powertrain.IdealBattery, v1::Float64, I_bus::Float64)
@@ -278,12 +278,79 @@ end
     end
 end
 
+############################
+# Battery thermal helpers
+############################
+
+"""Electrical power dissipated inside the battery model (W).
+
+This is used by the optional thermal hook. The intent is to keep the definition simple:
+
+* Ohmic loss in the series droop term: `I^2 * R0(soc,temp)`.
+* If an RC polarization branch is enabled (`r1>0`), include the dissipated power
+  in R1: `V1^2 / R1`.
+
+For packs calibrated using end-of-pulse DCIR as the effective droop resistance
+(Phase-5 policy), `R0` is already DCIR-like, so this aligns well with the qualification
+doc's suggestion `P_loss = I^2 * R_DC`.
+"""
+@inline function _battery_power_loss_w(
+    b::Powertrain.IdealBattery,
+    soc::Float64,
+    temp_c::Float64,
+    v1::Float64,
+    I_bus::Float64,
+)
+    return 0.0
+end
+
+@inline function _battery_power_loss_w(
+    b::Powertrain.TheveninBattery,
+    soc::Float64,
+    temp_c::Float64,
+    v1::Float64,
+    I_bus::Float64,
+)
+    I = max(0.0, Float64(I_bus))
+    r0 = _battery_r0(b, soc, temp_c)
+    p = I * I * r0
+    if b.r1 > 0.0
+        # Dissipation in the polarization resistor (if enabled).
+        p += (Float64(v1) * Float64(v1)) / b.r1
+    end
+    return p
+end
+
+"""Temperature derivative for the optional lumped thermal model (°C/s)."""
+@inline function _battery_temp_dot(
+    b::Powertrain.AbstractBatteryModel,
+    soc::Float64,
+    temp_c::Float64,
+    v1::Float64,
+    I_bus::Float64,
+)
+    th = Powertrain.thermal_params(b)
+    if !th.enabled
+        return 0.0
+    end
+    C = th.c_th_j_per_k
+    if !(isfinite(C) && C > 0.0)
+        return 0.0
+    end
+
+    P_loss = _battery_power_loss_w(b, soc, temp_c, v1, I_bus)
+    k = th.k_to_ambient_w_per_k
+    # Simple linear cooling/heating to a fixed ambient temperature.
+    return (P_loss - k * (temp_c - th.ambient_temp_c)) / C
+end
+
 @inline function _battery_status_from_state(
     b::Powertrain.IdealBattery,
     soc::Float64,
     v1::Float64,
     I_bus::Float64,
     V_bus::Float64;
+    temp_c::Float64,
     connected::Bool = true,
 )::BatteryStatus
     rem = clamp(soc, 0.0, 1.0)
@@ -293,6 +360,7 @@ end
             connected = false,
             voltage_v = 0.0,
             current_a = 0.0,
+            temperature_c = temp_c,
             remaining = rem,
             warning = warn,
         )
@@ -301,6 +369,7 @@ end
         connected = true,
         voltage_v = V_bus,
         current_a = I_bus,
+        temperature_c = temp_c,
         remaining = rem,
         warning = warn,
     )
@@ -312,6 +381,7 @@ end
     v1::Float64,
     I_bus::Float64,
     V_bus::Float64;
+    temp_c::Float64,
     connected::Bool = true,
 )::BatteryStatus
     rem = clamp(soc, 0.0, 1.0)
@@ -321,6 +391,7 @@ end
             connected = false,
             voltage_v = 0.0,
             current_a = 0.0,
+            temperature_c = temp_c,
             remaining = rem,
             warning = warn,
         )
@@ -329,11 +400,11 @@ end
         connected = true,
         voltage_v = V_bus,
         current_a = I_bus,
+        temperature_c = temp_c,
         remaining = rem,
         warning = warn,
     )
 end
-
 
 ############################
 # Motor/prop + electrical coupling helpers
@@ -752,7 +823,9 @@ function _eval_propulsion_and_power_network(
                     v1_i = x.power.v1[bi]
                     V0_i = ocv_i - v1_i
 
-                    R0_i = _battery_r0(batteries[bi])
+                    # Battery temperature is a plant state (constant if thermal is disabled).
+                    temp_i = x.power.temp_c[bi]
+                    R0_i = _battery_r0(batteries[bi], x.power.soc[bi], temp_i)
                     all_ideal &= !(isfinite(R0_i) && R0_i > 0.0)
                     R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
                     w = 1.0 / R0_eff
@@ -855,7 +928,8 @@ function _eval_propulsion_and_power_network(
                 if net.share_mode === :equal
                     wsum += 1.0
                 else
-                    R0_i = _battery_r0(batteries[bi])
+                    temp_i = x.power.temp_c[bi]
+                    R0_i = _battery_r0(batteries[bi], x.power.soc[bi], temp_i)
                     R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
                     wsum += 1.0 / R0_eff
                 end
@@ -868,7 +942,8 @@ function _eval_propulsion_and_power_network(
                 w = if net.share_mode === :equal
                     1.0
                 else
-                    R0_i = _battery_r0(batteries[bi])
+                    temp_i = x.power.temp_c[bi]
+                    R0_i = _battery_r0(batteries[bi], x.power.soc[bi], temp_i)
                     R0_eff = (isfinite(R0_i) && R0_i > 0.0) ? R0_i : R0_EPS
                     1.0 / R0_eff
                 end
@@ -934,6 +1009,7 @@ function plant_outputs(
                     x.power.v1[i],
                     I_i,
                     V_i;
+                    temp_c = x.power.temp_c[i],
                     connected = u.faults.battery_connected,
                 )
             end,
@@ -1006,6 +1082,7 @@ function (f::CoupledMultirotorModel)(
     # Battery dynamics from per-battery current draw.
     soc_dot = MVector{B,Float64}(undef)
     v1_dot = MVector{B,Float64}(undef)
+    temp_dot = MVector{B,Float64}(undef)
     @inbounds for i = 1:B
         cap_c = _battery_capacity_c(f.batteries[i])
         I = max(0.0, I_batt[i])
@@ -1015,11 +1092,21 @@ function (f::CoupledMultirotorModel)(
         end
         soc_dot[i] = sdot
         v1_dot[i] = _battery_v1_dot(f.batteries[i], x.power.v1[i], I)
+
+        # Thermal (optional): temperature is a plant state, held constant if disabled.
+        temp_dot[i] = _battery_temp_dot(
+            f.batteries[i],
+            x.power.soc[i],
+            x.power.temp_c[i],
+            x.power.v1[i],
+            I,
+        )
     end
 
     power_dot = PowerDeriv{B}(
         soc_dot = SVector{B,Float64}(soc_dot),
         v1_dot = SVector{B,Float64}(v1_dot),
+        temp_dot = SVector{B,Float64}(temp_dot),
     )
 
     return PlantDeriv{N,B}(
@@ -1053,6 +1140,11 @@ function plant_project(f::CoupledMultirotorModel, x::PlantState{N,B}) where {N,B
     # SOC in [0,1] (vectorized for B batteries).
     soc_clamped = map(s -> clamp(s, 0.0, 1.0), x.power.soc)
 
+    # Battery temperature in a broad physically-plausible range (°C).
+    # This is a conservative guardrail for adaptive solvers; the resistance surface
+    # itself also clamps its temperature axis to data bounds.
+    temp_clamped = map(T -> clamp(T, -50.0, 120.0), x.power.temp_c)
+
     # Actuator outputs in ABI-consistent ranges.
     motors_y_clamped = map(u -> clamp(u, 0.0, 1.0), x.motors_y)
     servos_y_clamped = map(u -> clamp(u, -1.0, 1.0), x.servos_y)
@@ -1080,11 +1172,12 @@ function plant_project(f::CoupledMultirotorModel, x::PlantState{N,B}) where {N,B
 
     if (ω_clamped != x.rotor_ω) ||
        (soc_clamped != x.power.soc) ||
+       (temp_clamped != x.power.temp_c) ||
        (motors_y_clamped != x.motors_y) ||
        (servos_y_clamped != x.servos_y) ||
        (motors_ydot_proj != x.motors_ydot) ||
        (servos_ydot_proj != x.servos_ydot)
-        power = PowerState{B}(soc = soc_clamped, v1 = x.power.v1)
+        power = PowerState{B}(soc = soc_clamped, v1 = x.power.v1, temp_c = temp_clamped)
         return PlantState{N,B}(
             rb = x.rb,
             motors_y = motors_y_clamped,

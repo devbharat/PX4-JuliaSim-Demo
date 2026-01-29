@@ -52,7 +52,7 @@ These are fast, always‑on tests that catch numerical regressions and sign erro
 - Propulsor axis geometry (force/torque direction)
 - Wrench composition (r×F + axis*Q)
 - Vax sign from axis projection
-- Wingtra‑style twin forward props (yaw via differential thrust)
+- Twin forward props (yaw via differential thrust)
 - Reaction‑torque roll for forward props
 - CA axis parameter sign convention
 - Rotor_dir yaw‑torque sign ownership

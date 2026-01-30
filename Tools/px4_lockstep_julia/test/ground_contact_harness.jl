@@ -387,11 +387,6 @@ end
             ok = false
         end
 
-        if _name == :RK23
-            # RK23 still trips max-substeps in this projected takeoff case.
-            @test_broken ok
-            continue
-        end
         @test ok
         if ok
             @test res.min_z < -0.05

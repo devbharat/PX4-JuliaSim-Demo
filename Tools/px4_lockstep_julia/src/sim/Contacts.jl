@@ -202,6 +202,19 @@ Typical values: 500–2000 µs.
 This prevents chatter when numerical drift leaves `z` at tiny negative values.
 """
     z_slop_m::Float64 = 1e-6
+
+    """Vertical velocity slop band for grounded-candidate tests (m/s).
+
+Treat small upward velocities as numerical noise when determining whether the
+vehicle is still "at ground".
+
+This reduces mode chattering for adaptive integrators when `v_z ≈ 0` and is most
+important for "constraint" contact models that cancel gravity at rest.
+
+Note: this does **not** affect the impact restitution/capture logic; it only
+influences the continuous grounded/airborne candidate predicate.
+"""
+    vz_slop_mps::Float64 = 1e-3
 end
 
 @inline function _flat_ground_constraint_eval(
@@ -215,7 +228,7 @@ end
     a_free_z = a_free_ned[3]
 
     # Candidate if at/near the plane and not moving upward.
-    candidate = (z >= -c.z_slop_m) && (vz >= 0.0)
+    candidate = (z >= -c.z_slop_m) && (vz >= -c.vz_slop_mps)
 
     # Apply a unilateral normal reaction only if the unconstrained dynamics would
     # accelerate further into the ground.
@@ -270,7 +283,7 @@ function contact_info(c::FlatGroundConstraintContact, x::RigidBodyState, t::Floa
     gap = ground_gap_m(x)
     penetration = max(0.0, -gap)
 
-    active = (z >= -c.z_slop_m) && (vz >= 0.0)
+    active = (z >= -c.z_slop_m) && (vz >= -c.vz_slop_mps)
     mode = if !active
         CONTACT_AIRBORNE
     elseif vz > 0.0

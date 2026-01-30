@@ -1335,7 +1335,8 @@ end
 
 # Internal helper: grounded candidate predicate (Phase 4 time-stepping mode).
 @inline function _ground_candidate(c::FlatGroundConstraintContact, rb::RigidBodyState)::Bool
-    return (rb.pos_ned[3] >= -c.z_slop_m) && (rb.vel_ned[3] >= 0.0)
+    # Treat tiny upward velocities as numerical noise to reduce mode chattering.
+    return (rb.pos_ned[3] >= -c.z_slop_m) && (rb.vel_ned[3] >= -c.vz_slop_mps)
 end
 
 

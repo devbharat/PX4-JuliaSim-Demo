@@ -183,6 +183,7 @@ contact = "flat_ground_constraint"   # flat_ground_constraint|flat_ground|no_con
 # enable_impact_friction = true
 # h_contact_us = 1000
 # z_slop_m = 1.0e-6
+# vz_slop_mps = 1.0e-3
 ```
 
 ### `[environment]`

@@ -326,6 +326,7 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
             "enable_friction",
             # constraint
             "z_slop_m",
+            "vz_slop_mps",
             # hybrid impact (Phase 3+)
             "restitution",
             "e",
@@ -349,6 +350,9 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
             ),
         )
     elseif kind in ("flat_ground_constraint", "constraint", "unilateral", "flat_constraint")
+        z_slop_m = _as_f64(get(tbl, "z_slop_m", 1e-6), "$ctx.z_slop_m")
+        vz_slop_mps = _as_f64(get(tbl, "vz_slop_mps", 1e-3), "$ctx.vz_slop_mps")
+        vz_slop_mps >= 0.0 || error("$ctx.vz_slop_mps must be >= 0")
         return Contacts.FlatGroundConstraintContact(
             μ = _as_f64(get(tbl, haskey(tbl, "μ") ? "μ" : "mu", 0.8), "$ctx.mu"),
             v_eps = _as_f64(get(tbl, "v_eps", 0.05), "$ctx.v_eps"),
@@ -371,7 +375,8 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
             h_contact_us = UInt64(
                 max(1, _as_int(get(tbl, "h_contact_us", 1000), "$ctx.h_contact_us")),
             ),
-            z_slop_m = _as_f64(get(tbl, "z_slop_m", 1e-6), "$ctx.z_slop_m"),
+            z_slop_m = z_slop_m,
+            vz_slop_mps = vz_slop_mps,
         )
     elseif kind in ("none", "no", "off", "no_contact", "nocontact")
         return Contacts.NoContact()

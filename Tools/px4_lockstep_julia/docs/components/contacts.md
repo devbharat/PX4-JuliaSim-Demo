@@ -28,6 +28,9 @@ into the plant dynamics.
   - *Continuous grounded-mode reaction:* a non-stiff unilateral normal reaction computed
     from the unconstrained acceleration (`a_free`). This keeps explicit adaptive solvers
     from shrinking steps due to stiff penalty forces.
+    - The grounded candidate predicate uses a small vertical velocity slop
+      (`vz_slop_mps`) to avoid mode chattering when `v_z` hovers around zero due to
+      numerical noise.
   - *Hybrid grounded time-stepping:* plant models may override integration using the
     `plant_integrate_interval` protocol and apply end-of-substep contact impulses instead
     of continuous forces. In this mode, the plant integrates the **smooth** dynamics with

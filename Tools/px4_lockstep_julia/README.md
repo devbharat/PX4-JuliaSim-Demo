@@ -71,7 +71,7 @@ Key invariants:
 ## Documentation
 
 - **Docs home:** `docs/README.md`
-- **Technical report (LaTeX source):** `docs/Report/Latex/main.tex`
+- **Technical report (PDF):** `docs/Report/Latex/main.pdf`
 - **Getting started:** `docs/getting-started.md`
 - **Architecture & design:** `docs/architecture.md`
 - **Workflows (Iris, record/replay, verification):** `docs/notes/workflows.md`

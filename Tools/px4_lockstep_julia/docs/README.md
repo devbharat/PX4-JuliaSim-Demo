@@ -10,7 +10,7 @@
 If you specifically care about replay infrastructure: [`notes/record-replay.md`](notes/record-replay.md).
 If you want the TOML schema: [`aircraft_spec.md`](aircraft_spec.md).
 Known limitations of the current physics: [`notes/limitations.md`](notes/limitations.md).
-Technical report (LaTeX source): [`Report/Latex/main.tex`](Report/Latex/main.tex).
+Technical report (PDF): [`Report/Latex/main.pdf`](Report/Latex/main.pdf).
 
 ## Reference
 

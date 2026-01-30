@@ -69,7 +69,10 @@ Base.@kwdef struct BLDCMotorParams <: MotorParams
     Kv_rpm_per_volt::Float64 = 920.0
     R_ohm::Float64 = 0.25
     J_kgm2::Float64 = 1.0e-5
-    I0_a::Float64 = 0.5              # no-load current (approx)
+    # I0_a reduces torque-producing current (electrical no-load/iron loss).
+    # viscous_friction models mechanical drag torque; keep one at 0.0 if you want
+    # a single loss channel rather than a combined approximation.
+    I0_a::Float64 = 0.5
     viscous_friction_nm_per_rad_s::Float64 = 1.0e-6
     max_current_a::Float64 = 60.0
 end

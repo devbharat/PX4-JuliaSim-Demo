@@ -1,0 +1,104 @@
+\documentclass[11pt]{article}
+
+% -----------------------------------------------------------------------------
+% Paper: PX4Lockstep.jl simulator description (code-faithful)
+% -----------------------------------------------------------------------------
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{siunitx}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage[section]{placeins}
+\lstdefinelanguage{toml}{
+  morecomment=[l]{\#},
+  morestring=[b]",
+  sensitive=true,
+}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  frame=single,
+  framerule=0.2pt,
+  rulecolor=\color{black!20},
+  backgroundcolor=\color{black!6},
+  aboveskip=0.8\baselineskip,
+  belowskip=0.6\baselineskip,
+}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black, urlcolor=blue!50!black}
+\setlength{\emergencystretch}{2em}
+
+% -----------------
+% Notation helpers
+% -----------------
+% Render code-ish identifiers without manual escaping and with decent line breaks.
+\newcommand{\code}[1]{\nolinkurl{#1}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\qbn}{\mat{q}_{bn}} % Body->NED quaternion
+\newcommand{\Rbn}{\mat{R}_{bn}} % Body->NED DCM
+\newcommand{\cross}{\times}
+
+\title{PX4Lockstep.jl: Deterministic PX4 Lockstep SITL with a Julia-Owned Hybrid Simulation Engine}
+\author{Bharat Tak\\Wingtra AG\\\texttt{bharat.tak@wingtra.com}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+\code{PX4Lockstep.jl} is a PX4 lockstep SITL driver and integration harness that connects independently developed component models (plant, power, environment, scenarios, estimator models, and uORB interfaces) into a single, executable closed-loop system. PX4 is advanced through a minimal C ABI on an injected integer-microsecond clock, while Julia owns the hybrid simulation timeline, continuous plant integration, environment forcing, scenario orchestration, and structured logging.
+
+A key goal is system-level evaluation across operating conditions. The environment is modeled explicitly (atmosphere with altitude-dependent pressure, density, and temperature; gravity; and wind/turbulence), and scenarios provide repeatable command and fault sequences. This enables assessing vehicle and controller performance under a range of conditions, and it supports rapid ``what changed?'' experiments by swapping individual components (or their parameters) and observing the impact on other subsystems and on end-to-end outcomes.
+
+Deterministic scheduling and record $\to$ replay are treated as enabling tools for debugging and regression: when executed in a controlled environment (single-threaded execution, pinned dependency versions, and seeded RNGs for stochastic sources), experiments can be reproduced and plant-side changes can be compared against recorded traces.
+
+This paper is \emph{code-faithful}: it documents the implementation directly from the source (equations, defaults, and corner cases) and summarizes current verification coverage and the evaluation plan.
+\end{abstract}
+
+\clearpage
+\renewcommand{\contentsname}{Table of Contents}
+\tableofcontents
+\clearpage
+
+\input{sections/00_introduction}
+\input{sections/01_runtime}
+\input{sections/01b_determinism}
+\input{sections/01c_evidence_summary}
+\input{sections/02_frames}
+\input{sections/03_plant_state}
+\input{sections/04_rigid_body}
+\input{sections/05_actuation_propulsion}
+\input{sections/06_power}
+\input{sections/07_environment}
+\input{sections/08_estimator_scenario}
+\input{sections/09_px4_bridge}
+\input{sections/10_configuration}
+\input{sections/12_record_replay}
+\input{sections/11_validation}
+\input{sections/13_extension_points}
+\input{sections/14_related_work}
+\input{sections/15_design_choices}
+\input{sections/11_limitations}
+
+\appendix
+\input{sections/A_default_iris_spec}
+\input{sections/B_uorb_injection}
+\input{sections/C_run_context}
+
+\end{document}

@@ -1,0 +1,114 @@
+\section{Rigid-body multirotor dynamics}
+\label{sec:rigid-body}
+
+The baseline vehicle model is \texttt{Sim.Vehicles.GenericMultirotor}, a rigid-body multirotor with configurable propulsor geometry. It is intentionally low-fidelity but allocation-free and stable for closed-loop testing.
+
+\subsection{Translational dynamics}
+The position derivative is simply
+\begin{equation}
+  \dot{\vect{p}}_n = \vect{v}_n.
+\end{equation}
+
+The total thrust force in body coordinates is formed by summing per-rotor thrust vectors. Each propulsor has a body-frame axis \(\vect{a}_{b,i}\) (\code{QuadrotorParams.rotor\_axis\_body}) with the convention
+\begin{equation}
+  \vect{F}_{b,i} = -T_i\,\vect{a}_{b,i},
+\end{equation}
+so for a classic multirotor with thrust along \(-z_b\), \(\vect{a}_{b,i}=(0,0,1)\). The total body force is
+\begin{equation}
+  \vect{F}_b = \sum_{i=1}^{N} \vect{F}_{b,i}, \qquad \vect{F}_n = \Rbn\,\vect{F}_b.
+\end{equation}
+
+A simple linear drag term is applied in NED based on air-relative velocity
+\begin{equation}
+  \vect{v}_{rel} = \vect{v}_n - \vect{w}_n, \qquad \vect{F}_{drag} = -c_d\,\vect{v}_{rel},
+\end{equation}
+where \(c_d\) is \code{QuadrotorParams.linear\_drag} and \(\vect{w}_n\) is the held wind sample from the runtime bus.
+
+Finally, gravity is supplied by the environment model as an acceleration vector \(\vect{g}_n\) (positive down in NED). The velocity derivative is
+\begin{equation}
+  \dot{\vect{v}}_n = \frac{1}{m}\left(\vect{F}_n + \vect{F}_{drag}\right) + \vect{g}_n.
+\end{equation}
+
+\subsection{Rotational dynamics with rotor gyroscopics}
+Moments from propulsors have two contributions: (i) thrust at a lever arm, and (ii) reaction torque about the propulsor axis. With body-frame rotor position \(\vect{r}_{b,i}\) and thrust \(T_i\),
+\begin{equation}
+  \vect{\tau} = \sum_{i=1}^{N} \left( \vect{r}_{b,i} \cross \vect{F}_{b,i} + \vect{a}_{b,i}\,\tau_i \right),
+\end{equation}
+where \(\tau_i\) is the signed shaft torque reported by the propulsion layer. In the current implementation this is the \emph{aerodynamic load torque} \(Q_i\) from the prop model, signed by \texttt{rotor\_dir[i]} (reaction torque on the body). Transient motor spin-up/spin-down effects enter separately through the rotor angular momentum terms \(-\dot{\vect{H}}\) and \(-\vect{\omega}_b \cross \vect{H}\); they are not double-counted inside \(\tau_i\).
+
+The rigid-body angular dynamics include angular damping and the additional angular momentum stored in spinning rotors. Let \(\mat{I}\) be the body inertia, \(\vect{\omega}_b\) the body rates, and define the rotor angular momentum and its derivative
+\begin{equation}
+  \vect{H} = \sum_{i=1}^{N} J_i\,s_i\,\Omega_i\,\vect{a}_{b,i}, \qquad
+  \dot{\vect{H}} = \sum_{i=1}^{N} J_i\,s_i\,\dot{\Omega}_i\,\vect{a}_{b,i},
+\end{equation}
+where \(J_i\) is the axial inertia of rotor \(i\), \(\Omega_i\) its spin rate (rad/s), and \(s_i=-\texttt{rotor\_dir}[i]\) is the rotor spin sign (opposite the reaction-torque sign). The implemented equation of motion is
+\begin{equation}
+  \mat{I}\,\dot{\vect{\omega}}_b = \left(\vect{\tau} - \vect{d}\odot\vect{\omega}_b\right)
+  - \vect{\omega}_b\cross(\mat{I}\vect{\omega}_b)
+  - \vect{\omega}_b\cross\vect{H} - \dot{\vect{H}},
+\end{equation}
+with elementwise angular damping \(\vect{d}\) from \code{QuadrotorParams.angular\_damping}. Quaternion kinematics use \cref{sec:frames}.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.75\linewidth]{figs/gyro_coupling_plot.png}
+  \caption{Gyro coupling regression for a tilted rotor axis: expected vs simulated \(\dot{\omega}\) components.}
+  \label{fig:gyro-coupling}
+\end{figure}
+
+\subsection{Defaults and caveats}
+\paragraph{Defaults.} \code{QuadrotorParams} provides constructor defaults (used if a spec omits values): mass \SI{1.5}{kg}, diagonal inertia \((0.029125,0.029125,0.055225)\,\si{kg.m^2}\), linear drag \SI{0.05}{N/(m/s)}, and angular damping $(0.02,0.02,0.01)$.
+
+\paragraph{Contact forces.} The rigid-body model itself does not include ground contact. Contact is handled in the coupled plant layer: penalty contact adds an external COM force in the RHS, while constraint contact can use hybrid interval stepping (time-of-impact + impact map + grounded impulses). See \cref{sec:contacts}.
+
+\paragraph{Aerodynamics.} The drag term is deliberately simplistic (linear, isotropic, no lift/induced effects). This is appropriate for controller-in-the-loop regression but not for aerodynamic performance prediction.
+
+\subsection{TOML configuration: airframe geometry and initial state}
+\label{sec:airframe-toml}
+
+The rigid-body parameters in \cref{sec:rigid-body} are configured under \code{[airframe]} (\code{AirframeSpec} in \code{src/sim/Aircraft/Spec.jl}) and its nested \code{[airframe.x0]} initial-condition table. A typical multirotor configuration (matching the shipped Iris asset) is:
+
+\begin{lstlisting}[language=toml]
+[airframe]
+kind = "multirotor"
+mass_kg = 1.5
+inertia_diag_kgm2 = [0.029125, 0.029125, 0.055225]
+# Optional products of inertia Ixy, Ixz, Iyz (defaults to zeros)
+inertia_products_kgm2 = [0.0, 0.0, 0.0]
+
+rotor_pos_body_m = [
+  [ 0.1515,  0.2450, 0.0],
+  [-0.1515, -0.1875, 0.0],
+  [ 0.1515, -0.2450, 0.0],
+  [-0.1515,  0.1875, 0.0],
+]
+rotor_axis_body_m = [
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0],
+]
+
+linear_drag = 0.05
+angular_damping = [0.02, 0.02, 0.01]
+
+[airframe.x0]
+pos_ned    = [0.0, 0.0, 0.0]
+vel_ned    = [0.0, 0.0, 0.0]
+q_bn       = [1.0, 0.0, 0.0, 0.0]   # or euler_deg / euler_rad
+omega_body = [0.0, 0.0, 0.0]
+\end{lstlisting}
+
+\paragraph{Parameter mapping to the dynamics.}
+The keys above map one-to-one into the symbols used in \cref{sec:rigid-body}:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{mass\_kg} \(\rightarrow m\).
+  \item \code{inertia\_diag\_kgm2} and \code{inertia\_products\_kgm2} \(\rightarrow\) the symmetric inertia tensor \(\mat{I}\). (Alternatively, \code{inertia\_kgm2} may be supplied as a full symmetric \(3\times 3\) tensor.)
+  \item \code{rotor\_pos\_body\_m} \(\rightarrow \vect{r}_{b,i}\) for each rotor.
+  \item \code{rotor\_axis\_body\_m} \(\rightarrow \vect{a}_{b,i}\) for each rotor. Axes are normalized during build; if omitted entirely, all axes default to \((0,0,1)\) (thrust along \(-z_b\)).
+  \item \code{linear\_drag} \(\rightarrow c_d\) in \(\vect{F}_{drag}=-c_d\,\vect{v}_{rel}\).
+  \item \code{angular\_damping} \(\rightarrow \vect{d}\) in \(\vect{d}\odot\vect{\omega}_b\).
+\end{itemize}
+
+\paragraph{Initial condition semantics.}
+The \code{[airframe.x0]} table sets the initial rigid-body state. Attitude may be specified either as \code{q\_bn} or as Euler angles; in strict mode, only one representation may be supplied.

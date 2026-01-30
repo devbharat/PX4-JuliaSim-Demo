@@ -1,0 +1,12 @@
+\section{Evidence summary (current repository)}
+\label{sec:evidence-summary}
+
+The full validation results are presented later (\cref{sec:validation}), but a short summary here anchors the key claims early:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Determinism replay drift:} two replay runs of the same recording produce negligible drift over 700\,s (\cref{fig:determinism-drift}).
+  \item \textbf{Replay performance:} replay-only realtime factor for a 700\,s mission is summarized in \cref{fig:replay-rtf} (no PX4 calls during replay).
+  \item \textbf{Integrator verification:} analytic/invariant checks for SHO, pendulum, Kepler, and torque-free rigid-body cases are tabulated in \cref{tab:verification-analytic-results}.
+  \item \textbf{Record/replay sweep:} end-to-end Iris record/replay integrator sweep errors are reported in \cref{tab:verification-iris-sweep}.
+\end{itemize}
+
+These results are intentionally lightweight but they are executable and traceable to scripts in the repository, making them suitable as regression anchors.

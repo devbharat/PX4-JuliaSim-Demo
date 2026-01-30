@@ -1,0 +1,19 @@
+\section{Related work and positioning}
+\label{sec:related-work}
+
+This paper is primarily an implementation description, but it is still useful to position the design against common autopilot-in-the-loop practice. We keep this section intentionally high-level in the current draft; a camera-ready version should add formal citations.
+
+\subsection{SITL and lockstep autopilot integration}
+
+PX4 SITL deployments commonly pair the autopilot with an external simulator that advances ``time'' in some form and exchanges state/actuator topics. In many stacks the simulator attempts to run in (scaled) real time, and the autopilot is advanced in a loop that is ultimately coupled to wall-clock scheduling. \code{PX4Lockstep.jl} instead treats PX4 as a discrete-time component stepped on an injected clock: the simulation engine never advances PX4 by wall time, and the boundary ordering is part of the explicit semantics (\cref{sec:runtime-boundary}).
+
+\subsection{Physics engines vs. reviewable determinism}
+
+High-fidelity physics engines and robotics simulators provide rich contact and aerodynamics models, but they frequently trade away strict repeatability due to internal multi-threading, nondeterministic collision ordering, and floating-point reductions. The design goal here is deliberately different: to make the execution model and the determinism boundary reviewable, and to keep the ``truth'' models small enough that equations, defaults, and corner cases can be documented code-faithfully.
+
+\subsection{Deterministic hybrid simulation and record/replay}
+
+The union-event-axis execution model is closely related in spirit to deterministic discrete-event simulation: subsystems publish changes only at explicitly scheduled boundaries and the continuous state advances deterministically between them. Record/replay then becomes a natural scientific tool: a closed-loop run can be reduced to boundary-aligned input traces and replayed as an open-loop plant experiment (\cref{sec:record-replay}). This mirrors ``record and replay'' ideas used in systems debugging, but the emphasis here is on plant-side falsifiability: any divergence under replay is attributable to plant/integrator/model changes, not controller behavior.
+
+\paragraph{Citations.}
+Formal citations are intentionally deferred in this draft. A camera-ready revision should cite: (i) canonical PX4 SITL simulators and lockstep interfaces, (ii) deterministic hybrid simulation frameworks/discrete-event semantics, and (iii) record/replay systems for reproducibility and debugging. These citations are not load-bearing for understanding the implementation described here.

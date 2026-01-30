@@ -1,0 +1,128 @@
+\section{Determinism contract, threat model, and evaluation plan}
+\label{sec:determinism}
+
+The runtime in \cref{sec:runtime} makes the execution model explicit. This section (i) defines what ``determinism'' means for this project, (ii) states a threat model for when the claim is defensible, and (iii) summarizes what is already verified in the repository and what remains to be evaluated.
+
+\subsection{What ``determinism'' means here}
+\label{sec:determinism-definition}
+
+We use ``determinism'' in a concrete, falsifiable sense: for a fixed initial plant state, a fixed simulation specification, a fixed integer-microsecond timeline, and fixed seeds for any stochastic sources, the simulator should produce boundary-aligned traces that are \emph{numerically identical within tight tolerances} across repeated runs in a controlled software/hardware environment. Bitwise identity is a stronger property that is only expected under strict runtime controls (single-threaded execution, pinned dependencies, and stable CPU/libm); we therefore treat bitwise identity as a best-case outcome rather than the baseline contract.
+
+More specifically, the codebase targets three nested determinism properties:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Scheduling determinism:} the same set of event times \(\{t_k\}\) is generated from the same configuration, and the engine visits them in a deterministic order (\cref{sec:runtime-timebase}).
+  \item \textbf{Discrete-source determinism:} for each boundary time \(t_k\), each source publishes an unambiguous bus update in a fixed stage ordering (\cref{sec:runtime-boundary}).
+  \item \textbf{Numerical determinism:} given the same held inputs and floating-point execution environment, the plant integration produces the same state at each boundary time (up to tight tolerances).
+\end{enumerate}
+
+The first two properties are architectural and are largely ``by construction'' once time is represented as integer microseconds. The third property depends on floating-point behavior and library/environment controls.
+
+\subsection{Mechanisms used in the implementation}
+\label{sec:determinism-mechanisms}
+
+The implementation contains several explicit mechanisms intended to make determinism reviewable:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Integer-microsecond timebase:} all axes are stored as \code{UInt64} microseconds and the timeline builder rejects non-exact cadences (\code{dt\_to\_us}; \cref{sec:runtime-timebase}).
+  \item \textbf{Union event axis:} the engine integrates only on the sorted unique union of subsystem axes, so a discrete update can never occur ``inside'' an integration step (\cref{fig:timeline-union}).
+  \item \textbf{Fixed boundary protocol:} a single canonical stage ordering defines what the autopilot consumes and what input is held over the next interval (\cref{sec:runtime-boundary}).
+  \item \textbf{Sample-and-hold bus:} all plant inputs are derived from a held \code{SimBus} packet at boundaries (\cref{sec:runtime-sample-hold}).
+  \item \textbf{Dedicated RNG ownership for stochastic sources:} live wind and live estimator sources carry their own RNG instances and document the rule ``no RNG usage outside of \code{update!}'' (\code{src/sim/Sources/Wind.jl}, \code{src/sim/Sources/Estimator.jl}).
+  \item \textbf{Deterministic iteration counts in key algebraic solvers:} the coupled plant bus-voltage solve uses staged deterministic strategies with fixed iteration counts (\cref{sec:bus-solve}).
+  \item \textbf{Axis-aligned record/replay:} recorded streams are validated to match their intended axes exactly (\code{_require\_axis\_match!}), and replay sources sample by deterministic binary search over the recorded axis vectors (\cref{sec:record-replay}).
+  \item \textbf{Microsecond-quantized adaptive substeps:} adaptive Runge--Kutta integrators optionally quantize accepted substeps to integer microseconds (\code{quantize\_us=true} by default in \code{src/sim/Integrators.jl}) to reduce drift from floating time accumulation.
+\end{itemize}
+
+\subsection{TOML configuration: deterministic seeding}
+\label{sec:determinism-toml-seed}
+
+All stochastic sources are expected to be seeded explicitly through the aircraft spec. The seed is configured under \code{[aircraft]}:
+
+\begin{lstlisting}[language=toml]
+[aircraft]
+name = "iris"   # optional human-readable identifier
+seed = 1        # integer seed for deterministic RNG ownership
+\end{lstlisting}
+
+\paragraph{Parameter semantics (what the code does).}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{name}: used only for identification/logging; it does not affect dynamics.
+  \item \code{seed}: used to seed deterministic RNGs during build. In the default builder (\code{src/sim/Aircraft/Build.jl}), the wind source uses \code{seed} and the noisy estimator uses \code{seed+1}. If \code{seed} is not specified, \code{AircraftSpec()} defaults to \code{1}.
+\end{itemize}
+
+This is a narrow but explicit contract: deterministic randomness requires the simulator to own the RNG state and to treat seeds as part of the experiment configuration.
+
+
+\subsection{Threat model for determinism}
+\label{sec:determinism-threat-model}
+
+Even with a deterministic execution model, determinism can be undermined by factors outside the scheduling layer. The paper therefore makes an explicit threat model:
+
+\paragraph{In-scope (what the design intends to control).}
+\begin{itemize}[leftmargin=*]
+  \item Discrete-event ordering and held-input semantics (fully controlled by the engine).
+  \item RNG-based sources, provided they use dedicated RNG state and fixed seeds (controlled by the source constructors and aircraft spec).
+  \item Data-dependent loop termination, where the code uses fixed-iteration schemes for critical algebraic steps (e.g. bus solve) or where floating-point decisions are deterministic given a fixed environment.
+\end{itemize}
+
+\paragraph{Out-of-scope / risks (must be controlled by the run harness or explicitly disclaimed).}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Threading and nondeterministic reductions.} The simulator is intended to run single-threaded, but the code does not enforce this globally. Any multi-threaded dependency (e.g. BLAS, linear algebra kernels, reductions) can introduce nondeterministic floating-point association.
+  \item \textbf{Cross-platform floating-point differences.} Bitwise identity across CPU architectures, OS/libm versions, or compiler flags is not guaranteed in IEEE 754 arithmetic. The project currently targets repeatability within a controlled environment; cross-platform repeatability should be treated as an empirical question.
+  \item \textbf{Dependency drift.} If package versions change (Julia version, \code{Manifest.toml} content), numerical behavior can change even if the code is unchanged.
+  \item \textbf{Iteration order and hash stability.} Determinism can be broken by unordered iteration (e.g.\ \code{Dict} traversal) or randomized hashing across Julia versions. The implementation avoids unordered iteration in core loops; any new code must be careful about iteration order.
+  \item \textbf{Math flags and fused operations.} Compiler flags or macros such as \code{@fastmath} can enable reassociation or fused-multiply-add, which may change results across platforms or builds. These are avoided in the core simulation path.
+  \item \textbf{Sorting stability assumptions.} Any use of sorting as a deterministic tie-breaker must guarantee a stable order and explicit keying; otherwise equal keys can lead to nondeterministic outcomes across versions.
+  \item \textbf{PX4 black-box behavior.} PX4 is treated as an external component. While lockstep stepping removes wall-clock timing drift, internal PX4 behavior can still depend on floating-point implementation details and configuration.
+\end{itemize}
+
+\paragraph{Required controls for determinism claims.}
+To make determinism claims academically defensible, runs intended for determinism evaluation \emph{must} satisfy the following:
+\begin{itemize}[leftmargin=*]
+  \item set \code{JULIA\_NUM\_THREADS=1} and disable BLAS threading (e.g. \code{OPENBLAS\_NUM\_THREADS=1}, \code{MKL\_NUM\_THREADS=1}, \code{VECLIB\_MAXIMUM\_THREADS=1}),
+  \item execute with the repository's \code{Project.toml} and \code{Manifest.toml} pinned (no dependency drift),
+  \item use explicit seeds for any live stochastic sources (wind, noisy estimator), and
+  \item report the Julia version, OS, CPU, and relevant environment variables alongside results.
+\end{itemize}
+
+\subsection{Evidence already present in the repository}
+\label{sec:determinism-evidence}
+
+Even without an ``evaluation'' section with plots, the repository already contains regression tests that operationalize determinism at the trace level:
+\begin{itemize}[leftmargin=*]
+  \item \code{test/record\_replay\_engine.jl} constructs minimal plants and asserts:
+    (i) replay integration matches an analytic solution for a piecewise-constant input,
+    (ii) record mode captures axis-aligned Tier-0 traces, and
+    (iii) record \(\to\) reload \(\to\) replay reproduces the logged plant state at every log tick to tight tolerances (position/velocity/attitude/body-rate/rotor/battery terms on the order of \(10^{-12}\) or smaller). This is the operative determinism contract in the current test suite.
+  \item \code{test/compare\_integrators.jl} runs deterministic integrator sweeps on a fixed recording, validating solver ordering and error metric wiring.
+  \item Multiple unit tests validate model components that directly influence determinism (e.g. battery surface interpolation and scaling, motor mapping, and gyro/rotor sign conventions).
+\end{itemize}
+
+These tests are limited (short horizon, controlled scenarios), but they provide a concrete starting point: determinism is checked by comparing boundary-aligned traces, not by subjective visual similarity.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/determinism_drift.png}
+  \caption{Determinism check: two replay runs of the same recording using the same integrator (RK4) produce negligible drift over 700\,s.}
+  \label{fig:determinism-drift}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figs/replay_rtf_long.png}
+  \caption{Replay-only realtime factor for a 700\,s Iris mission recording (no PX4 calls during the replay sweep). Run configuration is summarized in \cref{app:run-context}.}
+  \label{fig:replay-rtf}
+\end{figure}
+
+\subsection{Evaluation plan (results to be added)}
+\label{sec:determinism-eval-plan}
+
+A ``proper'' paper version should extend the above test-style checks into a small evaluation section. The following experiments can be added without changing the architecture:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Replay fidelity (closed-loop \(\to\) open-loop):} record a short closed-loop mission, then replay the plant using the recorded \code{:cmd}, \code{:wind\_base\_ned}, and scenario traces, and report that Tier-0 log streams match within tolerance.
+  \item \textbf{Repeated-run determinism:} run the same recording replay multiple times and verify identical Tier-0 outputs within tolerance (optionally also report bytewise hashes when strict controls are used).
+  \item \textbf{Cross-machine repeatability (if feasible):} replay the same Tier-0 file on a second machine/OS and report drift envelopes, explicitly noting whether results are bitwise-identical or only numerically close.
+  \item \textbf{Cost trade-offs:} measure wall-clock overhead as a function of event-axis density (union-axis refinement), log cadence, and adaptive-integrator tolerance.
+  \item \textbf{Sensitivity to numerical choices:} use the existing integrator sweep tooling (\cref{sec:record-replay}) to report how solver choice changes plant trajectories under identical recorded inputs, and quantify the effect of \code{quantize\_us} on adaptive error control.
+\end{enumerate}
+
+Where the current implementation makes arbitrary choices (e.g. fixed iteration counts, simple contact model, simplified aero), those choices should be stated as such and evaluated for their impact on determinism, stability, and fidelity rather than defended as universally correct.

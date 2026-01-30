@@ -1,0 +1,28 @@
+\section{Known limitations and improvement targets}
+\label{sec:limitations}
+
+This section lists limitations that are \emph{explicit in the code} and therefore matter when interpreting results.
+
+\subsection{State injection rather than raw sensor simulation}
+The default PX4 integration uses ``state injection'' uORB topics published at every PX4 step (\code{src/sim/Autopilots/UORBInjection.jl}), not raw IMU/mag/baro/GPS measurements. The estimator layer therefore models ``EKF output error'' rather than sensor physics.
+
+\subsection{Aerodynamics are intentionally minimal}
+The rigid-body drag model is linear and isotropic (\code{Vehicles.GenericMultirotor}); it does not include lift, induced drag, rotor/airframe aerodynamic coupling, blade flapping, or ground effect. Propulsor inflow is captured only through a simple $\mu^2$ attenuation factor on thrust/torque (\cref{sec:propulsion-model}).
+
+\subsection{Contacts are COM forces only}
+The shipped ground models (\code{FlatGroundContact} and \code{FlatGroundConstraintContact}) apply contact at the vehicle center of mass (COM) and therefore produce no moments. While \code{FlatGroundConstraintContact} includes deterministic hybrid impact handling (time-of-impact localization + restitution/impact friction) and a fixed-step grounded impulse solve for stable resting contact, it is still not a landing-gear or multi-point contact model. Energy and angular-momentum conservation are not enforced (normal velocity is reset, tangential velocity is clamped by Coulomb bounds, and there is no angular impulse). Terrain heightfields and contact-induced torques remain out of scope for the current contact layer.
+
+\subsection{No regeneration / no charging}
+The BLDC current model clamps negative current to zero, and the battery model integrates only discharge current ($I\gets\max(0,I)$). There is no regenerative braking, motor back-driving into the bus, or battery charging model.
+
+\subsection{Power-network topology is intentionally simple}
+\code{PowerNetwork} supports only ``battery belongs to a bus'' wiring with per-bus constant-power avionics loads. Cross-feed, diode OR-ing, and richer circuit effects are intentionally out of scope. Additionally, avionics constant-power load is approximated as a constant current during the bus-voltage solve (\cref{sec:bus-solve}).
+
+\subsection{Static scenario event discovery}
+The hybrid timeline can include scenario \code{AtTime} events discovered from a static scheduler. Dynamically inserting new events at runtime is not supported by the current timeline builder.
+
+\subsection{Geodesy and gravity approximations}
+The NED$\leftrightarrow$LLA conversion used for PX4 topic injection is a local flat-Earth approximation (fixed \(\cos(\varphi_0)\) longitude scale and linear altitude). It is intended for missions within \(\sim\)\SI{10}{km} of the home origin. \code{SphericalGravity} treats local down as radial with $r\approx r_0 - z$. These are appropriate for short-range missions around the home origin but not for large-area navigation studies.
+
+\subsection{Floating-point and environment-dependent determinism}
+While the runtime semantics are deterministic at the event-scheduling layer (integer timebase, fixed boundary ordering), bitwise-identical results are not guaranteed across different floating-point environments. Multi-threaded dependencies, different \code{libm} implementations, CPU instruction sets (e.g. fused multiply-add behavior), or dependency version drift can all change rounding and therefore plant trajectories. The project currently targets repeatability \emph{within a controlled environment}; the threat model and recommended controls are stated explicitly in \cref{sec:determinism-threat-model}.

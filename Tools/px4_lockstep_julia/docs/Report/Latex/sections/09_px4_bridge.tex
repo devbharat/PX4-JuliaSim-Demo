@@ -1,0 +1,100 @@
+\section{PX4 lockstep integration}
+\label{sec:px4-bridge}
+
+PX4 is treated as a deterministic discrete-time component stepped by integer microseconds. The simulation engine never advances PX4 by wall-clock time; instead it calls the lockstep step function with an exact \code{UInt64} timestamp at each autopilot boundary.
+
+\subsection{Autopilot step interface}
+
+The canonical interface is \code{Autopilots.autopilot_step} (\code{src/sim/Autopilots.jl}). On each autopilot tick, the engine provides:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item estimated state: $(\hat{\vect{p}}_{ned}, \hat{\vect{v}}_{ned}, \hat{\qbn}, \hat{\vect{\omega}}_{body})$,
+  \item high-level command \code{AutopilotCommand} (arm/mission/RTL),
+  \item a best-effort \code{landed} flag, and
+  \item per-battery \code{BatteryStatus} records computed by the plant outputs protocol.
+\end{itemize}
+
+\paragraph{State-to-global conversion.}
+PX4 expects global coordinates for some topics. The implementation converts local NED to an approximate latitude/longitude/altitude using a fixed Earth radius and the configured home origin (\code{_ned\_to\_lla}). Altitude is computed as $h_{msl}=h_{home}-p_{ned,z}$. This approximation is intended for local missions (order \(\sim\)\SI{10}{km} from home) and uses a fixed \(\cos(\varphi_0)\) longitude scale; see \cref{sec:design-choices}.
+
+\paragraph{Mode selection.}
+The command packet drives a small internal mode logic that sets \code{nav\_state} and \code{arming\_state} fields for injected topics. A configurable \code{edge\_trigger} mode determines whether mission/RTL requests are treated as edges or levels; additional ``mission rearm'' logic exists for the level-triggered mode to make mission activation robust.
+
+\subsection{Multi-rate uORB injection}
+
+PX4Lockstep uses explicit injection sources to publish uORB messages at configurable integer-microsecond periods (\code{src/sim/Autopilots/UORBInjection.jl}). The boundary contract is:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item queue all uORB publishes that are \emph{due} at the current \code{time\_us},
+  \item call \code{step\_uorb!(handle, time\_us)} exactly once, then
+  \item read back configured uORB subscriptions.
+\end{enumerate}
+The default injector publishes a set of ``state injection'' topics every PX4 step (period $0$), which mirrors the historical lockstep SITL behavior.
+
+\subsection{Actuator command extraction}
+
+After stepping PX4, the autopilot reads actuator outputs from uORB subscriptions (\code{UORBOutputs.actuator\_motors}; \code{UORBOutputs.actuator\_servos}). It then converts these into fixed-size \code{ActuatorCommand} arrays and publishes them into the runtime bus (\code{src/sim/Sources/Autopilot.jl}).
+
+\paragraph{Actuator range semantics.}
+The bridge uses normalized uORB outputs: \code{actuator\_motors} is treated as a duty-like command in \([0,1]\), and \code{actuator\_servos} as a signed deflection in \([-1,1]\). These are lockstep ABI conventions (not PWM). If a different uORB topic or scaling is required, the mapping should be changed in the bridge configuration and documented alongside the uORB interface.
+
+\subsection{Derived PX4 parameterization: control allocator geometry}
+
+When enabled in the aircraft spec (\code{PX4Spec.derive\_ca\_params}), the build layer derives \code{CA\_*} control allocator parameters from the multirotor geometry (\code{src/sim/Aircraft/Build.jl}). For each rotor $i$ with body position $\vect{r}_{b,i}$ and propulsor axis $\vect{a}_{b,i}$, PX4 expects a \emph{thrust direction} axis; the builder therefore provides $-\vect{a}_{b,i}$ (recall \cref{sec:axis-convention}). The yaw moment coefficient parameter \code{CA\_ROTOR<i>\_KM} is set to \texttt{km\_m} times the rotor reaction torque sign pattern \code{rotor\_dir[i]}.
+
+\paragraph{Caveat.}
+This parameter derivation keeps PX4-side allocation consistent with the Julia-side plant geometry, but it does not configure PX4 mixers or select an airframe; those remain PX4 configuration responsibilities.
+
+
+\subsection{TOML configuration: PX4 bridge, lockstep rates, and uORB interface}
+\label{sec:px4-toml}
+
+The PX4 integration is configured under \code{[px4]} (\code{PX4Spec} parsed in \code{src/sim/Aircraft/TOMLIO.jl}). The same table also contains the lockstep module scheduling rates (\code{[px4.lockstep]}) and the uORB publish/subscribe interface definition (\code{[px4.uorb]}).
+
+\paragraph{Example (Iris defaults).}
+\begin{lstlisting}[language=toml]
+[px4]
+libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_lockstep.so"
+mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
+derive_ca_params = true
+edge_trigger = false
+
+# Optional lockstep-module scheduler configuration (PX4Lockstep.LockstepConfig)
+[px4.lockstep]
+enable_commander = 0
+commander_rate_hz = 100
+enable_navigator = 0
+navigator_rate_hz = 20
+enable_mc_pos_control = 1
+mc_pos_control_rate_hz = 100
+enable_mc_att_control = 1
+mc_att_control_rate_hz = 250
+enable_mc_rate_control = 1
+mc_rate_control_rate_hz = 250
+enable_control_allocator = 1
+control_allocator_rate_hz = 250
+dataman_use_ram = 1
+
+# uORB bridge configuration can be extended from an asset (e.g. iris_uorb.toml)
+[px4.uorb]
+pubs = ["vehicle_local_position", "vehicle_attitude", "battery_status"]
+subs = ["actuator_outputs"]
+
+# Optional PX4 parameter overrides (applied at init)
+[[px4.params]]
+name  = "SYS_AUTOSTART"
+value = 4001
+
+[[px4.params]]
+name  = "COM_ARM_CHK"
+value = 0
+\end{lstlisting}
+
+\paragraph{Parameter mapping.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{libpath}: shared library path for \code{libpx4\_lockstep} (loaded at runtime).
+  \item \code{mission\_path}: optional PX4 mission/waypoint file path. If absent, PX4 can still run in manual/offboard modes.
+  \item \code{derive\_ca\_params}: when \code{true}, derive control-allocation parameters from the actuation geometry during build (see \code{Build.derive\_control\_allocator\_params}).
+  \item \code{edge\_trigger}: selects whether mission/RTL requests are treated as edges (one-shot) or levels (held) in the autopilot command logic.
+  \item \code{[px4.lockstep]}: configures which PX4 modules are stepped in the lockstep loop and at what rates (fields correspond one-to-one with \code{PX4Lockstep.LockstepConfig}).
+  \item \code{[px4.uorb]}: declares which uORB topics are published into PX4 (\code{pubs}) and which are subscribed out of PX4 (\code{subs}); see Appendix~\ref{app:uorb-injection}.
+  \item \code{[[px4.params]]}: list of \{name,value\} pairs applied to PX4 parameters at initialization.
+\end{itemize}

@@ -7,6 +7,15 @@
 .context
 .cproject
 .DS_Store
+
+# LaTeX report build artifacts
+Tools/px4_lockstep_julia/docs/Report/Latex/*.aux
+Tools/px4_lockstep_julia/docs/Report/Latex/*.log
+Tools/px4_lockstep_julia/docs/Report/Latex/*.fls
+Tools/px4_lockstep_julia/docs/Report/Latex/*.fdb_latexmk
+Tools/px4_lockstep_julia/docs/Report/Latex/*.out
+Tools/px4_lockstep_julia/docs/Report/Latex/*.toc
+Tools/px4_lockstep_julia/docs/Report/Latex/build*.log
 .gdbinit
 .gdb_history
 .project

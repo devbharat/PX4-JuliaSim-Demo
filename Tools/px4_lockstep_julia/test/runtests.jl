@@ -1323,3 +1323,21 @@ end
     @test V_cur > V_min_sat + 1e-6
     @test isapprox(V_cur + R0_sat * I_cur, ocv_sat - v1; atol = 1e-3)
 end
+
+@testset "PlantModels: bus voltage clamps to V0 when V0 < V_min" begin
+    pset = Sim.Propulsion.default_multirotor_set()
+    p = pset
+    ω = SVector{4,Float64}(200.0, 200.0, 200.0, 200.0)
+
+    # Force open-circuit voltage below the configured minimum.
+    ocv = 9.0
+    v1 = 0.0
+    R0 = 0.02
+    V_min = 10.5
+
+    duty = SVector{4,Float64}(0.3, 0.3, 0.3, 0.3)
+    V = Sim.PlantModels._solve_bus_voltage(p, ω, duty, ocv, v1, R0, V_min)
+    @test isfinite(V)
+    @test isapprox(V, ocv - v1; atol = 1e-9)
+    @test V < V_min - 1e-9
+end

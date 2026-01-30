@@ -1,0 +1,92 @@
+\section{PX4 uORB injection contract}
+\label{app:uorb-injection}
+
+This appendix documents the concrete uORB messages injected by the simulator into PX4 in lockstep mode. The implementation lives in:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{src/sim/Autopilots/UORBBridge.jl} (message packing and uORB bridge), and
+  \item \code{src/sim/Autopilots/UORBInjection.jl} (publish scheduling and state-to-message mapping).
+\end{itemize}
+
+\subsection{Injection call site}
+
+PX4 is stepped once per autopilot tick through \code{Autopilots.autopilot\_step}. For each tick, the simulator:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item builds a \code{PX4StepContext} snapshot containing time, rigid-body state, estimated yaw, geodetic position, autopilot command, arming/nav state, and battery telemetry,
+  \item calls \code{inject\_due!} to publish any uORB topics that are scheduled for the current time, and
+  \item calls \code{step\_uorb!} to advance PX4's internal uORB graph by one lockstep step.
+\end{enumerate}
+
+\subsection{Default Iris interface}
+
+The default Iris assets define the uORB interface contract in \code{iris\_uorb.toml}. The \emph{publisher} list describes what the simulator injects into PX4; the \emph{subscriber} list describes what the simulator reads back from PX4 after stepping.
+
+\paragraph{Injected uORB topics (default Iris).}
+The default state injector publishes each configured topic \emph{every PX4 step} (period $=0$). \cref{tab:uorb-pubs} lists the injected topics and their primary semantics.
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Publisher key & uORB msg type & Notes (units / frames) \\
+    \midrule
+    \code{battery\_status} & \code{BatteryStatusMsg} & Multi-instance support; uses \code{ctx.batteries}. \\
+    \code{vehicle\_attitude} & \code{VehicleAttitudeMsg} & Quaternion \(q_{bn}\) (Body$\to$NED), \(\omega_{body}\) in rad/s. \\
+    \code{vehicle\_local\_position} & \code{VehicleLocalPositionMsg} & \(p_{ned}\) (m), \(v_{ned}\) (m/s), yaw (rad). \\
+    \code{vehicle\_global\_position} & \code{VehicleGlobalPositionMsg} & Lat/Lon (deg), alt\_msl (m). \\
+    \code{vehicle\_angular\_velocity} & \code{VehicleAngularVelocityMsg} & Body rates (rad/s). \\
+    \code{vehicle\_land\_detected} & \code{VehicleLandDetectedMsg} & Uses \code{ctx.landed}. \\
+    \code{vehicle\_status} & \code{VehicleStatusMsg} & Sets \code{nav\_state}, \code{arming\_state}. \\
+    \code{vehicle\_control\_mode} & \code{VehicleControlModeMsg} & Enables attitude/rate/allocator booleans. \\
+    \code{actuator\_armed} & \code{ActuatorArmedMsg} & Armed/prearmed based on \code{ctx.cmd.armed}. \\
+    \code{home\_position} & \code{HomePositionMsg} & Publishes home LLA; gated on finite home values. \\
+    \code{geofence\_status} & \code{GeofenceStatusMsg} & Sets \code{geofence\_violated=false}. \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Default Iris uORB publishers injected by the simulator (\code{iris\_uorb.toml}). Unless overridden by custom injection sources, all default topics publish every PX4 step.}
+  \label{tab:uorb-pubs}
+\end{table}
+
+\paragraph{Subscribed uORB topics (default Iris).}
+After each PX4 step, the bridge reads a fixed set of uORB subscriptions to construct the autopilot output bundle \code{UORBOutputs}. The default Iris list is:
+\begin{quote}\small
+\code{torque\_sp}, \code{thrust\_sp}, \code{actuator\_motors}, \code{actuator\_servos}, \code{attitude\_sp},\ \\
+\code{rates\_sp}, \code{mission\_result}, \code{vehicle\_status}, \code{battery\_status}, \code{trajectory\_setpoint}.
+\end{quote}
+
+\paragraph{Actuator output normalization.}
+The simulator interprets \code{actuator\_motors} as normalized ESC duty commands in \([0,1]\) and \code{actuator\_servos} as normalized control-surface deflections in \([-1,1]\). These are the lockstep ABI conventions used by \code{ActuatorCommand}; they are not PWM values. If a different uORB topic or scaling is desired (e.g.\ reversible motors), the mapping should be adjusted in the bridge and documented in the interface config.
+
+\subsection{State-to-message mapping details}
+
+This section highlights the non-obvious mapping choices that matter for correctness.
+
+\paragraph{Attitude quaternion convention.}
+\code{VehicleAttitudeMsg.q} is populated with \(q_{bn}\) (body$\to$NED), ordered as \((w,x,y,z)\) and normalized at parse-time in the TOML loader. See \cref{sec:frames} for the simulator frame conventions.
+
+\paragraph{Local position reference.}
+\code{VehicleLocalPositionMsg.ref\_lat/ref\_lon/ref\_alt} are chosen based on whether commander-in-loop is enabled. When \code{enable\_commander==0} (the Iris default), the reference is forced to the configured home location so PX4 receives a consistent local-frame origin.
+
+\paragraph{Battery injection and instances.}
+Battery status injection supports multiple uORB instances. If the interface config contains multiple \code{battery\_status} publishers with instances \(0,1,\dots\), the injector publishes one message per instance. Instance \(i\) maps to \code{ctx.batteries[i+1]}; missing batteries are rejected.
+
+\subsection{Publish scheduling and cadence constraints}
+\label{sec:uorb-scheduling}
+
+Each injected topic is driven by an \code{AbstractUORBInjectionSource} with parameters:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{period\_us}: publish period in microseconds (\code{0} means ``every PX4 step''),
+  \item \code{phase\_us}: phase offset relative to the injector's \code{t0\_us} (captured on first use).
+\end{itemize}
+For non-zero periods, a publish is \emph{due} at time \(t\) when \((t - t_0 - \phi) \bmod P = 0\) (see \code{_is\_due} in \code{UORBInjection.jl}).
+
+\paragraph{Cadence validation.}
+When running a live PX4 autopilot, \code{Sim.simulate} checks that periodic injection sources are compatible with the autopilot cadence:\vspace{-2pt}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item the autopilot step \(\Delta t_{ap}\) must not be slower than the minimum declared injection period, and
+  \item each declared injection period must be an integer multiple of \(\Delta t_{ap}\).
+\end{itemize}
+If an injection period is not a multiple of the autopilot cadence and strict checking is disabled, the simulator warns that scheduled publishes will be skipped (effective period becomes the least common multiple of \(P\) and \(\Delta t_{ap}\)).
+
+\paragraph{Default Iris behavior.}
+The built-in state injector sets all default topic periods to \code{0}, so the injection schedule does not constrain \(\Delta t_{ap}\) for the default Iris workflow.

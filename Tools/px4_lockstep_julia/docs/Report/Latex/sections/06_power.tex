@@ -1,0 +1,355 @@
+\section{Power network and battery models}
+\label{sec:power}
+
+The coupled multirotor plant solves battery-to-bus-to-motor coupling algebraically at each RHS evaluation and integrates battery internal states (SOC, polarization voltage, and optional temperature).
+
+\subsection{Battery state and model families}
+\label{sec:battery-model}
+
+Battery state is part of \code{PlantState} as a \code{PowerState} with per-battery vectors:
+\begin{equation}
+  \text{power} = \{\vect{s}, \vect{v}_1, \vect{T}\},
+\end{equation}
+where $\vect{s}\in[0,1]^B$ is state-of-charge (fraction remaining), $\vect{v}_1\in\mathbb{R}^B$ is the Thevenin polarization voltage state, and $\vect{T}\in\mathbb{R}^B$ is battery temperature in \si{\celsius}.
+
+Two battery model types are supported in the coupled plant (\code{src/sim/Powertrain.jl}, \code{src/sim/PlantModels/CoupledMultirotor.jl}):
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{IdealBattery}: constant open-circuit voltage, coulomb-counted SOC, no droop, no polarization state dynamics.
+  \item \textbf{TheveninBattery}: open-circuit voltage $\mathrm{OCV}(s)$ via a table, series resistance $R_0(s,T)$ via a typed resistance model, and an optional polarization branch $(R_1, C_1)$ with state $v_1$.
+\end{itemize}
+
+In both cases, the models are \emph{parameter-only}: all dynamic state is kept inside \code{PlantState} so it is integrated by the engine.
+
+\subsection{Battery electrical dynamics}
+
+SOC is integrated from bus current by coulomb counting. For battery $i$ with capacity $C_i$ in coulombs and discharge current $I_i$:
+\begin{equation}
+  \dot{s}_i = -\frac{\max(0, I_i)}{C_i},
+\end{equation}
+with a clamp that prevents SOC from decreasing below zero.
+
+For \code{TheveninBattery} with a polarization branch $(R_1, C_1)$, the internal voltage state evolves as
+\begin{equation}
+  \dot{v}_{1,i} = -\frac{v_{1,i}}{R_1 C_1} + \frac{I_i}{C_1},
+\end{equation}
+and is disabled if $R_1\le 0$ or $C_1\le 0$.
+
+\subsection{Optional lumped thermal hook}
+\label{sec:battery-thermal}
+
+Battery temperature is a plant state but is held constant unless the battery's \code{ThermalParams.enabled} flag is set. When enabled, the plant integrates a one-node thermal model:
+\begin{equation}
+  \dot{T}_i = \frac{P_{loss,i} - k\,(T_i - T_{amb})}{C_{th}},
+\end{equation}
+where $C_{th}$ is an effective thermal capacitance and $k$ is a linear heat transfer coefficient to a fixed ambient temperature $T_{amb}$.
+
+The internal electrical loss used by the code is
+\begin{equation}
+  P_{loss} = I^2\,R_0(s,T) + \mathbf{1}_{R_1>0}\,\frac{v_1^2}{R_1},
+\end{equation}
+with the discharge-only current convention $I=\max(0,I_{bus})$.
+
+\subsection{Algebraic power network wiring}
+
+The plant supports multiple buses and multiple batteries through a small typed wiring object \code{PlantModels.PowerNetwork} (\code{src/sim/PlantModels/PowerNetwork.jl}). For $N$ motors, $B$ batteries, and $K$ buses, the wiring specifies:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{bus\_for\_motor[i]} $\in\{1,\dots,K\}$
+  \item \code{bus\_for\_battery[j]} $\in\{1,\dots,K\}$
+  \item \code{avionics\_load\_w[k]}: constant power load (W) on bus $k$
+  \item \code{share\_mode}: current sharing between batteries on a bus (\code{:inv\_r0} or \code{:equal}).
+\end{itemize}
+The topology is intentionally simple: each battery belongs to exactly one bus.
+
+\subsection{Bus-voltage solve}
+\label{sec:bus-solve}
+
+For each bus $k$, the plant solves a scalar algebraic equation for $V_{bus,k}$ based on a Thevenin equivalent source and motor load currents.
+
+\paragraph{Equivalent source for parallel batteries.}
+For each battery $i$ on bus $k$, define its instantaneous open-circuit terminal voltage
+\begin{equation}
+  V_{0,i} = \mathrm{OCV}_i(s_i) - v_{1,i},
+\end{equation}
+and its series resistance $R_{0,i}(s_i,T_i)$. The plant forms a conductance-weighted average
+\begin{equation}
+  w_i = \frac{1}{\max(R_{0,i}, R_{\epsilon})},\qquad
+  V_{0,eq} = \frac{\sum_i w_i V_{0,i}}{\sum_i w_i},\qquad
+  R_{eq} = \begin{cases}
+    0, & \text{if all }R_{0,i}\le 0 \\
+    1/\sum_i w_i, & \text{otherwise,}
+  \end{cases}
+\end{equation}
+with a small guard $R_{\epsilon}=10^{-6}\,\si{\ohm}$ to avoid division by zero.
+
+\paragraph{Avionics load approximation during the solve.}
+Avionics draw is treated as constant power $P_{av}$. To keep the bus solve monotone and deterministic, the code approximates this term during the solve as a constant current computed at $V_{0,eq}$:
+\begin{equation}
+  I_{av,assumed} \approx \frac{P_{av}}{V_{0,eq}},\qquad V_{0,eff} = V_{0,eq} - R_{eq} I_{av,assumed}.
+\end{equation}
+The motor load is then solved against the adjusted open-circuit voltage $V_{0,eff}$.
+
+\paragraph{Fixed-point equation.}
+Let $I_{motors}(V)$ be the total bus current drawn by all motors powered by this bus at bus voltage $V$ (computed from the quasi-static motor current model, including deadzones and current limits). The bus voltage is defined as the clamped fixed point
+\begin{equation}
+  V = \mathrm{clamp}_{[V_{\ell}, V_0]}\bigl(V_0 - R_{eq}\,I_{motors}(V)\bigr),\qquad
+  V_{\ell}\equiv \min(V_{min}, V_0),\qquad V_0\equiv V_{0,eff},
+\end{equation}
+where $V_{min}$ is the maximum of all configured battery minimum voltages on the bus. If the open-circuit voltage drops below $V_{min}$ (e.g.\ low SOC or cold temperature), the clamp interval collapses to $[V_0, V_0]$ and the solver returns $V=V_0$ rather than forcing an unphysical higher voltage.
+
+\paragraph{Deterministic solver strategy.}
+The implementation uses a staged deterministic approach (\code{src/sim/PlantModels/CoupledMultirotor.jl}):
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item A fast analytic solve assuming all active motors are in the unsaturated linear region, validated at the result.
+  \item A small fixed-count region-classified analytic iteration.
+  \item A fixed-iteration bisection on the monotone residual $g(V)=V+R_{eq}I(V)-V_0$.
+\end{enumerate}
+All iteration counts are fixed to avoid data-dependent loop termination.
+
+\subsection{Per-bus and per-battery currents}
+\label{sec:current-share}
+
+After solving $V_{bus,k}$, the plant computes the true avionics current as $I_{av}=P_{av}/V_{bus,k}$ (guarded for $V\le 0$) and forms the total per-bus current
+\begin{equation}
+  I_{bus,k} = I_{motors,k} + I_{av,k}.
+\end{equation}
+This current is then distributed across batteries on the same bus according to \code{share\_mode}:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{:equal}: equal current share.
+  \item \code{:inv\_r0}: share proportional to $1/R_0(s,T)$.
+\end{itemize}
+
+\paragraph{Battery disconnect fault.}
+If \code{FaultState.battery\_connected==false}, the plant forces all bus voltages to zero and all bus/battery currents to zero. This means the plant does not model residual motor windmilling or passive discharge under a disconnect fault; it is a hard ``power removed'' switch.
+
+\subsection{Battery telemetry for PX4}
+
+The plant implements the protocol \code{plant\_outputs(model, t, x, u)} to expose algebraic outputs (\code{PlantOutputs} in \code{src/sim/Plant.jl}). This includes per-bus voltage/current and per-battery \code{BatteryStatus} records. The injected voltage is the solved bus voltage; the injected current is the bus current assigned to that battery by the sharing rule.
+
+
+\subsection{Series/parallel scaling and asset resolution}
+\label{sec:battery-assets}
+
+The power model supports configuring battery electrical parameters either at the \emph{pack level} or at the \emph{cell level} together with an explicit series/parallel topology. This is not just a documentation convention: the build system applies deterministic scaling rules that change the actual runtime parameters used by \code{Powertrain.TheveninBattery} (\code{src/sim/Aircraft/Build.jl}).
+
+\paragraph{Pack topology.}
+Each battery spec provides integers \(\texttt{series}=N_s\) and \(\texttt{parallel}=N_p\). These are used only for scaling; the runtime battery state remains a single Thevenin state per configured battery.
+
+\paragraph{Voltage and cutoff scaling.}
+If \code{ocv\_is\_cell=true}, the OCV curve is interpreted as a per-cell table \(OCV_{cell}(s)\) and is scaled to pack voltage by
+\begin{equation}
+  OCV_{pack}(s) = N_s\,OCV_{cell}(s).
+\end{equation}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{figs/battery_ocv_curve.png}
+  \caption{Cell OCV curve and scaled pack OCV for the example asset (3S shown).}
+  \label{fig:battery-ocv-curve}
+\end{figure}
+Similarly, if \code{min\_voltage\_is\_cell=true}, the hard cutoff voltage is scaled as \(V_{\min,pack}=N_s V_{\min,cell}\).
+
+\paragraph{Resistance and RC scaling.}
+When the transient Thevenin parameters are marked cell-level via \code{thevenin\_is\_cell=true}, the builder applies
+\begin{align}
+  R_{0,pack} &= \frac{N_s}{N_p}\,R_{0,cell}, &
+  R_{1,pack} &= \frac{N_s}{N_p}\,R_{1,cell},\\
+  C_{1,pack} &= \frac{N_p}{N_s}\,C_{1,cell}, &
+  v_{1,pack}(0) &= N_s\,v_{1,cell}(0),
+\end{align}
+which preserves the RC time constant \(R_1C_1\) under series/parallel aggregation while scaling voltages and resistances in the usual way. For an SOC/temperature resistance surface, the scaling is controlled independently by \code{r0\_surface\_is\_cell} (defaults to \code{true} when the surface comes from a cell asset and \code{false} when it comes from a pack asset).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{figs/battery_r0_surface.png}
+  \caption{Example resistance surface (DCIR column, cell-level) as a function of SOC and temperature.}
+  \label{fig:battery-r0-surface}
+\end{figure}
+
+\paragraph{Pack-level overhead.}
+\code{r0\_overhead\_ohm} is always interpreted as a \emph{pack-level} additive term (connectors/wiring/BMS) and therefore is \emph{not} affected by \(N_s,N_p\).
+
+\paragraph{Capacity.}
+The state-of-charge integrator uses the pack capacity \(Q_{pack}\) (in ampere-hours). If \code{cell\_capacity\_ah} is provided and \code{capacity\_ah} is not, then the builder sets
+\begin{equation}
+  \texttt{capacity\_ah} = N_p \,\texttt{cell\_capacity\_ah}.
+\end{equation}
+Otherwise, \code{capacity\_ah} is used directly.
+
+\paragraph{Battery assets.}
+To reduce per-experiment boilerplate, a battery may reference a cell or pack \code{meta.toml} asset under \code{src/Workflows/assets/battery/}. Assets provide:
+(i) an OCV curve CSV with explicit SOC units/convention, (ii) optional resistance surfaces, (iii) optional thermal defaults.
+During build, asset-provided values are applied unless the corresponding TOML keys were explicitly set; explicit keys override asset values with a warning (see \code{_warn\_override} in \code{src/sim/Aircraft/Build.jl}). The \emph{TOML schema} currently enforces that a battery selects \emph{either} \code{pack\_asset} \emph{or} \code{cell\_asset} (not both), but a pack asset can internally reference its associated cell.
+
+\subsection{TOML configuration: batteries, buses, and sharing}
+\label{sec:power-toml}
+
+The powertrain is configured in the \code{[power]} block (\code{PowerSpec} in \code{src/sim/Aircraft/Spec.jl}) with a list of batteries and buses.
+
+\paragraph{Example 1: scalar-R0 Thevenin battery (Iris default).}
+\begin{lstlisting}[language=toml]
+[power]
+share_mode = "inv_r0"   # current sharing across parallel batteries on a bus
+
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+capacity_ah = 5.0
+soc0 = 1.0
+ocv_soc = [0.0, 1.0]
+ocv_v   = [10.8, 12.6]
+r0 = 0.020
+r1 = 0.010
+c1 = 2000.0
+v1_0 = 0.0
+min_voltage_v = 9.9
+low_thr   = 0.15
+crit_thr  = 0.10
+emerg_thr = 0.05
+
+[[power.buses]]
+id = "main"
+battery_ids = ["bat1"]
+motor_ids   = ["motor1","motor2","motor3","motor4"]
+servo_ids   = []
+avionics_load_w = 0.0
+\end{lstlisting}
+
+\paragraph{Parameter mapping.}
+For each battery entry:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{id}: symbolic identifier used when wiring buses (\code{battery\_ids}) and logging.
+  \item \code{model}: \code{"thevenin"} (default) uses \cref{sec:battery-model}; \code{"ideal"} uses a fixed \code{voltage_v} with SOC integration.
+  \item \code{capacity\_ah}: pack capacity \(Q_{pack}\) used in SOC integration.
+  \item \code{soc0}: initial SOC \(s(0)\) (fraction remaining).
+  \item \code{ocv\_soc}, \code{ocv\_v}: piecewise-linear OCV table \(OCV(s)\).
+  \item \code{r0}, \code{r1}, \code{c1}, \code{v1\_0}: Thevenin parameters in \cref{sec:battery-model}; \code{r0} is used as a constant \(R_0\) when no surface is provided.
+  \item \code{min\_voltage\_v}: clamp floor \(V_{\min}\) used by the bus solver when \(V_0 \ge V_{\min}\); if \(V_0 < V_{\min}\), the solver returns \(V_0\) rather than forcing a higher voltage.
+  \item \code{low\_thr}, \code{crit\_thr}, \code{emerg\_thr}: SOC thresholds used only for the warning/telemetry state (\cref{sec:battery-model}).
+\end{itemize}
+
+For each bus entry:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{id}: bus name (logged and used for sanity checks).
+  \item \code{battery\_ids}, \code{motor\_ids}, \code{servo\_ids}: wiring lists. Each motor/battery must belong to exactly one bus.
+  \item \code{avionics\_load\_w}: constant power draw \(\bar{P}_k\) used in the bus load model (\cref{sec:bus-solve}).
+\end{itemize}
+Finally, \code{share\_mode} selects the current-sharing rule among parallel batteries on a bus (\cref{sec:current-share}).
+
+\paragraph{Example 2: cell asset + SOC/temperature R0(s,T) surface + thermal state.}
+The following corresponds to \code{examples/specs/iris\_example\_3s2p\_10ah\_surface\_rc\_thermal\_lockstep.toml} and demonstrates asset-backed configuration:
+
+\begin{lstlisting}[language=toml]
+[[power.batteries]]
+id = "bat1"
+model = "thevenin"
+
+# Reference a cell meta.toml; build a 3S2P pack (~12V, ~10Ah).
+cell_asset = "../../src/Workflows/assets/battery/cells/example_3290mah_hv/meta.toml"
+series = 3
+parallel = 2
+cell_capacity_ah = 5.0   # used to derive capacity_ah = parallel * cell_capacity_ah
+soc0 = 1.0
+
+# Use asset-provided resistance surface; pick which column becomes R0.
+r0_surface_r0_col = "rdc_ohm"
+
+# Optional transient RC branch (constant parameters).
+r1 = 0.015
+c1 = 120.0
+v1_0 = 0.0
+thevenin_is_cell = true
+
+# Per-cell cutoff voltage, scaled by series.
+min_voltage_v = 3.0
+min_voltage_is_cell = true
+
+[power.batteries.thermal]
+enabled = true
+ambient_temp_c = 25.0
+initial_temp_c = 25.0
+c_th_j_per_k = 600.0
+k_to_ambient_w_per_k = 1.0
+\end{lstlisting}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/battery_runtime_trace.png}
+  \caption{Battery runtime trace for the asset-backed example with thermal enabled (voltage, current, SOC, and temperature).}
+  \label{fig:battery-runtime-trace}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/battery_transient_30s.png}
+  \caption{Battery voltage/current transient during the first 30\,s of a lockstep mission run.}
+  \label{fig:battery-transient-30s}
+\end{figure}
+
+\paragraph{Additional parameter semantics.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{cell\_asset} / \code{pack\_asset}: path to a \code{meta.toml} describing an asset; paths are resolved relative to the spec file (\code{_resolve\_path} in \code{src/sim/Aircraft/TOMLIO.jl}).
+  \item \code{series}, \code{parallel}: \(N_s,N_p\) used for the scaling rules in \cref{sec:battery-assets}.
+  \item \code{cell\_capacity\_ah}: per-cell capacity; when \code{capacity\_ah} is not explicitly set, the builder sets \(\texttt{capacity\_ah}=N_p\,\texttt{cell\_capacity\_ah}\).
+  \item \code{r0\_surface\_r0\_col}: selects which CSV column becomes \(R_0\) in the surface model (e.g., DCIR vs. ohmic). All other surface metadata (CSV path, SOC units/convention, temp/SOC column names) can be inherited from the asset or overridden explicitly via \code{r0\_surface\_csv\_path}, \code{r0\_surface\_temp\_col}, \code{r0\_surface\_soc\_col}, \code{r0\_surface\_soc\_units}, \code{r0\_surface\_soc\_convention}.
+  \item \code{thevenin\_is\_cell}: applies the RC scaling rules \((R_1,C_1,v_1(0))\) and, when using scalar \code{r0}, also scales \(R_0\) by \(N_s/N_p\). For a surface \(R_0(s,T)\), use \code{r0\_surface\_is\_cell} to control surface scaling.
+  \item \code{thermal.*}: enables the optional temperature state integrated by the plant (see \cref{sec:battery-thermal}). When enabled, the battery temperature drives \(R_0(s,T)\) evaluation.
+\end{itemize}
+
+\subsection{Battery asset schema and surface ingestion workflow}
+\label{sec:battery-workflow}
+
+Battery assets live under \code{src/Workflows/assets/battery/} and are designed to be self-contained and version-controlled. At runtime, only the fields actually consumed by the loaders matter; additional metadata is permitted but ignored.
+
+\paragraph{Cell asset (\code{cells/*/meta.toml}).}
+A cell asset provides an OCV curve and (optionally) a resistance surface:
+\begin{lstlisting}[language=toml]
+id = "example_3290mah_hv"
+nominal_capacity_ah   = 3.29
+qualified_capacity_ah = 3.00
+
+[ocv_curve]
+csv = "ocv_soc.csv"
+soc_col = "soc"
+v_col   = "ocv_v"
+soc_units      = "fraction"   # or "percent"
+soc_convention = "remaining"  # or "used"
+
+[resistance_surface_cell]
+csv = "resistance_surface_cell.csv"
+temp_col = "temp_c"
+soc_col  = "soc"
+r0_col   = "rdc_ohm"          # column name selected by r0_surface_r0_col
+soc_units      = "fraction"
+soc_convention = "remaining"
+\end{lstlisting}
+The builder loads these CSVs, normalizes SOC to ``fraction remaining'' in \([0,1]\), and uses piecewise-linear (OCV) and bilinear (surface) interpolation with clamping to table bounds (\code{src/sim/Powertrain.jl}).
+
+\paragraph{Pack asset (\code{packs/*/meta.toml}).}
+A pack asset additionally specifies \(N_s,N_p\) and can provide a pack-level resistance surface and thermal defaults:
+\begin{lstlisting}[language=toml]
+id = "example_8s1p_3290mah"
+series   = 8
+parallel = 1
+
+[cell]
+ref = "../cells/example_3290mah_hv/meta.toml"
+
+[resistance_surface_pack]
+csv = "resistance_surface_pack.csv"
+temp_col = "temp_c"
+soc_col  = "soc"
+r0_col   = "rdc_ohm"
+
+[thermal]
+c_th_j_per_k = 600.0
+k_to_ambient_w_per_k = 1.0
+\end{lstlisting}
+
+\paragraph{Offline ingestion (how surfaces are generated).}
+The repository includes an example ingestion script (\code{scripts/battery\_assets/ingest\_example\_3290mah\_8s1p.py}) that demonstrates one \emph{heuristic} way to derive resistance surfaces from pulse traces. In that workflow, a DCIR-style pulse at current \(I\) yields (pack-level) estimates
+\begin{align}
+  R_0^{(50\text{ms},100\text{ms})} &\approx \frac{1}{2}\left(\frac{V_{pre}-V_{50\text{ms}}}{I}+\frac{V_{pre}-V_{100\text{ms}}}{I}\right),\\
+  R_{dc}^{(\text{end})} &\approx \frac{V_{pre}-V_{min}}{I},\\
+  R_1 &\approx \max(R_{dc}-R_0, 0).
+\end{align}
+where \(V_{pre}\) is the pre-pulse voltage, \(V_{0.05}\) and \(V_{0.10}\) are the pulse voltages at 50\,ms and 100\,ms, and \(V_{min}\) is the minimum voltage during the pulse. These timing choices are \emph{not canonical}; they are an example data-reduction choice to build an \(R_0(s,T)\) surface for this simulator. If you have a different DCIR definition (e.g.\ HPPC windows), adjust the ingestion accordingly. The script then bins samples onto a \((T,\text{SOC})\) grid and writes \code{resistance\_surface\_*.csv}. This is an \emph{offline} data-processing step; the simulator runtime only consumes the resulting CSV tables.

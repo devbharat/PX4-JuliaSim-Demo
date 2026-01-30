@@ -1,0 +1,181 @@
+\section{Default Iris spec (TOML assets)}
+\label{app:iris}
+
+The repository ships a TOML-first default Iris configuration:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{src/Workflows/assets/aircraft/iris\_default.toml}: mission timing, plant/environment, airframe, actuation, and power.
+  \item \code{src/Workflows/assets/aircraft/iris\_uorb.toml}: the uORB interface contract (topics to publish/subscribe).
+\end{itemize}
+The default spec uses \code{extends=["iris\_uorb.toml"]}; the loader deep-merges these files (\cref{sec:configuration}).
+
+This appendix summarizes the key resolved parameters of the default Iris spec.
+
+\subsection{Home origin and PX4 configuration}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    \code{home.lat\_deg} & 47.397742 \\
+    \code{home.lon\_deg} & 8.545594 \\
+    \code{home.alt\_msl\_m} & \SI{488.0}{m} \\
+    \midrule
+    \code{px4.mission\_path} & \code{../missions/simple\_mission.waypoints}\\(relative to \code{iris\_default.toml}) \\
+    \code{px4.edge\_trigger} & \code{false} \\
+    \code{px4.derive\_ca\_params} & \code{true} \\
+    \code{px4.libpath} & \emph{unset in the shipped asset (required for live/record)} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Home origin and PX4 configuration defaults. Relative paths resolve against the spec file directory.}
+\end{table}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{PX4 lockstep field} & \textbf{Value} \\
+    \midrule
+    \code{dataman\_use\_ram} & 1 \\
+    \code{enable\_commander} & 0 \\
+    \code{commander\_rate\_hz} & 100 \\
+    \code{navigator\_rate\_hz} & 20 \\
+    \code{mc\_pos\_control\_rate\_hz} & 100 \\
+    \code{mc\_att\_control\_rate\_hz} & 250 \\
+    \code{mc\_rate\_control\_rate\_hz} & 250 \\
+    \code{enable\_control\_allocator} & 1 \\
+    \code{control\_allocator\_rate\_hz} & 250 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Lockstep module rates from \code{[px4.lockstep]}.}
+\end{table}
+
+\subsection{Timeline, plant, and environment}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    \code{timeline.t\_end\_s} & \SI{20.0}{s} \\
+    \code{timeline.dt\_autopilot\_s} & \SI{0.004}{s} \\
+    \code{timeline.dt\_wind\_s} & \SI{0.001}{s} \\
+    \code{timeline.dt\_log\_s} & \SI{0.01}{s} \\
+    \midrule
+    \code{plant.integrator} & \code{RK45} \\
+    \code{plant.contact} & \code{flat\_ground\_constraint} \\
+    \midrule
+    \code{environment.atmosphere} & \code{isa1976} \\
+    \code{environment.gravity} & \code{uniform}, $g=\SI{9.80665}{m/s^2}$ \\
+    \code{environment.wind} & \code{ou} \\
+    \code{environment.wind\_mean\_ned} & $(0,0,0)$\,m/s \\
+    \code{environment.wind\_sigma\_ned} & $(1.5,1.5,0.5)$\,m/s \\
+    \code{environment.wind\_tau\_s} & \SI{3.0}{s} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Default timeline, plant selection, and environment parameters.}
+\end{table}
+
+\subsection{Scenario and estimator}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    \code{scenario.arm\_time\_s} & \SI{1.0}{s} \\
+    \code{scenario.mission\_time\_s} & \SI{2.0}{s} \\
+    \midrule
+    \code{estimator.kind} & \code{noisy\_delayed} \\
+    \code{estimator.pos\_sigma\_m} & $(0.02,0.02,0.02)$\,m \\
+    \code{estimator.vel\_sigma\_mps} & $(0.05,0.05,0.05)$\,m/s \\
+    \code{estimator.yaw\_sigma\_rad} & 0.01 \\
+    \code{estimator.rate\_sigma\_rad\_s} & $(0.005,0.005,0.005)$\,rad/s \\
+    \code{estimator.bias\_tau\_s} & \SI{50.0}{s} \\
+    \code{estimator.rate\_bias\_sigma\_rad\_s} & $(0.001,0.001,0.001)$\,rad/s \\
+    \code{estimator.delay\_s} & \SI{0.008}{s} \\
+    \code{estimator.dt\_est\_s} & \SI{0.004}{s} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Default scenario and estimator parameters.}
+\end{table}
+
+\subsection{Rigid body, geometry, and propulsion}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    \code{airframe.mass\_kg} & \SI{1.5}{kg} \\
+    \code{airframe.inertia\_diag\_kgm2} & $(0.029125,0.029125,0.055225)$\,kg\,m$^2$ \\
+    \code{airframe.linear\_drag} & \SI{0.05}{N/(m/s)} \\
+    \code{airframe.angular\_damping} & $(0.02,0.02,0.01)$ \\
+    \midrule
+    Rotor positions $\vect{r}_{b,i}$ (m) &
+      $\{(0.1515,0.2450,0),\;(-0.1515,-0.1875,0),\newline
+      (0.1515,-0.2450,0),\;(-0.1515,0.1875,0)\}$ \\
+    Rotor axes $\vect{a}_{b,i}$ & $(0,0,1)$ for all four \\
+    \midrule
+    \code{propulsion.km\_m} & 0.05 \\
+    \code{propulsion.V\_nom} & \SI{12.0}{V} \\
+    \code{propulsion.rho\_nom} & \SI{1.225}{kg/m^3} \\
+    \code{propulsion.rotor\_radius\_m} & \SI{0.127}{m} \\
+    \code{propulsion.inflow\_kT}, \code{inflow\_kQ} & 8.0, 8.0 \\
+    \code{propulsion.thrust\_calibration\_mult} & 2.0 \\
+    \code{propulsion.rotor\_dir} & $(+1,+1,-1,-1)$ \\
+    \midrule
+    \code{esc.eta} & 0.98 \\
+    \code{esc.deadzone} & 0.02 \\
+    \midrule
+    \code{motor.kv_rpm_per_volt} & 920 \\
+    \code{motor.r_ohm} & \SI{0.25}{\ohm} \\
+    \code{motor.j_kgm2} & $1.2\times 10^{-5}$\,kg\,m$^2$ \\
+    \code{motor.i0_a} & \SI{0.6}{A} \\
+    \code{motor.viscous_friction_nm_per_rad_s} & $2.0\times 10^{-6}$ \\
+    \code{motor.max_current_a} & \SI{60}{A} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Default rigid-body, geometry, and propulsion parameters.}
+\end{table}
+
+\subsection{Actuation mapping and power network}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.44\textwidth}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    Motor channel map & $\{\texttt{motor1}\mapsto 1,\;\texttt{motor2}\mapsto 2,\;\texttt{motor3}\mapsto 3,\;\texttt{motor4}\mapsto 4\}$ \\
+    \code{motor\_actuators.kind} & \code{direct} \\
+    \code{servo\_actuators.kind} & \code{direct} \\
+    \midrule
+    \code{power.share\_mode} & \code{inv\_r0} \\
+    \code{battery.model} & \code{thevenin} \\
+    \code{battery.capacity\_ah} & \SI{5.0}{Ah} \\
+    \code{battery.soc0} & 1.0 \\
+    \code{battery.ocv} & linear: $10.8\to 12.6$\,V over SOC $0\to 1$ \\
+    \code{battery.r0} & \SI{0.020}{\ohm} \\
+    \code{battery.r1},\code{battery.c1} & $\SI{0.010}{\ohm}$, \SI{2000}{F} \\
+    \code{battery.min\_voltage\_v} & \SI{9.9}{V} \\
+    \code{battery.low/crit/emerg} & 0.15 / 0.10 / 0.05 \\
+    \midrule
+    Bus wiring & $\{\texttt{main}:\;\texttt{bat1}\to\texttt{motor1..4}\}$, avionics load $0$\,W \\
+    \bottomrule
+  \end{tabular}
+  \caption{Default actuation mapping and power-network parameters (single bus, single battery).}
+\end{table}
+
+\paragraph{uORB contract.}
+The default Iris uORB publish/subscribe set is defined in \code{iris\_uorb.toml}. The resulting state-injection topics and their units/frames are summarized in \cref{app:uorb-injection}.

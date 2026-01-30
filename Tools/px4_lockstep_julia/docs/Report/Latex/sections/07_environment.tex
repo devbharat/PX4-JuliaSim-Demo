@@ -1,0 +1,343 @@
+\section{Environment and contacts}
+\label{sec:environment}
+
+The environment is a composable container \code{Environment.EnvironmentModel} holding an atmosphere model, a wind model, a gravity model, and a world origin (\code{Types.WorldOrigin}). The runtime treats wind as a first-class sampled input on the bus to make record/replay exact.
+
+\subsection{Atmosphere: ISA 1976 (simplified)}
+
+The default atmosphere is \code{ISA1976} (\code{src/sim/Environment.jl}), providing temperature, pressure, and density as functions of MSL altitude. Altitude is computed from the NED position and the configured origin:
+\begin{equation}
+  h_{msl} = h_{origin} - p_{ned,z}.
+\end{equation}
+The ISA implementation clamps $h_{msl}\ge 0$ (no ``below sea level'' extrapolation).
+
+\subsection{Gravity}
+
+Gravity is supplied as an acceleration vector in NED (positive down). Two models are implemented (\code{src/sim/Environment.jl}):
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{UniformGravity}: constant \(\vect{g}_{ned}=(0,0,g)\).
+  \item \textbf{SphericalGravity}: \(g = \mu/r^2\) with \(r\approx r_0 - p_{ned,z}\) (local-down approximation).
+\end{itemize}
+
+\subsection{Wind}
+\label{sec:wind}
+
+Wind is treated as a sampled input \(\vect{w}_{ned}(t_k)\) published into the runtime bus at wind ticks (\code{src/sim/Sources/Wind.jl}). Between wind ticks the wind is held constant (sample-and-hold) and is consumed by both rigid-body drag and propulsion inflow calculations.
+
+\paragraph{Ornstein--Uhlenbeck turbulence.}
+The default wind model kind is \code{OUWind}, a 3-axis AR(1) gust process with a configurable correlation time \(\tau\) and stationary standard deviation \(\sigma\) (\code{src/sim/Environment.jl}). This is a deliberate regression-friendly choice rather than a canonical Dryden/Von K\'arm\'an spectrum; see \cref{sec:design-choices}. The implementation uses the exact discrete-time update
+\begin{equation}
+  \vect{v}_{gust}[k{+}1] = \phi\,\vect{v}_{gust}[k] + \bigl(\sigma\,\sqrt{1-\phi^2}\bigr)\odot \vect{\xi}[k],\qquad \phi = e^{-\Delta t/\tau},\quad \xi\sim\mathcal{N}(0, I).
+\end{equation}
+The mean wind is then \(\vect{w}_{ned} = \vect{w}_{mean} + \vect{v}_{gust}\), with optional additive step gusts supported for event injection.
+
+\paragraph{Determinism.}
+The wind source owns a dedicated RNG; all RNG usage occurs only inside its \code{update!} boundary method.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/wind_ou_trace.png}
+  \caption{Example OU wind trace (first 120 s) from a lockstep run.}
+  \label{fig:wind-ou-trace}
+\end{figure}
+
+\subsection{Contact model}
+\label{sec:contacts}
+
+Contact/terrain interaction is factored as an optional contact model (\code{src/sim/Contacts.jl}). The world frame is NED (down-positive) and the current terrain primitive is a flat ground plane at \(z_{ned}=0\). All current contact forces and impulses are applied at the vehicle center of mass (COM): contact produces translational forces/impulses but no moments (no landing-gear geometry, no multiple contact points, no terrain heightfields).
+
+\paragraph{Ground primitive, gap function, and observables.}
+For a rigid-body state \((\vect{p}_{ned}, \vect{v}_{ned})\) the implementation defines:
+\begin{align}
+  \phi(\vect{p}) &\coloneqq -p_{ned,z}\qquad &&\text{(gap; \(\phi>0\) above the plane)},\\
+  \delta(\vect{p}) &\coloneqq \max(0,\,-\phi)=\max(0,\,p_{ned,z})\qquad &&\text{(penetration)},\\
+  \vect{n}_{ned} &\coloneqq (0,0,-1)\qquad &&\text{(unit normal; upward in NED)}.
+\end{align}
+These correspond directly to \code{ground\_gap\_m} and \code{ground\_normal\_ned} (\code{src/sim/Contacts.jl}). Tangential quantities are taken in the ground plane: \(\vect{v}_{xy}=(v_x,v_y)\), \(v_{xy}=\|\vect{v}_{xy}\|\).
+
+The contact layer exposes a lightweight \code{ContactInfo} snapshot (gap, penetration, mode, and instantaneous force estimates) through \code{PlantOutputs} for logging and for derived diagnostics (e.g.\ the physics-derived landed flag in \code{Runtime.Engine}). Modes are encoded as \code{CONTACT\_AIRBORNE}, \code{CONTACT\_IMPACTING}, and \code{CONTACT\_GROUNDED}.
+
+\paragraph{Two contact styles.}
+Two contact styles are implemented and selectable via \code{PlantSpec.contact}:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Penalty-force model: \code{FlatGroundContact}.} A compliant spring--damper normal force with smooth Coulomb friction. This is evaluated directly in the plant RHS as an external force \(\vect{F}_{contact,ned}\).
+  \item \textbf{Constraint + hybrid model: \code{FlatGroundConstraintContact}.} Parameters for a unilateral (non-stiff) normal reaction for resting contact, plus deterministic hybrid handling in the coupled multirotor interval integrator: time-of-impact (TOI) localization + an impact map, and a fixed-step grounded time-stepping loop with an impulse-based contact solve.
+\end{itemize}
+
+\subsubsection{Penalty-force model (FlatGroundContact)}
+\label{sec:contacts-penalty}
+
+The penalty model is active only when penetrating the plane (\(\delta>0\)). The implemented normal force is
+\begin{equation}
+  N = \max\!\bigl(0,\; k\,\delta + c\,\max(v_z,0)\bigr),
+\end{equation}
+where \(v_z\) is the NED vertical velocity (down-positive). The damping term resists compression only (\(v_z>0\)). A smooth Coulomb friction approximation is applied in the tangential plane:
+\begin{equation}
+  \vect{F}_t = -\mu N\,\frac{\vect{v}_{xy}}{\|\vect{v}_{xy}\| + v_{\epsilon}}.
+\end{equation}
+The resulting NED contact force applied at the COM is
+\begin{equation}
+  \vect{F}_{contact,ned} = (F_x, F_y, -N).
+\end{equation}
+Friction can be disabled. Because the friction law is smooth, it does not model true stiction: as \(\|\vect{v}_{xy}\|\to 0\), \(\vect{F}_t \to \vect{0}\).
+
+\subsubsection{Constraint + hybrid contact (FlatGroundConstraintContact)}
+\label{sec:contacts-hybrid}
+
+The constraint contact path is implemented as a \emph{hybrid} model: continuous-time forcing is used only for observables and for simple ``force-only'' integrations, while touchdown/bounce and resting contact are handled robustly via event localization and impulses inside \code{plant\_integrate\_interval} (\code{src/sim/PlantModels/CoupledMultirotor.jl}).
+
+\paragraph{Grounding guard and slop band.}
+A state is treated as a \emph{ground candidate} when it lies on (or very near) the plane and is not moving upward beyond a small velocity tolerance:
+\begin{equation}
+  \texttt{ground\_candidate}(x)\;:\;\; p_{ned,z} \ge -z_{\mathrm{slop}}\ \ \wedge\ \ v_z \ge -v_{\mathrm{slop}}.
+\end{equation}
+The \code{z\_slop\_m} band is a numerical tolerance for treating small negative heights (slightly above the plane due to integration drift) as ``on ground''.
+The \code{vz\_slop\_mps} band treats tiny upward velocities as numerical noise; it reduces mode chattering when \(v_z\approx 0\).
+
+\paragraph{Continuous normal-reaction estimate (Phase 2 behavior).}
+When \code{FlatGround\allowbreak ConstraintContact} is evaluated as a continuous force (e.g.\ in unit-test harnesses, or when computing \code{ContactInfo} from \code{plant\_outputs}), it uses the \emph{unconstrained} translational acceleration \( \vect{a}^{free}_{ned}\) (gravity, thrust, drag, \emph{no} contact) to compute a unilateral normal reaction:
+\begin{equation}
+  N = 
+  \begin{cases}
+    m\,a^{free}_{z}, & \text{if } \texttt{ground\_candidate}(x)\ \wedge\ a^{free}_{z}>0,\\
+    0, & \text{otherwise}.
+  \end{cases}
+\end{equation}
+This cancels downward acceleration during resting contact (yielding \(\ddot{z}\approx 0\)) without introducing a stiff penalty spring. Continuous friction (when enabled) uses the same smoothed Coulomb form as \cref{sec:contacts-penalty}, but with this \(N\).
+
+\paragraph{Hybrid interval integration in the coupled multirotor plant (Phase 3--5).}
+In the canonical runtime, the coupled multirotor plant overrides interval integration via the protocol hook \code{plant\_integrate\_interval} (\cref{sec:runtime-hybrid-integrators}). The key design rule is: \emph{integrate the smooth dynamics with \code{NoContact()} and apply contact impulses/maps separately}. In code, the interval integrator constructs
+\begin{equation}
+  f_{\mathrm{free}} \;\coloneqq\; \texttt{CoupledMultirotorModel}(\ldots,\ \texttt{NoContact()},\ \ldots)
+\end{equation}
+and uses \(f_{\mathrm{free}}\) for lookahead, TOI localization, airborne stepping, and grounded substeps.
+
+The interval advance is a small deterministic state machine:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item If \texttt{ground\_candidate} is true, advance with a grounded time-stepping substep of length \(\Delta t = \min(\texttt{remaining},\texttt{h\_contact\_us})\).
+  \item Otherwise, advance an airborne chunk using the configured integrator on \(f_{\mathrm{free}}\), but (when descending toward the ground) limit the chunk length to \(O(\text{time-to-impact})\) so a crossing can be bracketed robustly.
+  \item If the airborne chunk brackets a descending crossing (\(z_0<0\) and \(z_1\ge 0\)), localize the TOI to integer microseconds by bisection and apply an impact map at that internal time.
+\end{enumerate}
+The implementation caps the number of impacts handled inside a single outer interval at \code{MAX\_IMPACTS\_PER\_INTERVAL=4} to avoid pathological ``bounce storms''.
+
+\subparagraph{Airborne guard step limiting (anti-tunneling guardrail).}
+When above ground (\(z<0\)) and closing (\(v_z>0\)), the integrator estimates a time-to-impact
+\begin{equation}
+  t_{\mathrm{est}} = \frac{-z}{\max(v_z, v_{\epsilon})},
+\end{equation}
+with \(v_{\epsilon}=\SI{1e-3}{m/s}\) and a safety factor \(\gamma=1.2\), and caps the next airborne integration chunk to
+\begin{equation}
+  \Delta t_{\max} = \gamma\,t_{\mathrm{est}}.
+\end{equation}
+This does \emph{not} guarantee a crossing is detected for highly non-monotone trajectories, but it greatly reduces deep tunneling when descending rapidly under coarse outer steps. (If no crossing is bracketed, no TOI localization is attempted.)
+
+\subparagraph{Deterministic TOI localization.}
+If a lookahead step under \(f_{\mathrm{free}}\) brackets a descending crossing, the code performs bisection on an integer microsecond interval \([0, \Delta t_{us}]\). Using a ``probe'' integrator reset to a clean state for each mid-point, it finds the smallest integer \(\tau_{us}\) such that
+\begin{equation}
+  z(t_0 + \tau_{us}) \ge 0,
+\end{equation}
+terminating when the bracket width is \(\le \SI{1}{\micro\second}\). The plant is then advanced to \(t_0+\tau\) under \(f_{\mathrm{free}}\) to obtain the pre-impact state \(x^{-}\).
+
+\subparagraph{Impact map (normal restitution + optional tangential friction).}
+At the localized TOI, the rigid-body position is projected onto the plane (\(p^{+}_{z}=0\)). If the pre-impact normal velocity is closing (\(v^{-}_{z}>0\)), the post-impact normal velocity is
+\begin{equation}
+  v^{+}_{z} = -e\,v^{-}_{z},
+\end{equation}
+where \(e\) is the configured restitution, with an inelastic ``capture'' rule:
+\begin{equation}
+  e = 0 \quad\text{if}\quad |v^{-}_{z}| < v_{\mathrm{rest}}.
+\end{equation}
+This prevents micro-bounce/Zeno behavior when settling.
+
+If \code{enable\_impact\_friction} is enabled, the impact map also applies a tangential impulse limited by a Coulomb bound. Let the tangential (XY) velocity vector be \(\vect{v}^{-}_{t}=(v^{-}_{x},v^{-}_{y})\) with magnitude \(v^{-}_{t}=\|\vect{v}^{-}_{t}\|\), and define the maximum tangential speed reduction
+\begin{equation}
+  \Delta v_{t,\max} = \mu(1+e)\,v^{-}_{z}.
+\end{equation}
+The implemented update is
+\begin{equation}
+  \vect{v}^{+}_{t} =
+  \begin{cases}
+    \vect{0}, & v^{-}_{xy} \le \Delta v_{t,\max} \quad (\text{sticking impact}),\\[4pt]
+    \left(1-\dfrac{\Delta v_{t,\max}}{v^{-}_{t}}\right)\vect{v}^{-}_{t}, & \text{otherwise}.
+  \end{cases}
+\end{equation}
+Attitude and body rates are unchanged by the current impact map (COM impulse only).
+
+\subparagraph{Grounded time-stepping loop (Phase 4).}
+While \texttt{ground\_candidate} remains true, the plant advances in fixed substeps of size \code{h\_contact\_us} (default \SI{1000}{\micro\second}). Each grounded substep uses a single evaluation of the \emph{smooth} derivative \(d = f_{\mathrm{free}}(t,x,u)\) and then applies a closed-form, single-contact impulse solve.
+
+\paragraph{Relation to contact time-stepping literature.}
+This hybrid approach (TOI localization + impact map + fixed-step impulse updates) is in the family of impulse-based time-stepping and complementarity-inspired contact methods. It prioritizes determinism and stability over strict conservation; see the design rationale in \cref{sec:design-choices} and the limitations in \cref{sec:limitations}.
+
+\emph{1) Smooth Euler update for non-contact states.}
+For all non-rigid-body states (actuators, rotors, battery), the grounded substep uses explicit Euler:
+\begin{equation}
+  y_{k+1} = y_k + \dot{y}_k\,\Delta t.
+\end{equation}
+Angular rates are also advanced by Euler, and quaternions are renormalized after the Euler update.
+
+\emph{2) Symplectic translation update with contact impulses.}
+Let \(m\) be the vehicle mass and \(\vect{a}^{free}_{ned}\) the unconstrained translational acceleration from \(d\). The substep first predicts a free-flight velocity
+\begin{equation}
+  \vect{v}^{pred} = \vect{v}_k + \vect{a}^{free}_{ned}\,\Delta t.
+\end{equation}
+It then applies a velocity-level unilateral normal impulse:
+\begin{equation}
+  \lambda_n =
+  \begin{cases}
+    m\,v^{pred}_{z}, & v^{pred}_{z} > 0,\\
+    0, & v^{pred}_{z} \le 0,
+  \end{cases}
+  \qquad
+  v^{post}_{z} =
+  \begin{cases}
+    0, & v^{pred}_{z} > 0,\\
+    v^{pred}_{z}, & v^{pred}_{z} \le 0,
+  \end{cases}
+\end{equation}
+so downward (penetrating) velocity is cancelled, while upward velocity is left untouched (allowing liftoff).
+
+If friction is enabled and \(\lambda_n>0\), a tangential Coulomb impulse with stiction is applied. With tangential velocity \(\vect{v}^{pred}_{t}=(v^{pred}_{x},v^{pred}_{y})\) and magnitude \(v^{pred}_{t}=\|\vect{v}^{pred}_{t}\|\),
+\begin{equation}
+  J_{t,\mathrm{req}} = m\,v^{pred}_{t},\qquad J_{t,\max} = \mu\,\lambda_n.
+\end{equation}
+The post-impulse tangential velocity is
+\begin{equation}
+  \vect{v}^{post}_{t} =
+  \begin{cases}
+    \vect{0}, & J_{t,\mathrm{req}} \le J_{t,\max}\quad(\text{stiction}),\\[4pt]
+    \left(1-\dfrac{J_{t,\max}}{m\,v^{pred}_{t}}\right)\vect{v}^{pred}_{t}, & \text{otherwise}.
+  \end{cases}
+\end{equation}
+Finally, the position update uses the post-impulse velocity (symplectic Euler for translation):
+\begin{equation}
+  \vect{p}_{k+1} = \vect{p}_k + \vect{v}^{post}\,\Delta t.
+\end{equation}
+
+\emph{3) Position-only post-stabilization (Phase 5).}
+To remove numerical drift without injecting momentum, the grounded loop snaps small height errors to the plane by clamping the next position:
+\begin{equation}
+  p_{z,k+1} \leftarrow
+  \begin{cases}
+    0, & p_{z,k+1}>0,\\
+    0, & |p_{z,k+1}| \le z_{\mathrm{slop}}\ \wedge\ v^{post}_{z}\ge 0,\\
+    p_{z,k+1}, & \text{otherwise}.
+  \end{cases}
+\end{equation}
+Velocities are intentionally \emph{not} clamped in this post-stabilization.
+
+\emph{4) Deterministic per-substep projection.}
+At the end of each grounded substep the plant applies \code{plant\_project} to enforce hard bounds (e.g.\ \(\omega\ge 0\), SOC \(\in[0,1]\)) during contact stepping as well as during free flight.
+
+\paragraph{Impact telemetry.}
+Hybrid impacts occur at an internal time \(\tau\) inside a union-axis interval, so they do not align with log ticks. To preserve observability at low log rates, the interval integrator can return metadata:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{impact\_count}: number of impacts in the interval,
+  \item \code{impact\_dv\_ned}: the maximum \(\Delta\vect{v}\) (NED, m/s) among those impacts,
+  \item \code{impact\_time\_us}: the microsecond timestamp of that max-\(\Delta v\) impact.
+\end{itemize}
+The runtime accumulates these into bus-level latched signals and additionally exposes a ``1-tick equivalent'' acceleration estimate
+\begin{equation}
+  \vect{a}_{\mathrm{impact\_est}} \approx \frac{\Delta\vect{v}}{\Delta t_{ap}},
+\end{equation}
+where \(\Delta t_{ap}\) is the nominal autopilot tick period (\code{timeline.dt\_autopilot\_s}).
+
+\paragraph{Caveats (explicit in the current code).}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{COM contact only:} no moments, no attitude impulses, no rolling/tilting gear contact.
+  \item \textbf{Single plane primitive:} no terrain slope, heightfield, or obstacle geometry.
+  \item \textbf{Impulse/contact simplifications:} the grounded solver is a one-contact impulse update (a special-case closed-form of a frictional complementarity solve) and does not model compliance. Restitution is applied only in the discrete impact map; grounded stepping is effectively inelastic in the normal direction.
+  \item \textbf{Quantization/guardrails:} TOI is localized to integer microseconds; the maximum number of impacts handled inside one outer interval is capped.
+\end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/contact_touchdown_trace.png}
+  \caption{Contact trace from a long mission run (grounded flag, impact count, and impact acceleration proxy) around touchdown.}
+  \label{fig:contact-touchdown}
+\end{figure}
+
+
+\subsection{TOML configuration: environment and contact}
+\label{sec:environment-toml}
+
+Environmental forcing is configured under \code{[environment]} (\code{EnvironmentSpec} in \code{src/sim/Aircraft/Spec.jl}). Contact/terrain is configured under \code{[plant]} as \code{PlantSpec.contact}.
+
+\paragraph{Environment.}\smallskip
+\begin{lstlisting}[language=toml]
+[environment]
+# Wind model ("none" | "constant" | "ou")
+wind = "ou"
+wind_mean_ned  = [0.0, 0.0, 0.0]   # m/s
+wind_sigma_ned = [1.5, 1.5, 0.5]   # m/s (OU only)
+wind_tau_s     = 3.0              # s   (OU only)
+
+# Atmosphere and gravity
+atmosphere = "isa1976"            # currently only "isa1976"
+gravity = "uniform"               # "uniform" | "spherical"
+gravity_mps2 = 9.80665            # used only when gravity="uniform"
+gravity_mu   = 3.986004418e14     # used only when gravity="spherical"
+gravity_r0_m = 6378137.0          # used only when gravity="spherical"
+\end{lstlisting}
+
+\paragraph{Parameter mapping.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{wind}: selects \code{NoWind}, \code{ConstantWind}, or \code{OUWind} (\cref{sec:wind}).
+  \item \code{wind\_mean\_ned}: mean wind velocity \(\bar{\vect{w}}\) in NED.
+  \item \code{wind\_sigma\_ned} and \code{wind\_tau\_s}: OU parameters \(\sigma\) and \(\tau\). The implementation uses an exact discrete-time update (\code{OUWind.step\_wind!}) rather than Euler--Maruyama.
+  \item \code{atmosphere}: selects the atmosphere model (currently only \code{isa1976}).
+  \item \code{gravity}: selects uniform gravity or an inverse-square \(\mu/r^2\) model (\code{uniform} or \code{spherical}).
+  \item \code{gravity\_mps2}, \code{gravity\_mu}, \code{gravity\_r0\_m}: parameters used by the selected gravity model.
+\end{itemize}
+
+\paragraph{Geodesy vs.\ gravity radii.}
+The NED-to-LLA conversion uses the WGS84 equatorial radius (\code{EARTH\_RADIUS\_M} in \code{Autopilots.jl}); the default spherical gravity model now uses the same value for \code{gravity\_r0\_m}. Both remain independently configurable if a different convention is required.
+
+\paragraph{Contact.}
+The contact model is configured as either a shorthand string or a parameter table:
+\begin{lstlisting}[language=toml]
+[plant]
+# Shorthand strings:
+contact = "flat_ground_constraint"  # default
+# contact = "flat_ground"           # penalty spring-damper
+# contact = "no_contact"            # disable contact entirely
+
+# Table form (FlatGroundConstraintContact)
+contact = { kind="flat_ground_constraint",
+  mu = 0.8,
+  v_eps = 0.05,
+  enable_friction = true,
+
+  # Hybrid impact map (touchdown)
+  restitution = 0.0,          # e (0=inelas., 1=elas.)
+  v_rest_threshold_mps = 0.05,
+  enable_impact_friction = true,
+
+  # Grounded time-stepping loop
+  h_contact_us = 1000,        # us substep while grounded
+  z_slop_m = 1e-6,
+  vz_slop_mps = 1e-3
+}
+\end{lstlisting}
+
+\paragraph{Contact parameter mapping.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Penalty model (\code{FlatGroundContact}).} Keys map to the compliant spring--damper:
+    \begin{itemize}[leftmargin=*,itemsep=1pt]
+      \item \code{k\_n\_per\_m}: normal spring constant \(k\) in \(N = k\,\delta + c\,v_z\).
+      \item \code{c\_n\_per\_mps}: normal damping \(c\) (applied only when compressing, \(v_z>0\)).
+      \item \code{mu} (also accepts unicode $\mu$): friction coefficient \(\mu\) in the smoothed Coulomb model.
+      \item \code{v\_eps}: smoothing velocity \(v_{\epsilon}\).
+      \item \code{enable\_friction}: toggles friction; the normal spring--damper remains active.
+    \end{itemize}
+
+  \item \textbf{Constraint + hybrid model (\code{FlatGroundConstraintContact}).} Keys map to the guard, friction, and hybrid layers:
+    \begin{itemize}[leftmargin=*,itemsep=1pt]
+      \item \emph{Grounding guard / slop band:} \code{z\_slop\_m} (vertical tolerance treated as ``at ground'').
+      \item \emph{Velocity slop:} \code{vz\_slop\_mps} (treats small upward \(v_z\) as numerical noise in the ground candidate predicate).
+      \item \emph{Friction parameters:} \code{mu} (also accepts unicode $\mu$) and \code{enable\_friction} are used both by the (optional) continuous force-level friction estimate and by the Coulomb bounds in the impulse-based impact map / grounded solve. The smoothing velocity \code{v\_eps} affects only the continuous force-level estimate.
+      \item \emph{Hybrid impact map (touchdown/bounce):} \code{restitution} (alias \code{e}), \code{v\_rest\_threshold\_mps}, and \code{enable\_impact\_friction} (toggles only the tangential impulse applied at impact).
+      \item \emph{Grounded time-stepping:} \code{h\_contact\_us} (fixed microsecond substep size while grounded).
+    \end{itemize}
+\end{itemize}

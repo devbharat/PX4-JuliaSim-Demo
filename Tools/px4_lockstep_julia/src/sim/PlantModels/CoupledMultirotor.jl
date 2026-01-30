@@ -537,7 +537,7 @@ end
         B += (-d * Ke * ω[i]) / (η * R)
     end
 
-    # No active load → open-circuit voltage (clamped).
+    # No active load → open-circuit voltage.
     if !any_active
         return V0
     end
@@ -545,7 +545,8 @@ end
     denom = 1.0 + R0 * A
     denom = max(denom, 1e-12)
     V = (V0 - R0 * B) / denom
-    V = clamp(V, V_min, V0)
+    V_lo = min(V_min, V0)
+    V = clamp(V, V_lo, V0)
     isfinite(V) || return nothing
 
     # Validate that every active motor is actually in the linear region at this V.
@@ -577,7 +578,7 @@ end
 
 The solver computes the scalar fixed point implied by the Thevenin+R0 model:
 
-    V = max(V_min, (OCV - V1) - R0 * I_bus(V))
+    V = clamp((OCV - V1) - R0 * I_bus(V), V_lo, V0), where V_lo = min(V_min, V0)
 
 where I_bus(V) is monotone nondecreasing in V for the quasi-static motor current model.
 
@@ -611,7 +612,7 @@ function _solve_bus_voltage(
     if !isfinite(V0)
         error("non-finite open-circuit voltage in bus solve: ocv=$(ocv) v1=$(v1) V0=$(V0)")
     end
-    V0 = max(V_min, V0)
+    V_lo = min(V_min, V0)
 
     # Ideal/no-R0 case.
     if !(isfinite(R0) && R0 > 0.0)
@@ -620,7 +621,7 @@ function _solve_bus_voltage(
 
     # If already clamped, nothing to solve.
     if V0 <= V_min + 1e-12
-        return V_min
+        return V0
     end
 
     # Fast path: if all active motors remain in the unsaturated linear region, V_bus can be
@@ -666,7 +667,7 @@ function _solve_bus_voltage(
         denom = 1.0 + R0 * A
         denom = max(denom, 1e-12)
         V_new = (V0 - R0 * B) / denom
-        V_new = clamp(V_new, V_min, V0)
+        V_new = clamp(V_new, V_lo, V0)
 
         if !isfinite(V_new)
             # Break to the bisection fallback with a valid bracket.
@@ -693,7 +694,7 @@ function _solve_bus_voltage(
         return V
     end
 
-    V_low = V_min
+    V_low = V_lo
     V_high = V0
 
     I_low = _bus_current_total(p, ω, duty, V_low)

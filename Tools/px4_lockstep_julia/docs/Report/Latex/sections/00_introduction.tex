@@ -1,0 +1,110 @@
+\section{Scope, terminology, and design goals}
+\label{sec:intro}
+
+This paper documents \code{PX4Lockstep.jl}, a PX4 lockstep SITL driver and hybrid drone simulator written in Julia. The implementation has two coupled layers:
+\begin{enumerate}[leftmargin=*]
+  \item a thin Julia wrapper around \code{libpx4\_lockstep} that steps PX4 on an injected integer-microsecond clock and publishes/subscribes uORB messages, and
+  \item a deterministic Julia simulation stack that owns the hybrid timeline, plant dynamics, environment, scenarios, and logging.
+\end{enumerate}
+
+\subsection{Conceptual model}
+\label{sec:intro-conceptual}
+
+\Cref{fig:conceptual} shows the conceptual organization. The runtime engine advances an integer-microsecond event axis. At each event boundary it executes discrete-time \emph{sources} (scenario, wind, estimator, PX4 lockstep) to update a held \code{SimBus}. The continuous plant integrates between boundaries under sample-and-hold inputs constructed from the bus. Algebraic \emph{derived outputs} (e.g., battery telemetry) are evaluated at boundaries and published into the bus for PX4 and for logging.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      >=Latex,
+      node distance=7mm and 20mm,
+      box/.style={draw, rounded corners, align=center, minimum width=34mm, minimum height=10mm, inner sep=4pt},
+      bus/.style={draw, thick, rounded corners, fill=gray!10, align=center, minimum width=44mm, minimum height=16mm, inner sep=4pt},
+      arr/.style={-Latex, line width=0.45pt}
+    ]
+    \node[bus] (bus) {\textbf{SimBus}\\(held signals)};
+
+    % Left column: discrete sources (stacked to avoid overlap)
+    \node[box, left=of bus] (scenario) {Scenario\\(faults, mode,\\wind steps)};
+    \node[box, above=of scenario] (est) {Estimator\\(truth $\to \hat{x}$)};
+    \node[box, below=of scenario] (wind) {Wind source\\(sampled)};
+
+    % Top: PX4
+    \node[box, above=of bus] (px4) {PX4 lockstep\\(or replay)};
+
+    % Right column: plant + derived outputs
+    \node[box, right=of bus] (plant) {Continuous plant\\ODE + projection};
+    \node[box, above=of plant] (outputs) {Derived outputs\\(battery, etc.)};
+
+    % Bottom: logging
+    \node[box, below=of bus] (log) {Recorder / logs};
+
+    % Discrete sources into the bus (use distinct anchors so arrows don't merge).
+    \draw[arr] (est.east) -- (bus.north west);
+    \draw[arr] (scenario.east) -- (bus.west);
+    \draw[arr] (wind.east) -- (bus.south west);
+
+    % PX4 reads from the bus and writes commands back.
+    \draw[arr] (bus.north) -- node[midway, right]{\footnotesize est, scenario, telemetry} (px4.south);
+    \draw[arr] (px4.south) -- node[midway, left]{\footnotesize cmd} (bus.north);
+
+    % Plant reads held inputs.
+    \draw[arr] (bus.east) -- node[midway, above]{\footnotesize cmd, wind, faults} (plant.west);
+
+    % Derived outputs published back to the bus (route via the top to avoid overlaps).
+    \draw[arr] (plant.north) -- (outputs.south);
+    \draw[arr] (outputs.west) -| node[pos=0.25, above]{\footnotesize telemetry} (bus.north east);
+
+    % Logging reads both.
+    \draw[arr] (bus.south) -- (log.north);
+    \draw[arr] (plant.south) |- (log.east);
+  \end{tikzpicture}
+  \caption{Conceptual structure. The engine schedules discrete sources on an integer-microsecond event axis and integrates the continuous plant between boundaries under sample-and-hold inputs.}
+  \label{fig:conceptual}
+\end{figure}
+
+\subsection{Terminology and conceptual layering}
+\label{sec:intro-terms}
+
+The codebase is modular, but the paper uses a small number of terms consistently. \Cref{tab:terminology} defines the ones needed to reason about determinism.
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}lX@{}}
+    \toprule
+    Term & Meaning in this paper (as implemented) \\
+    \midrule
+    time axis & A sorted vector of integer microseconds owned by one subsystem (e.g., PX4 tick times, wind tick times). Built by \code{Runtime.Timeline} (\code{src/sim/Runtime/Timeline.jl}). \\
+    event axis & The sorted unique union of all time axes. The engine integrates only on this axis. \\
+    boundary & A specific event time $t_k$ where discrete sources may update the bus and where logging may occur. \\
+    source & A discrete-time component with \code{Runtime.update!(src, bus, plant, t\_us)} (scenario, wind source, estimator, PX4 wrapper, replay samplers). \\
+    bus & A mutable packet \code{Runtime.SimBus} holding piecewise-constant signals (cmd, wind, faults, estimates, telemetry) between boundaries. \\
+    plant & The continuous-time state integrated by the engine: rigid body plus (optionally) actuator, rotor, and power states (\cref{sec:plant-state}). \\
+    derived outputs & Algebraic outputs computed from the current plant state and held inputs at boundaries via \code{plant\_outputs(...)} (e.g. battery telemetry). \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Terminology and conceptual layering used throughout the paper.}
+  \label{tab:terminology}
+\end{table}
+
+\subsection{Design goals and reader takeaways}
+\label{sec:intro-goals}
+
+The primary goal is not maximum physics fidelity; it is \emph{reviewable determinism} for controller-in-the-loop experiments:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Deterministic scheduling:} all boundary times are integer microseconds and the engine advances on an explicit union event axis.
+  \item \textbf{Hybrid semantics:} discrete sources update only at event boundaries; the plant integrates with sample-and-hold inputs between boundaries.
+  \item \textbf{Minimal trust boundary:} PX4 runs as a black box behind the lockstep ABI; all ``truth'' models live in Julia.
+  \item \textbf{Reproducible analysis:} closed-loop runs can be recorded and replayed deterministically to compare plant-side changes.
+\end{itemize}
+
+Even if a reader never opens the repository, the intended takeaways are the four invariants below, which jointly define the execution model:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Integer time contract:} all subsystem cadences and delays are exact multiples of \SI{1}{\micro\second} (otherwise the code errors).
+  \item \textbf{Fixed boundary protocol:} all discrete updates at $t_k$ occur in a single canonical order (\cref{sec:runtime-boundary}), producing one well-defined bus value \code{bus(t\_k)}.
+  \item \textbf{Sample-and-hold integration:} the plant integrates over $[t_k,t_{k+1}]$ using a single held input packet derived from \code{bus(t\_k)}.
+  \item \textbf{Record/replay falsifiability:} boundary-aligned traces are recorded and replayed with exact axis alignment, enabling deterministic open-loop plant comparisons (\cref{sec:record-replay}).
+\end{enumerate}
+
+Whenever a statement below depends on a specific implementation choice, we point to the corresponding Julia entrypoint (module/function) rather than relying on prose in repository documentation. All file paths are written relative to the \code{px4\_lockstep\_julia} repository root.

@@ -1,0 +1,66 @@
+\section{Extension points}
+\label{sec:extension-points}
+
+Although the default Iris workflow is ``batteries + multirotor plant + wind + PX4 lockstep'', the codebase is structured around a small number of explicit interfaces. Extending the simulator is primarily a matter of implementing additional methods for these interfaces rather than modifying the engine.
+
+\subsection{Discrete-time sources}
+
+All discrete-time components that publish into the canonical signal bus (scenario, wind, estimator, autopilot) implement the runtime protocol:
+\begin{quote}\small
+\code{Runtime.update!(src, bus, plant_state, t_us)}
+\end{quote}
+The default fallback is a loud error (\code{Runtime.Engine.jl}) to avoid silent mis-wiring.
+
+Sources that introduce additional event boundaries (typically scenarios) may also extend:
+\begin{quote}\small
+\code{Runtime.event_times_us(src, t0_us, t_end_us)}
+\end{quote}
+These event times are merged into the hybrid timeline by \code{Runtime.build_timeline_for_run}.
+
+\paragraph{Determinism guideline.}
+Sources are the intended home for randomness. They should draw randomness exclusively from explicit RNG state (seeded from \code{AircraftSpec.aircraft.seed}) and should never consult wall-clock time.
+
+\subsection{Plant models and outputs}
+
+A plant model is a callable RHS functor used by the integrator:
+\begin{quote}\small
+\code{dx = model(t::Float64, x::PlantState, u::PlantInput)}
+\end{quote}
+The engine treats the RHS as pure (no side effects) and therefore assumes it is deterministic given \((t,x,u)\).
+
+Plants may optionally implement additional hooks (\code{src/sim/PlantInterface.jl}):
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{plant_outputs(model, t, x, u)}: compute algebraic telemetry (forces, thrust, power, contact info) for logging and bus publication at event boundaries.
+  \item \code{plant_project(model, x)}: enforce invariants after integration (e.g. quaternion renormalization, rotor speed clamping, contact post-stabilization).
+  \item \code{plant_on_autopilot_tick(model, x, cmd)}: boundary-time discontinuities that must occur exactly at autopilot ticks (e.g. snapping \code{DirectActuators} outputs to the newly published command).
+  \item \code{plant_integrate_interval(model, integrator, t0_us, x0, u, dt_us)}: optional hybrid interval stepping that can localize internal events (e.g. contact time-of-impact) and apply an impact map inside the interval.
+\end{itemize}
+
+\subsection{Contact models}
+
+Ground/contact interaction is factored as a contact model (\code{src/sim/Contacts.jl}) attached to \code{PlantSpec.contact}. New models subtype \code{Contacts.AbstractContactModel} and (at minimum) implement a contact-to-world-force mapping at the vehicle COM:
+\begin{quote}\small
+\code{F_contact_ned = Contacts.contact_force_ned(model, rb_state, t)}
+\end{quote}
+where \code{rb_state} is the current rigid-body state (NED position/velocity + attitude + body rates). Models may additionally implement
+\begin{quote}\small
+\code{ci = Contacts.contact_info(model, rb_state, t)}
+\end{quote}
+to expose a \code{ContactInfo} snapshot (gap/penetration, contact mode, normal/friction force estimates) for logging and diagnostics.
+
+For the unilateral constraint model \code{FlatGroundConstraintContact}, the normal reaction depends on the \emph{unconstrained} acceleration; it is therefore evaluated with the overload
+\begin{quote}\small
+\code{F_contact_ned = Contacts.contact_force_ned(model, rb_state, t, mass, a_free_ned)}
+\end{quote}
+used by the plant outputs layer.
+
+Hybrid touchdown/bounce handling is implemented at the plant level via \code{plant_integrate_interval(...)} (e.g. time-of-impact localization + impact map for flat-ground contact). The default Iris spec uses \code{flat_ground_constraint} contact.
+
+\subsection{PX4 uORB injection sources}
+
+
+PX4 lockstep integration is mediated through a uORB injector. See \code{src/sim/Autopilots/UORBInjection.jl}. The injector owns a list of \code{AbstractUORBInjectionSource} objects. Each source can publish at a declared integer-microsecond cadence via:
+\begin{quote}\small
+\code{inject_due!(src, handle, ctx, t0_us)}
+\end{quote}
+A convenience implementation \code{PeriodicUORBInjection} is provided: users supply a topic-specific message builder \code{builder(ctx)} and configure its \code{period_us} and \code{phase_us}. The default Iris workflow uses the built-in state injector \code{build_state_injection_injector}.

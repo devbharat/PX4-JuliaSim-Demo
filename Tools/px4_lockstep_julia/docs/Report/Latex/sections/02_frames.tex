@@ -1,0 +1,80 @@
+\section{Frames and sign conventions}
+\label{sec:frames}
+
+The simulator follows PX4's conventional world frame:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{World/inertial frame}: NED (North--East--Down). Position and velocity are stored as $\vect{p}_{ned}$ and $\vect{v}_{ned}$ in meters and m/s.
+  \item \textbf{Body frame}: FRD (Forward--Right--Down). Angular rate is stored as $\vect{\omega}_{body}=(p,q,r)$ in rad/s.
+\end{itemize}
+
+\subsection{Quaternion convention}
+
+Attitude is stored as a unit quaternion \(\qbn\) representing the rotation \emph{Body $\to$ NED} in $(w,x,y,z)$ order (\code{src/sim/Types.jl}). The corresponding direction cosine matrix is denoted \(\Rbn\) (\code{quat\_to\_dcm}).
+
+The rigid-body kinematic equation implemented in \code{src/sim/RigidBody.jl} is
+\begin{equation}
+  \dot{\qbn} = \tfrac{1}{2}\,\qbn \otimes \begin{bmatrix}0 \\ \vect{\omega}_{body}\end{bmatrix},
+\end{equation}
+where $\otimes$ is the Hamilton product (\code{quat\_mul}). Quaternions are explicitly normalized during state updates to limit numerical drift.
+
+
+\subsection{Home origin and NED-to-LLA injection}
+\label{sec:home-origin}
+
+Several parts of the simulator (atmosphere sampling and PX4 uORB state injection) require converting local NED coordinates into latitude/longitude/altitude (LLA). The implementation uses a \emph{spherical Earth} small-angle approximation with a fixed radius \(R_E=\) \code{EARTH\_RADIUS\_M} \(=6.378137\times 10^6\,\si{m}\) (\code{src/sim/Autopilots.jl}):
+\begin{align}
+  \Delta\varphi &= \frac{p_{ned,x}}{R_E}, &
+  \Delta\lambda &= \frac{p_{ned,y}}{R_E\cos(\mathrm{deg2rad}(\varphi_0))},\\
+  \varphi &= \varphi_0 + \mathrm{rad2deg}(\Delta\varphi), &
+  \lambda &= \lambda_0 + \mathrm{rad2deg}(\Delta\lambda),\\
+  h_{msl} &= h_0 - p_{ned,z},
+\end{align}
+where \((\varphi_0,\lambda_0,h_0)\) is the configured home origin and \(p_{ned,z}\) is positive down.
+
+\paragraph{Validity range.}
+This flat-Earth approximation is intended for local missions on the order of \(\sim\)\SI{10}{km} from the home origin. Longitude uses a fixed \(\cos(\varphi_0)\) scale factor and altitude is linear; large-area navigation requires a geodesic model. See \cref{sec:design-choices} for the rationale and extension plan.
+
+\paragraph{Radius consistency note.}
+For LLA injection we use the WGS84 equatorial radius (\(R_E=6.378137\times 10^6\,\si{m}\)). The default spherical-gravity model now uses the same value (via \code{Autopilots.EARTH\_RADIUS\_M}) for \code{gravity\_r0\_m} in the environment spec (\cref{sec:environment}). Both are configurable if a different convention is required.
+
+\paragraph{Angle units.}
+Throughout the codebase, fields named \code{*\_deg} are stored in degrees. When a trigonometric function is applied to a \code{*\_deg} value, the implementation uses degree-aware functions (e.g.\ \code{cosd}) or an explicit \code{deg2rad} conversion. This is done at the call site, not globally; readers should assume trig is in radians unless a \code{*d} helper or an explicit \code{deg2rad} appears.
+
+\paragraph{TOML configuration.}
+The home origin is configured via the \code{[home]} block (\code{Types.WorldOrigin}, aliased as \code{Autopilots.HomeLocation}):
+
+\begin{lstlisting}[language=toml]
+[home]
+lat_deg    = 47.397742
+lon_deg    = 8.545594
+alt_msl_m  = 488.0
+\end{lstlisting}
+
+\paragraph{Parameter mapping.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{lat\_deg} \(\rightarrow \varphi_0\) in degrees.
+  \item \code{lon\_deg} \(\rightarrow \lambda_0\) in degrees.
+  \item \code{alt\_msl\_m} \(\rightarrow h_0\) in meters above mean sea level.
+\end{itemize}
+These parameters affect only coordinate conversions and altitude-dependent environment queries; they do not change the local NED rigid-body dynamics directly.
+
+\subsection{Propulsor axis convention}
+\label{sec:axis-convention}
+
+Each propulsor $i$ has a unit axis vector $\vect{a}_{b,i}$ expressed in body/FRD axes. See \code{Vehicles.PropulsorLayout} and \code{Vehicles.QuadrotorParams}. The thrust force applied to the rigid body is defined as
+\begin{equation}
+  \vect{F}_{b,i} = -T_i\,\vect{a}_{b,i},
+\end{equation}
+so the ``typical'' multirotor case (thrust along \(-\)body-$z$) uses \(\vect{a}_{b,i}=(0,0,1)\). Rotor axes from specs are normalized during aircraft build (\code{src/sim/Aircraft/Build.jl}).
+
+The propulsion layer produces a signed reaction torque magnitude per rotor. The rigid-body model applies it as a moment about the propulsor axis:
+\begin{equation}
+  \vect{\tau}_{b,i}^{\text{reaction}} = Q_i\,\vect{a}_{b,i}.
+\end{equation}
+
+\paragraph{Rotor direction bookkeeping.}
+The multirotor configuration distinguishes:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{rotor\_dir[i]}: the \emph{reaction torque sign on the body} used to sign $Q_i$.
+  \item Rotor spin direction: opposite to the reaction torque sign (used for rotor gyroscopic coupling, \cref{sec:rigid-body}).
+\end{itemize}

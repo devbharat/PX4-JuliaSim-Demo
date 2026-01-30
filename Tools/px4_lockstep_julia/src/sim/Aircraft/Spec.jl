@@ -392,7 +392,7 @@ Base.@kwdef struct EnvironmentSpec
     gravity::Symbol = :uniform
     gravity_mps2::Float64 = 9.80665
     gravity_mu::Float64 = 3.986004418e14
-    gravity_r0_m::Float64 = 6_371_000.0
+    gravity_r0_m::Float64 = Autopilots.EARTH_RADIUS_M
 end
 
 """Scenario scheduling spec (mission arm/start)."""

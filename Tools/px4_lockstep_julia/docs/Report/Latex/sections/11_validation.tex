@@ -1,0 +1,116 @@
+\section{Validation and regression checks}
+\label{sec:validation}
+
+The simulator is intended to be reviewable and falsifiable: core claims are backed by executable tests in the repository. This section summarizes the current verification coverage and the contracts it enforces.
+
+\subsection{Test harness}
+
+The package test entrypoint is \code{test/runtests.jl}. A typical local invocation is:
+\begin{lstlisting}
+julia --project -e 'using Pkg; Pkg.test()'
+\end{lstlisting}
+
+The test suite is designed to run without a PX4 shared library. Lockstep runtime smoke tests (\code{test/lockstep_runtime.jl}) are conditionally executed only when the lockstep library is available (see the \code{PX4Lockstep.has_lockstep()} gate).
+
+\subsection{Analytic integrator verification}
+
+The module \code{Sim.Verification} defines closed-form or invariant-rich reference problems, used in \code{test/verification_cases.jl}:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Simple harmonic oscillator (SHO).} With \code{dt=0.01} over \code{T=1.0}, RK4 is required to match the analytic position to \(<10^{-6}\). An additional regression checks that adaptive RK45 with \code{quantize_us=true} does not drift the requested timebase.
+  \item \textbf{Pendulum.} For a small-angle case, RK4 must match the small-angle analytic solution to \(<10^{-5}\) and conserve energy to relative error \(<10^{-4}\) over one period.
+  \item \textbf{Circular Kepler orbit.} RK4 must return to the analytic state after one orbit (at \(T_{end}=n\,dt\)) to \(<10^{-5}\) in position/velocity and conserve energy and angular momentum to \(<10^{-6}\) relative error.
+  \item \textbf{Torque-free rigid body.} RK4 must conserve rotational energy to \(<10^{-6}\) relative error, keep quaternion norm within \(<10^{-10}\), and keep inertial angular momentum nearly constant.
+\end{itemize}
+These tests make the integrator implementations (\cref{sec:plant-state}) directly falsifiable.
+
+\subsection{Representative verification results}
+\label{sec:validation-results}
+
+In addition to the unit-test style checks above, we periodically run standalone verification scripts under \code{Tools/px4\_lockstep\_julia/examples/verification/} to obtain concrete error magnitudes for common reference problems. \Cref{tab:verification-analytic-results} summarizes one such run.
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabular}{@{}llrr@{}}
+    \toprule
+    Case & Solver & Max error & Invariant drift \\
+    \midrule
+    SHO (\(\omega_0=2\pi\), \(T=1\,\mathrm{s}\), \(dt=0.01\)) & RK4  & $4.27\times 10^{-8}$  & $\Delta E/E=8.54\times 10^{-8}$ \\
+    SHO (adaptive) & RK23 & $9.27\times 10^{-10}$ & $\Delta E/E=1.85\times 10^{-9}$ \\
+    SHO (adaptive) & RK45 & $1.31\times 10^{-10}$ & $\Delta E/E=2.62\times 10^{-10}$ \\
+    \midrule
+    Pendulum (small angle, \(dt=0.01\)) & RK4  & $3.65\times 10^{-6}$ & $\Delta E/E=2.62\times 10^{-9}$ \\
+    Pendulum (adaptive) & RK23 & $3.65\times 10^{-6}$ & $\Delta E/E=1.19\times 10^{-8}$ \\
+    Pendulum (adaptive) & RK45 & $3.65\times 10^{-6}$ & $\Delta E/E=1.67\times 10^{-9}$ \\
+    \midrule
+    Kepler (circular, \(T=2\pi\), \(dt=0.01\)) & RK4  & $1.52\times 10^{-9}$ & $\Delta E/E=1.75\times 10^{-11}$ \\
+    Kepler (circular, adaptive) & RK23 & $9.97\times 10^{-10}$ & $\Delta E/E=2.07\times 10^{-10}$ \\
+    Kepler (circular, adaptive) & RK45 & $3.67\times 10^{-10}$ & $\Delta E/E=1.15\times 10^{-10}$ \\
+    \midrule
+    Rigid body (torque-free, \(dt=0.001\)) & RK4  & $|\Delta L|=5.81\times 10^{-12}$ & $\Delta E/E=4.94\times 10^{-14}$ \\
+    Rigid body (torque-free, adaptive) & RK23 & $|\Delta L|=7.55\times 10^{-10}$ & $\Delta E/E=1.16\times 10^{-10}$ \\
+    Rigid body (torque-free, adaptive) & RK45 & $|\Delta L|=5.11\times 10^{-10}$ & $\Delta E/E=4.76\times 10^{-11}$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Representative analytic/invariant-rich verification results from standalone scripts. ``Max error'' is the final-state analytic deviation at \(T_{end}=n\,dt\) for SHO/pendulum/Kepler, and $|\Delta L|$ is the inertial angular-momentum change for the torque-free rigid-body case.}
+  \label{tab:verification-analytic-results}
+\end{table}
+
+The same scripts include reference-compare problems that exercise full \code{PlantState} integration (rotor speed and battery states) against a tighter RK45 reference, as well as an end-to-end Iris record/replay integrator sweep. One such sweep (\(t_{end}=60\,\mathrm{s}\), \(\Delta t_{ap}=0.004\,\mathrm{s}\), \(\Delta t_{wind}=0.001\,\mathrm{s}\), \(\Delta t_{log}=0.01\,\mathrm{s}\)) reported the max errors in \cref{tab:verification-iris-sweep} relative to a reference replay.
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Solver & pos & vel & att & $\omega$ & rotor $\omega$ & $|\Delta I|$ \\
+    \midrule
+    RK4  & $7.52\times 10^{-5}$  & $4.14\times 10^{-6}$ & $7.30\times 10^{-8}$ & $2.24\times 10^{-7}$ & $1.15\times 10^{-4}$ & $2.92\times 10^{-6}$ \\
+    RK23 & $6.37\times 10^{-4}$  & $2.96\times 10^{-5}$ & $2.62\times 10^{-7}$ & $2.49\times 10^{-6}$ & $1.61\times 10^{-3}$ & $6.98\times 10^{-5}$ \\
+    RK45 & $0$ & $0$ & $4.21\times 10^{-8}$ & $0$ & $0$ & $0$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Representative Iris record/replay integrator sweep: max error vs a reference replay trajectory. Columns correspond to the logged max norms used by \code{Workflows.RecordReplay.compare\_integrators\_recording} (position/velocity/attitude/body rates/rotor speed and battery-current error $|\Delta I|$).}
+  \label{tab:verification-iris-sweep}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/integrator_sweep_errors.png}
+  \caption{Integrator sweep errors (log scale) for the same Iris record/replay run summarized in \cref{tab:verification-iris-sweep}.}
+  \label{fig:integrator-sweep-errors}
+\end{figure}
+
+\subsection{Plant-level contract tests}
+
+The file \code{test/verification_contracts.jl} contains deterministic ``contract'' tests for the full multirotor plant and power system:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Free-fall kinematics.} With motors off and no contact, the logged vertical position/velocity must match the closed-form constant-acceleration solution at \code{atol=1e-7} and maintain quaternion normalization.
+  \item \textbf{Hover force-balance (RHS).} A single RHS evaluation is checked by solving for a rotor speed that yields total thrust \(\approx m g\) at sea-level density, then asserting vertical acceleration is \(\approx 0\) at identity attitude.
+  \item \textbf{Power-bus solve fixed point.} A deterministic sweep over randomized rotor speeds/duties checks the bus-voltage solver returns a consistent fixed-point residual.
+  \item \textbf{State sanity.} Logged states are asserted finite and within physical bounds (e.g. SOC \(\in[0,1]\), rotor speeds non-negative up to tolerance).
+\end{itemize}
+
+\subsection{Record/replay invariants}
+
+The record/replay machinery is covered by \code{test/record_replay_engine.jl}. These tests exercise:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item axis-matching: building traces from a recording throws if recorded timestamps do not match the expected engine axis exactly,
+  \item serialization schema enforcement through \code{BUS_SCHEMA_VERSION}, and
+  \item replay determinism for Tier-0 streams (commands and wind) under multiple integrators.
+\end{itemize}
+
+\subsection{uORB injection tests}
+
+The uORB injection scheduler and default state injector are covered by \code{test/uorb_injection.jl}, including multi-instance battery publishing behavior and the periodic ``due'' logic.
+
+\subsection{Gaps and recommended extensions}
+
+The current suite does not yet provide strong, closed-loop PX4 trajectory validation inside this repository (the lockstep runtime tests are intentionally minimal and are skipped when the PX4 shared library is unavailable). In practice, the most useful regression to add is a canonical PX4 mission recorded once and replayed under a solver sweep (\cref{sec:integrator-sweep}) with a saved CSV error summary.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/mission_validation_xy_alt.png}
+  \caption{Representative closed-loop Iris mission trace from a lockstep run (XY trajectory and altitude vs time). This is provided as a qualitative sanity check rather than a strict regression.}
+  \label{fig:mission-validation}
+\end{figure}

@@ -1,0 +1,90 @@
+\section{Continuous-time plant state and integrators}
+\label{sec:plant-state}
+
+The engine integrates a \emph{full plant state} rather than only rigid-body states. This makes variable-step integration meaningful: actuator dynamics, rotor-speed dynamics, and battery dynamics are integrated alongside the rigid body.
+
+\subsection{Plant state and held input packet}
+
+The rigid-body state (\code{RigidBodyState} in \code{src/sim/RigidBody.jl}) is
+\begin{equation}
+  x_{rb} \coloneqq \{\vect{p}_{ned},\; \vect{v}_{ned},\; \qbn,\; \vect{\omega}_{body}\}.
+\end{equation}
+
+The full continuous plant state (\code{PlantState} in \code{src/sim/Plant.jl}) extends this with actuator and powertrain states:
+\begin{align}
+  x \coloneqq \{&x_{rb},\; \vect{y}_m,\; \dot{\vect{y}}_m,\; \vect{y}_s,\; \dot{\vect{y}}_s,\; \vect{\Omega},\; \text{power}\},\\
+  &\vect{y}_m\in\mathbb{R}^{12},\; \vect{y}_s\in\mathbb{R}^{8},\; \vect{\Omega}\in\mathbb{R}^{N}.
+\end{align}
+Motor/servo outputs are stored in fixed-size arrays to match the PX4 lockstep ABI (12 motor channels, 8 servo channels), while $N$ is the number of \emph{physical} propulsors.
+
+The plant consumes a piecewise-constant input packet (\code{PlantInput}) held over each engine interval:
+\begin{equation}
+  u \coloneqq \{\mathtt{cmd},\; \vect{w}_{ned},\; \mathtt{faults}\},
+\end{equation}
+where \texttt{cmd} is the latest actuator command, $\vect{w}_{ned}$ is the latest sampled wind velocity, and \texttt{faults} is a compact fault mask (e.g. motor disable bitmask, battery connected flag).
+
+\subsection{Fixed-step and adaptive integrators}
+\label{sec:integrators}
+
+The integrators in \code{src/sim/Integrators.jl} are dependency-light and operate directly on \code{RigidBodyState} or \code{PlantState}:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Euler}: forward Euler (debug).
+  \item \textbf{RK4}: classic fixed-step 4th-order Runge--Kutta.
+  \item \textbf{RK23}: Bogacki--Shampine 3(2) with adaptive step.
+  \item \textbf{RK45}: Dormand--Prince 5(4) with adaptive step.
+\end{itemize}
+
+Adaptive methods compute an error estimate from the difference between the ``high'' and ``low'' order solutions. The default error norm is an $\ell_\infty$-style scaled maximum over rigid-body groups (position, velocity, body rates) plus a geodesic attitude error on $SO(3)$:
+\begin{equation}
+  e_q = \frac{2\arccos(|\langle q_{hi}, q_{lo}\rangle|)}{\max(\mathtt{atol\_att\_rad},\epsilon)}.
+\end{equation}
+By default, non-rigid-body plant states (actuator, rotor speed, battery) do \emph{not} influence adaptivity. Setting \code{plant\_error\_control=true} enables additional error terms provided the corresponding absolute tolerances are finite.
+
+\paragraph{Microsecond quantization of adaptive substeps.}
+Both adaptive integrators support \code{quantize\_us=true} (default), which quantizes internal substep sizes to integer microseconds to preserve the engine's integer-time contract. This is a determinism trade-off: quantization slightly perturbs the step-size controller and can degrade error-control optimality near stiff-ish dynamics (e.g.\ contact-adjacent transients). Its impact should be reported in evaluations.
+
+\paragraph{Engine-level note.}
+The engine resets integrator internal step-size history at the start of every event interval (\code{reset!(integrator)} inside \code{Engine.step\_to\_next\_event!}). This maximizes determinism isolation between intervals but may reduce adaptive efficiency compared to carrying history across intervals.
+
+
+\subsection{TOML configuration: integrator selection and tolerances}
+\label{sec:integrator-toml}
+
+The integrator described in \cref{sec:integrators} is selected in the \code{[plant]} block (\code{PlantSpec.integrator}, parsed by \code{_parse\_integrator} in \code{src/sim/Aircraft/TOMLIO.jl}). The parser accepts either a string shorthand:
+\begin{lstlisting}[language=toml]
+[plant]
+integrator = "RK4"   # "Euler" | "RK4" | "RK23" | "RK45"
+\end{lstlisting}
+or a table form for adaptive solvers with explicit tolerances:
+\begin{lstlisting}[language=toml]
+[plant]
+integrator = { kind="RK45",
+  rtol_pos=1e-7, atol_pos=1e-6,
+  rtol_vel=1e-7, atol_vel=1e-6,
+  rtol_omega=1e-7, atol_omega=1e-6,
+  atol_att_rad=1e-6,
+  plant_error_control=false,
+  h_min=1e-6,
+  max_substeps=50000,
+  quantize_us=true
+}
+\end{lstlisting}
+
+\paragraph{Parameter mapping to the adaptive error model.}
+The tolerance keys map directly to the error computation used by RK23/RK45:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{rtol\_pos}, \code{atol\_pos}: relative/absolute tolerances for the position group \(\vect{p}_{ned}\).
+  \item \code{rtol\_vel}, \code{atol\_vel}: relative/absolute tolerances for the velocity group \(\vect{v}_{ned}\).
+  \item \code{rtol\_omega}, \code{atol\_omega}: tolerances for body rates \(\vect{\omega}_{body}\). (The TOML parser also accepts Unicode omega keys via TOML escapes, e.g.\ \verb|rtol_\u03C9| and \verb|atol_\u03C9|.)
+  \item \code{atol\_att\_rad}: absolute tolerance for the attitude geodesic error \(e_q\) in \cref{sec:integrators}.
+  \item \code{plant\_error\_control}: when \code{true}, include non-rigid-body plant states (actuators, rotor speed, SOC, \(v_1\), temperature) in the adaptive error norm if their absolute tolerances are finite.
+\end{itemize}
+
+\paragraph{Step-size controls.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{h\_min}: lower bound on internal adaptive substeps (seconds).
+  \item \code{max\_substeps}: hard cap on internal substeps per engine interval; exceeding it throws.
+  \item \code{quantize\_us}: when \code{true}, accepted adaptive substeps are quantized to integer microseconds to reduce drift against the engine's integer-time axis (\cref{sec:runtime-timebase}).
+\end{itemize}
+
+Any omitted fields take constructor defaults from the selected integrator's constructor (\code{src/sim/Integrators.jl}).

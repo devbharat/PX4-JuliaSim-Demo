@@ -1,0 +1,34 @@
+\section{Run context for reported figures}
+\label{app:run-context}
+
+This appendix records the configuration used for the replay-only runtime figure (\cref{fig:replay-rtf}). The goal is to make the reported numbers reproducible without overloading the figure caption.
+
+\subsection{Replay-only realtime factor (700 s mission)}
+
+\begin{table}[ht]
+  \centering
+  \small
+\begin{tabular}{@{}p{0.44\textwidth} >{\raggedright\arraybackslash}p{0.50\textwidth}@{}}
+    \toprule
+    \textbf{Field} & \textbf{Value} \\
+    \midrule
+    Spec path & \code{examples/specs/iris\_example\_3s2p\_10ah\_surface\_rc\_thermal\_lockstep.toml} \\
+    Run mode & Replay-only sweep (no PX4 calls during replay) \\
+    Recording source & \code{examples/replay/out_long/iris_long_tier0.jls} \\
+    \midrule
+    \(t_{end}\) & 700\,s \\
+    \(\Delta t_{ap}\) & 0.004\,s \\
+    \(\Delta t_{wind}\) & 0.001\,s \\
+    \(\Delta t_{log}\) & 0.01\,s \\
+    \midrule
+    Integrators swept & RK4, RK23, RK45 (nominal tolerances) \\
+    Reference integrator & RK45 (tight tolerances; \code{default reference integrator}) \\
+    Contact model & \code{flat\_ground\_constraint} (hybrid) \\
+    Battery model & Thevenin + surface R0(s,T), thermal enabled \\
+    \bottomrule
+  \end{tabular}
+  \caption{Configuration context for the replay‑only realtime factor plot.}
+  \label{tab:rtf-run-context}
+\end{table}
+
+The RTF values in \cref{fig:replay-rtf} are computed from the recorded mission duration (\(t_{end}\)) and the measured wall time of each replay. Because the replay sweep does not call into PX4, these timings reflect only the Julia‑side plant and engine cost.

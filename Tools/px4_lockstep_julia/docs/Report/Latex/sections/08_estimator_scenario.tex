@@ -1,0 +1,104 @@
+\section{Estimator and scenario layers}
+\label{sec:estimator-scenario}
+
+PX4 expects ``estimated'' state topics even when a full sensor/EKF loop is not simulated. \code{PX4Lockstep.Sim} therefore inserts two discrete-time layers between truth and PX4:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item an \textbf{estimator model} that maps truth state to an estimated state (optionally noisy/delayed), and
+  \item a \textbf{scenario model} that provides high-level autopilot commands and fault injections.
+\end{enumerate}
+
+Both layers publish to the runtime bus at their own boundaries and are treated as sample-and-hold between boundaries.
+
+\subsection{Estimated state}
+
+The estimated state packet used by the autopilot source is
+\begin{equation}
+  \hat{x} \coloneqq \{\hat{\vect{p}}_{ned},\; \hat{\vect{v}}_{ned},\; \hat{\qbn},\; \hat{\vect{\omega}}_{body}\}
+\end{equation}
+(\code{Estimators.EstimatedState} in \code{src/sim/Estimators.jl}).
+
+\subsection{Noisy estimator with AR(1) biases}
+
+\code{NoisyEstimator} injects (i) additive Gaussian noise and (ii) slowly-varying biases modeled as AR(1) processes (implemented as discretized Ornstein--Uhlenbeck):
+\begin{equation}
+  b[k{+}1] = \phi\,b[k] + \sigma\,\sqrt{1-\phi^2}\,\xi[k],\qquad \phi = e^{-\Delta t/\tau},\ \xi\sim\mathcal{N}(0,1).
+\end{equation}
+Biases are applied to position, velocity, yaw, and body rates; noise is applied additively. Yaw noise/bias is applied as a rotation about the NED $+z$ axis by left-multiplying the truth quaternion with an axis-angle quaternion. Because the multiplication is on the left, the yaw error is expressed in the inertial/NED frame (not body frame).
+
+\paragraph{Deterministic stepping cadence.}
+The estimator API receives an explicit \code{dt\_hint} from the engine. The noisy estimator uses \code{dt=dt\_hint} (rather than recomputing \code{t - last\_t}) to avoid float subtraction drift.
+
+\subsection{Quantized fixed delay}
+
+\code{DelayedEstimator} wraps an inner estimator and applies a fixed delay implemented as a step-quantized ring buffer. Both the configured \code{dt\_est} and \code{delay\_s} are required to be exact integer microseconds; additionally, \code{delay\_s} must be an exact multiple of \code{dt\_est}. At runtime, the wrapper validates that the engine's provided \code{dt\_hint} matches \code{dt\_est} exactly; otherwise it errors.
+
+\subsection{Scenario outputs and faults}
+
+Scenarios publish a small \code{ScenarioOutput} packet into the bus (\code{src/sim/Scenario.jl}):
+\begin{equation}
+  y_{scn} \coloneqq \{\texttt{ap\_cmd},\; \texttt{landed},\; \texttt{faults},\; \vect{w}^{\Delta}_{ned}\}.
+\end{equation}
+The high-level command \code{AutopilotCommand} includes (armed, mission request, RTL request). \code{FaultState} is a compact immutable mask containing:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item a motor disable bitmask over physical motor indices (up to 32),
+  \item a battery connected flag, and
+  \item a generic sensor/estimator fault bitmask.
+\end{itemize}
+Faults are treated as sample-and-hold between boundaries and are consumed by the plant and (optionally) by other sources.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/scenario_timeline.png}
+  \caption{Scenario/PX4 state timeline excerpt (arming state, navigation state, and mission sequence) from a long mission run.}
+  \label{fig:scenario-timeline}
+\end{figure}
+
+\paragraph{Caveat.}
+The physics-derived landed flag is not yet consistently propagated through the PX4 navigation stack at touchdown; the navigator may not observe the landing transition even when the contact model reports a grounded state. This is a known limitation to be addressed.
+
+\subsection{Scripted and event-driven scenarios}
+
+Two built-in scenario types exist:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{ScriptedScenario}: time-based arming and mission start with a simple landed detector and an optional ``force takeoff'' override.
+  \item \code{EventScenario}: a small deterministic event scheduler supporting \code{AtTime} and \code{AtStep} events for arming, mission/RTL pulses, wind steps, motor/battery faults, and threshold-triggered actions (e.g. ``when SOC below ...'').
+\end{itemize}
+
+For event-driven scenarios that carry a static scheduler, the engine can discover \code{AtTime} boundaries up front and include them as true event-axis times (\code{Sources.Scenario.event\_times\_us}).
+
+\subsection{TOML configuration: estimator and scenario scheduling}
+\label{sec:estimator-toml}
+
+Scenario timing and estimator behavior are configurable through \code{[scenario]} (\code{ScenarioSpec}) and \code{[estimator]} (\code{EstimatorSpec}):
+
+\begin{lstlisting}[language=toml]
+[scenario]
+arm_time_s     = 1.0
+mission_time_s = 2.0
+
+[estimator]
+kind = "noisy_delayed"   # "noisy_delayed" | "none"
+pos_sigma_m = [0.02, 0.02, 0.02]
+vel_sigma_mps = [0.05, 0.05, 0.05]
+yaw_sigma_rad = 0.01
+rate_sigma_rad_s = [0.005, 0.005, 0.005]
+bias_tau_s = 50.0
+rate_bias_sigma_rad_s = [0.001, 0.001, 0.001]
+delay_s  = 0.02   # seconds; set to null for zero delay
+dt_est_s = 0.004  # seconds; set to null to publish at autopilot ticks
+\end{lstlisting}
+
+\paragraph{Scenario parameters.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{arm\_time\_s}: time at which the scenario requests arming (\(\texttt{vehicle\_control\_mode.armed}=true\)).
+  \item \code{mission\_time\_s}: time at which mission start is requested (mapped to \code{vehicle\_status.nav\_state} transitions in the PX4 bridge).
+\end{itemize}
+
+\paragraph{Estimator parameter mapping.}
+The noise and bias parameters directly configure the stochastic terms in the estimator equations above:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{pos\_sigma\_m}, \code{vel\_sigma\_mps}, \code{yaw\_sigma\_rad}, \code{rate\_sigma\_rad\_s}: measurement noise standard deviations.
+  \item \code{bias\_tau\_s} and \code{rate\_bias\_sigma\_rad\_s}: OU bias parameters for the gyro-rate bias process.
+  \item \code{delay\_s}: sample-and-hold transport delay; the estimator output at time \(t\) is based on plant truth at \(t-\texttt{delay\_s}\) (quantized to the microsecond timeline).
+  \item \code{dt\_est\_s}: estimator publication cadence. If \code{null}, estimator publications are aligned to the autopilot axis.
+\end{itemize}

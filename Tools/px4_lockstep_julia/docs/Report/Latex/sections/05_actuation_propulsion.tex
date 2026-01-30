@@ -1,0 +1,213 @@
+\section{Actuation and propulsion}
+\label{sec:actuation-propulsion}
+
+The canonical multirotor plant integrates actuator dynamics and propulsion dynamics inside one RHS (\code{Sim.PlantModels.CoupledMultirotorModel}) so that both fixed-step and adaptive integrators see a single continuous system.
+
+\subsection{Actuator channel mapping and dynamics}
+
+PX4 produces actuator commands as fixed-size ABI arrays: 12 motor channels in $[0,1]$ and 8 servo channels in $[-1,1]$ (\code{Vehicles.ActuatorCommand}). These are \emph{normalized lockstep ABI units} (not PWM) taken from the uORB outputs subscribed by the bridge (\code{actuator\_motors} and \code{actuator\_servos}); they are interpreted as normalized ESC duty and control-surface deflection. The plant stores actuator outputs in the same fixed-size arrays ($\vect{y}_m\in\mathbb{R}^{12}$, $\vect{y}_s\in\mathbb{R}^{8}$), but the physical vehicle may have $N\le 12$ propulsors.
+
+\paragraph{Mapping from PX4 channels to physical motors.}
+A typed mapping (\code{Vehicles.MotorMap\{N\}}) selects which PX4 motor channel drives each physical motor:
+\begin{equation}
+  d_i \coloneqq (\vect{y}_m)[\texttt{motor\_channel}[i]],\qquad i\in\{1,\dots,N\}.
+\end{equation}
+Faults are defined over \emph{physical} motors (indices $1..N$), not PX4 channels. The plant applies the motor-disable mask by forcing the affected physical duties to zero before evaluating propulsion.
+
+\paragraph{Actuator dynamics.}
+Actuator channel dynamics are integrated as part of the plant state. Motor and servo channels can each use one of the following models (\code{src/sim/Vehicles.jl}, \code{src/sim/PlantModels/CoupledMultirotor.jl}):
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Direct}: algebraic output, snapped to the new command at each autopilot boundary via \code{plant\_on\_autopilot\_tick}, then held.
+  \item \textbf{First-order}: \(\dot{\vect{y}} = (\vect{u}_{cmd} - \vect{y})/\tau\).
+  \item \textbf{Second-order}: \(\dot{\vect{y}}=\dot{\vect{y}}_{\mathrm{eff}}\), \(\ddot{\vect{y}}=\omega_n^2(\vect{u}_{cmd}-\vect{y})-2\zeta\omega_n\dot{\vect{y}}_{\mathrm{eff}}\), with an optional rate limit implemented by clamping \(\dot{\vect{y}}_{\mathrm{eff}}\) in the RHS and projecting stored rate states post-step.
+\end{itemize}
+
+After each engine interval the coupled plant implements \code{plant\_project} to clamp actuator outputs into ABI ranges and to project second-order rate states back into the configured rate limit, ensuring hard bounds are enforced deterministically.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/actuator_step_response.png}
+  \caption{Actuator step response example: direct vs second‑order dynamics with a rate limit.}
+  \label{fig:actuator-step-response}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/motor_spinup.png}
+  \caption{Motor/prop spin‑up example for a step duty command at constant bus voltage.}
+  \label{fig:motor-spinup}
+\end{figure}
+
+\subsection{Motor/ESC/prop model}
+\label{sec:propulsion-model}
+
+Each physical motor uses a parameter-only container \code{Propulsion.MotorPropUnit} consisting of:
+(i) an ESC stage with efficiency $\eta$ and deadzone, (ii) a quasi-static BLDC electrical model, and (iii) a quadratic propeller model with an inflow correction. The plant integrates rotor speed $\Omega_i$ (rad/s) for each physical motor.
+
+\paragraph{ESC stage.}
+The commanded duty is clamped to $[0,1]$ and zeroed if it is below the ESC deadzone. The motor terminal voltage is
+\begin{equation}
+  V_m = d\,V_{bus}.
+\end{equation}
+
+\paragraph{BLDC electrical model (quasi-static current).}
+Let $K_v$ be specified in RPM/V. The back-EMF constant is
+\begin{equation}
+  K_e = \frac{60}{2\pi K_v} \quad \left[\mathrm{V}\,\mathrm{s}/\mathrm{rad}\right],
+\end{equation}
+and the torque constant is set equal to $K_t\equiv K_e$ (SI). Motor current is computed from applied voltage and back-EMF and then clamped:
+\begin{equation}
+  I_m = \mathrm{clamp}\!\left(\frac{V_m - K_e\,\Omega}{R},\; 0,\; I_{\max}\right).
+\end{equation}
+The electrical torque subtracts an approximate no-load current $I_0$:
+\begin{equation}
+  \tau_e = K_t\,\max(0, I_m - I_0).
+\end{equation}
+
+\paragraph{Loss modeling note.}
+In this model, $I_0$ represents \emph{electrical} no-load current (iron/core loss) that does not produce torque, while $b\,\Omega$ is a \emph{mechanical} drag torque. The defaults are a pragmatic generic fit rather than a motor identification; if you want a single loss channel, set either $I_0=0$ (pure mechanical drag) or $b=0$ (pure electrical loss) to avoid double-counting.
+
+\paragraph{Quadratic propeller aerodynamics.}
+At air density $\rho$ the thrust and load torque are
+\begin{equation}
+  T = k_T\,\rho\,\Omega^2\,f_T(\mu),\qquad
+  Q = k_Q\,\rho\,\Omega^2\,f_Q(\mu),
+\end{equation}
+with a simple inflow sensitivity factor
+\begin{equation}
+  f(\mu) = \frac{1}{1 + k\,\mu^2},\qquad \mu = \frac{V_{ax}}{\max(10^{-3}, |\Omega|R_{prop})}.
+\end{equation}
+The prop radius $R_{prop}$ is stored in the prop parameters. The coupled plant computes the axial component $V_{ax}$ by projecting the \emph{air velocity relative to the vehicle} onto each propulsor axis (\cref{sec:axis-convention}):
+\begin{equation}
+  \vect{v}_{air,n} = \vect{w}_{ned} - \vect{v}_{ned},\qquad
+  \vect{v}_{air,b} = \Rbn^{\mathsf{T}}\,\vect{v}_{air,n},\qquad
+  V_{ax,i} = -\vect{v}_{air,b}\cdot \vect{a}_{b,i}.
+\end{equation}
+The inflow correction uses $\mu^2$, so the sign of $V_{ax}$ affects neither $f_T$ nor $f_Q$. This $1/(1+k\mu^2)$ attenuation is an ad-hoc shaping term (not a blade-element or momentum-theory model) chosen for stability and simplicity; it cannot represent windmilling, vortex-ring, or braking regimes. See \cref{sec:design-choices}.
+
+\paragraph{Rotor-speed dynamics.}
+In the coupled plant, rotor speed is a continuous state integrated by the same ODE integrator as the rest of the plant. The RHS evaluates
+\begin{equation}
+  \dot{\Omega} = \frac{\tau_e - Q - b\,\Omega}{J},
+\end{equation}
+where $J$ is the axial inertia and $b$ is a viscous friction coefficient, and where $Q$ is the aerodynamic load torque evaluated at the \emph{current} $\Omega$ (no internal Euler step inside the RHS). A guard prevents unphysical negative spin: if $\Omega\le 0$ and $\dot{\Omega}<0$, the derivative is set to zero.
+
+\paragraph{Bus current and signed reaction torque.}
+The current drawn from the bus is
+\begin{equation}
+  I_{bus} = \frac{d\,I_m}{\max(10^{-6},\eta)}.
+\end{equation}
+The quadratic prop model returns a positive load torque magnitude $Q\ge 0$. The coupled plant applies a per-rotor sign \code{rotor\_dir[i]} to generate the signed reaction torque on the body,
+\begin{equation}
+  Q_{body,i} = \texttt{rotor\_dir}[i]\,Q_i,
+\end{equation}
+and passes this signed value into the rigid-body dynamics.
+
+\subsection{Default propulsion parameterization and calibration}
+\label{sec:propulsion-defaults}
+
+The helper \code{Propulsion.default\_multirotor\_set} provides a generic baseline motor+prop set. It calibrates the thrust coefficient $k_T$ by solving for the steady-state speed at duty $d=1$ under a quadratic load and then bisection-searching $k_T$ so that the resulting thrust matches a target.
+
+In the aircraft builder (\code{src/sim/Aircraft/Build.jl}), this target is derived from the airframe mass and gravity:
+\begin{equation}
+  T_{hover,rotor} = \frac{m\,g}{N},\qquad T_{target} = \texttt{thrust\_calibration\_mult}\cdot T_{hover,rotor},
+\end{equation}
+with \texttt{thrust\_calibration\_mult}=2.0 by default. The drag torque coefficient is tied to $k_T$ through \texttt{km\_m} via $k_Q = \texttt{km\_m}\,k_T$.
+
+\paragraph{Caveat.}
+This calibration is a pragmatic way to get reasonable thrust scaling for a ``generic'' vehicle. It is not an identification procedure for a specific airframe; if you care about realism beyond closed-loop controllability, replace the parameters with airframe-specific values.
+
+
+\subsection{TOML configuration: actuation mapping and propulsion parameters}
+\label{sec:actuation-toml}
+
+Actuation and propulsion are configured in two places in the aircraft spec:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{[actuation]} defines how PX4 ABI channels map to physical motors/servos and which actuator dynamics model is used.
+  \item \code{[airframe.propulsion]} defines the motor/ESC/prop parameters used by the coupled plant (\cref{sec:propulsion-model}).
+\end{itemize}
+
+A minimal Iris-like configuration is:
+
+\begin{lstlisting}[language=toml]
+[actuation]
+
+[[actuation.motors]]
+id = "motor1"
+channel = 1
+
+[[actuation.motors]]
+id = "motor2"
+channel = 2
+
+[[actuation.motors]]
+id = "motor3"
+channel = 3
+
+[[actuation.motors]]
+id = "motor4"
+channel = 4
+
+[actuation.motor_actuators]
+kind = "direct"   # direct | first_order | second_order
+
+[actuation.servo_actuators]
+kind = "direct"
+
+[airframe.propulsion]
+kind = "multirotor_default"
+km_m = 0.05
+V_nom = 12.0
+rho_nom = 1.225
+rotor_radius_m = 0.127
+inflow_kT = 8.0
+inflow_kQ = 8.0
+thrust_calibration_mult = 2.0
+rotor_dir = [1, 1, -1, -1]
+
+[airframe.propulsion.esc]
+eta = 0.98
+deadzone = 0.02
+
+[airframe.propulsion.motor]
+kv_rpm_per_volt = 920.0
+r_ohm = 0.25
+j_kgm2 = 1.2e-5
+i0_a = 0.6
+viscous_friction_nm_per_rad_s = 2.0e-6
+max_current_a = 60.0
+\end{lstlisting}
+
+\paragraph{Actuation mapping semantics.}
+Each entry in \code{[[actuation.motors]]} creates a named physical motor ID and assigns it a PX4 channel index. During build, IDs are resolved into a \code{MotorMap\{N\}} so that \(\texttt{channel}\) implements the lookup in \cref{sec:actuation-propulsion}:
+\[
+  d_i \leftarrow (\vect{y}_m)[\texttt{channel}_i].
+\]
+Unknown IDs referenced elsewhere (e.g. by buses) are rejected at build time.
+
+\paragraph{Actuator model parameters.}
+The actuator model may be given as a string shorthand (\code{kind="direct"} etc) or as a table with parameters. For example, a second-order motor actuator with a finite rate limit uses:
+\begin{lstlisting}[language=toml]
+[actuation.motor_actuators]
+kind = "second_order"
+"\u03C9n" = 20.0   # omega_n
+"\u03B6"  = 0.7    # zeta
+rate_limit = 100.0   # units: (duty)/s
+\end{lstlisting}
+These keys map directly to \(\omega_n\), \(\zeta\), and the optional \(\dot{\vect{y}}\) clamp described in \cref{sec:actuation-propulsion}.
+
+\paragraph{Propulsion parameter mapping.}
+The propulsion keys match the symbols used in \cref{sec:propulsion-model}:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{kv\_rpm\_per\_volt} \(\rightarrow K_v\) (and thus \(K_e=60/(2\pi K_v)\) and \(K_t=K_e\)).
+  \item \code{r\_ohm} \(\rightarrow R\) in \(I_m=(V_m-K_e\Omega)/R\).
+  \item \code{i0\_a} \(\rightarrow I_0\) in \(\tau_e=K_t\max(0,I_m-I_0)\).
+  \item \code{max\_current\_a} \(\rightarrow I_{\max}\) current clamp.
+  \item \code{j\_kgm2} and \code{viscous\_friction\_nm\_per\_rad\_s} \(\rightarrow J\) and \(b\) in \(\dot{\Omega}=(\tau_e-Q-b\Omega)/J\).
+  \item \code{eta} and \code{deadzone} configure the ESC stage (\cref{sec:propulsion-model}).
+  \item \code{rotor\_radius\_m} \(\rightarrow R_{prop}\) in the inflow ratio \(\mu\).
+  \item \code{inflow\_kT}, \code{inflow\_kQ} \(\rightarrow k\) in \(f(\mu)=1/(1+k\mu^2)\) for thrust and torque respectively.
+  \item \code{km\_m} ties \(k_Q\) to \(k_T\) through \(k_Q=\texttt{km\_m}\,k_T\) in the default prop model.
+  \item \code{thrust\_calibration\_mult} sets the target thrust multiplier used during build-time calibration (\cref{sec:propulsion-defaults}).
+  \item \code{rotor\_dir[i]} signs the reaction torque applied to the body, \(Q_{body,i}=\texttt{rotor\_dir}[i]\,Q_i\). Rotor spin sign is the opposite (\(s_i=-\texttt{rotor\_dir}[i]\)) for gyroscopic coupling in \cref{sec:rigid-body}.
+\end{itemize}

@@ -1,0 +1,167 @@
+\section{Deterministic runtime engine}
+\label{sec:runtime}
+
+The canonical run loop is \code{Sim.Runtime.Engine} (\code{src/sim/Runtime/Engine.jl}). It advances an integer-microsecond timeline, calls discrete-time \emph{sources} at event boundaries, and integrates the continuous-time plant between boundaries.
+
+\subsection{Timebase and hybrid event timeline}
+\label{sec:runtime-timebase}
+
+All scheduling uses integer microseconds (\code{UInt64}). The helper \code{dt\_to\_us(dt\_s)} (\code{src/sim/Runtime/Timeline.jl}) converts a \code{Float64} interval in seconds to microseconds with an exactness requirement:
+\begin{equation}
+  \left|dt\_s - 10^{-6}\,\mathrm{round}(10^{6} dt\_s)\right| \le 10^{-15}.
+\end{equation}
+If the conversion is not exact (i.e. the requested interval is not an integer multiple of \SI{1}{\micro\second}), the code throws.
+
+\paragraph{Timeline axes.}
+The runtime constructs several named time axes, each a sorted vector of microseconds (\code{src/sim/Runtime/Timeline.jl}): autopilot ticks, wind ticks, logging ticks, scenario \emph{AtTime} boundaries, and an optional ``physics'' axis. The global event axis is the sorted unique union of all axis times, including both endpoints. The engine always integrates on this union axis: any subsystem boundary becomes an integration boundary.
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[x=0.55cm,y=0.75cm, font=\small]
+    \def\xmax{12}
+
+    % Axis baselines
+    \foreach \y/\name in {3/{autopilot axis},2/{wind axis},1/{log axis},0/{event axis (union)}} {
+      \draw[-{Latex[length=2mm]}] (0,\y) -- (\xmax+0.8,\y);
+      \node[anchor=east] at (-0.2,\y) {\name};
+    }
+
+    % Example tick sets (arbitrary units; the real code uses UInt64 microseconds).
+    \foreach \t in {0,4,8,12} {\draw (\t,3+0.12) -- (\t,3-0.12);}
+    \foreach \t in {0,3,6,9,12} {\draw (\t,2+0.12) -- (\t,2-0.12);}
+    \foreach \t in {0,10,12} {\draw (\t,1+0.12) -- (\t,1-0.12);}
+    \foreach \t in {0,3,4,5,6,8,9,10,12} {\draw (\t,0+0.12) -- (\t,0-0.12);}
+
+    \node[anchor=west] at (0,-0.7) {\footnotesize Example only; in the implementation, all tick times are integer microseconds.};
+  \end{tikzpicture}
+  \caption{Multi-rate scheduling: each subsystem owns a time axis, and the engine integrates on their union (the event axis).}
+  \label{fig:timeline-union}
+\end{figure}
+
+\subsection{TOML configuration: timeline axes}
+\label{sec:runtime-toml}
+
+The timeline parameters described above are configured in the \code{[timeline]} block of the aircraft spec (\code{TimelineSpec} in \code{src/sim/Aircraft/Spec.jl}, parsed by \code{src/sim/Aircraft/TOMLIO.jl}):
+
+\begin{lstlisting}[language=toml]
+[timeline]
+t_end_s = 20.0
+dt_autopilot_s = 0.004
+dt_wind_s      = 0.001
+dt_log_s       = 0.01
+dt_phys_s      = 0.001  # optional; omit (or set to null) to disable extra physics boundaries
+\end{lstlisting}
+
+\paragraph{Parameter semantics (what the code does).}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{t\_end\_s}: inclusive simulation horizon. The engine always starts at \(t_0=0\) and forces both \(t_0\) and \(t_{end}\) into the union event axis.
+  \item \code{dt\_autopilot\_s}: cadence of the autopilot axis (PX4 stepping, estimator publication, plant discontinuities).
+  \item \code{dt\_wind\_s}: cadence of the wind axis. Wind is updated only on these ticks and held between them.
+  \item \code{dt\_log\_s}: cadence of logging ticks. The implementation additionally appends a final log sample at \(t_{end}\) even when \(dt_{log}\) does not evenly divide the horizon (\code{build\_timeline}).
+  \item \code{dt\_phys\_s}: optional additional periodic boundaries. When omitted, the ``physics'' axis degenerates to \(\{t_0,t_{end}\}\) and does not add boundaries beyond the other axes.
+\end{itemize}
+
+\paragraph{Mapping to the engine axes.}
+Each interval is converted to integer microseconds by \code{dt\_to\_us} (\cref{sec:runtime-timebase}), giving
+\begin{equation}
+  \Delta t_{ap} \leftrightarrow \texttt{dt\_autopilot\_s},\quad
+  \Delta t_{wind} \leftrightarrow \texttt{dt\_wind\_s},\quad
+  \Delta t_{log} \leftrightarrow \texttt{dt\_log\_s},\quad
+  \Delta t_{phys} \leftrightarrow \texttt{dt\_phys\_s}.
+\end{equation}
+Scenario \emph{AtTime} boundaries are \emph{not} configured in \code{[timeline]}; they are discovered from the scenario source via the \code{event\_times\_us} protocol hook and injected into the union axis by \code{build\_timeline\_for\_run}.
+
+\subsection{Boundary protocol and sample-and-hold semantics}
+\label{sec:runtime-boundary}
+
+At each event time $t_k$ the engine executes boundary stages in a fixed canonical order (\code{src/sim/Runtime/BoundaryProtocol.jl}, applied by \code{process\_events\_at!} in \code{src/sim/Runtime/Engine.jl}):
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Scenario}: update high-level commands (arm/mission/RTL), landed flag, faults, and optional wind disturbances.
+  \item \textbf{Wind}: if the wind axis is due, step the wind source and publish the held \code{bus.wind\_ned} sample.
+  \item \textbf{Derived outputs}: if the plant implements \code{plant\_outputs}, evaluate algebraic outputs (notably battery telemetry) and publish them into the bus.
+  \item \textbf{Estimator}: if the autopilot axis is due, publish \code{bus.est} (truth injection + noise/bias/delay).
+  \item \textbf{Telemetry}: optional deterministic inspection hooks (autopilot-axis only).
+  \item \textbf{Autopilot}: if the autopilot axis is due, step PX4 (or replay) and publish \code{bus.cmd}.
+  \item \textbf{Plant discontinuities}: if the autopilot axis is due, apply boundary-time plant updates (notably snapping \emph{direct} actuators via \code{plant\_on\_autopilot\_tick}).
+  \item \textbf{Logging}: if the log axis is due, record a pre-step snapshot and emit structured logs.
+\end{enumerate}
+
+\paragraph{Why this order?}
+The order is a deliberate part of the execution model. It preserves invariants that a reader needs in order to reason about determinism and causality:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Fresh estimates at PX4 ticks:} when the autopilot axis is due, PX4 always consumes an estimator packet \emph{computed from truth at the same boundary time} $t_k$.
+  \item \textbf{Fresh telemetry at PX4 ticks:} battery and other algebraic telemetry are computed from the plant state at $t_k$ and published before stepping PX4, so uORB injection reflects the current plant state.
+  \item \textbf{Command-to-physics causality:} the command published at $t_k$ is the unique held plant input over the next interval:
+    \begin{equation}
+      u(t) = u_k \quad \text{for } t\in[t_k,t_{k+1}),\qquad u_k \coloneqq \mathrm{PlantInput}(\mathrm{bus}(t_k)).
+    \end{equation}
+  \item \textbf{Snap-after-command for direct actuators:}\\ boundary-time discontinuities (e.g. \code{DirectActuators}) are applied \emph{after} \code{bus.cmd} is published, so snapped actuator state is a deterministic function of that same command.
+  \item \textbf{Logs correspond to integration inputs:} logging occurs last so a snapshot at $t_k$ corresponds to the same bus packet that seeds integration over $[t_k,t_{k+1})$.
+\end{itemize}
+
+Changing this ordering is not ``just refactoring'': it changes which signals are held over which intervals. For example, stepping PX4 before the estimator would make PX4 consume a stale estimate; logging before the autopilot stage would decouple recorded commands from the plant inputs that followed.
+
+\paragraph{Scenario cadence.}
+The scenario stage is currently executed at \emph{every} boundary on the union event axis, not only on the scenario axis. This makes hybrid \code{When(...)}-style logic responsive at the earliest possible boundary while preserving deterministic ordering (see the note in \code{src/sim/Runtime/BoundaryProtocol.jl} and the implementation in \code{process\_events\_at!}).
+
+\paragraph{Wind disturbance consistency.}
+If the scenario updates an additive wind disturbance at a boundary where the wind axis is \emph{not} due, the engine applies the disturbance delta immediately to the held wind sample so the piecewise-constant wind input remains consistent across axes.
+
+\paragraph{Sample-and-hold.}\label{sec:runtime-sample-hold}
+Between event times, all bus values are treated as sample-and-hold. The plant is integrated over $[t_k, t_{k+1}]$ with a single input packet
+\begin{equation}
+  u_k \coloneqq \{\text{actuator command},\; \text{wind},\; \text{fault state}\},
+\end{equation}
+constructed from the bus at $t_k$ (\code{PlantInput} in \code{src/sim/Plant.jl}).
+
+
+\subsection{Integration stepping and post-step projection}
+
+Let $x(t)$ be the continuous plant state and $f(t, x, u)$ the plant RHS functor. At each interval the engine calls
+\begin{equation}
+  x_{k+1} \gets \mathrm{Integrate}(f,\, t_k,\, x_k,\, u_k,\, \Delta t_k)
+\end{equation}
+where $\Delta t_k = (t_{k+1}-t_k)\,10^{-6}$ seconds, and the integrator is selected by the aircraft spec (\code{src/sim/Integrators.jl}, \code{src/sim/Aircraft/Build.jl}).
+
+\paragraph{Hybrid interval integration (contact-aware plants).}
+\label{sec:runtime-hybrid-integrators}
+Most plants can be advanced by calling \code{Integrators.step\_integrator} once per union-axis interval. Ground contact, however, is inherently hybrid: touchdown and liftoff introduce discontinuities that are not representable as a smooth ODE without either (i) stiff penalty forces or (ii) explicit event handling. The runtime therefore supports an optional protocol hook
+\begin{quote}\small
+\code{plant\_integrate\_interval(model, integrator, t0\_us, x0, u, dt\_us)}
+\end{quote}
+(\code{src/sim/PlantInterface.jl}). When implemented, the engine delegates the \emph{entire} interval advance to this method.
+
+\paragraph{Free flight vs.\ contact-constrained stepping (current ground-contact implementation).}
+For the coupled multirotor plant, \code{plant\_integrate\_interval} is implemented when \code{PlantSpec.contact} is \code{FlatGroundConstraintContact}. The interval integrator acts as a deterministic regime switcher:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Airborne segments (smooth dynamics):} the plant is advanced under the \emph{free} dynamics \(f_{\mathrm{free}}\) (the same model but with \code{NoContact()}) using the configured integrator (RK4/RK23/RK45, etc.). Near the ground, the next airborne chunk can be capped to \(O(\text{time-to-impact})\) so that a descending crossing of the guard is bracketed reliably.
+  \item \textbf{Impact events (discontinuous map):} if a lookahead airborne chunk brackets a descending crossing of \(z=0\), the TOI is localized to integer microseconds by deterministic bisection and an impact map is applied at that internal time (position projection + velocity reset with restitution and optional tangential friction). Multiple impacts can be handled inside one outer interval, but the code caps the count to a fixed maximum to avoid pathological bounce storms.
+  \item \textbf{Grounded segments (constraint/impulse stepping):} while the state is a ground candidate, the plant advances in fixed substeps of \code{h\_contact\_us}. Each substep uses a single evaluation of \(f_{\mathrm{free}}\) (explicit Euler) followed by a closed-form, 1-contact impulse solve (normal + Coulomb friction) and a position-only stabilization on \(z\). In this grounded regime the configured integrator is \emph{not} used; the time-stepping loop is deliberately fixed-step and deterministic.
+\end{itemize}
+The full contact math and the exact update equations are documented in \cref{sec:contacts-hybrid}.
+
+\paragraph{Interval metadata and logging.}
+Because impacts can occur at internal TOI times \(\tau\in(t_k,t_{k+1})\), the interval integrator may optionally return per-interval metadata (impact count, maximum \(\Delta v\), and its timestamp). The engine accumulates this metadata into latched bus signals for logging (\code{bus.impact\_dv\_ned}, \code{bus.impact\_time\_us}, \code{bus.impact\_count}) and also computes a simple ``equivalent acceleration'' estimate at the autopilot tick rate (\code{bus.impact\_accel\_est\_ned}); see \code{Runtime.Engine.\_accumulate\_interval\_impacts!}.
+
+Some state variables have hard physical bounds (e.g. rotor speed $\omega \ge 0$, battery SOC in $[0,1]$). The engine therefore supports an optional post-step projection hook \code{plant\_project(model, x)} that clamps or projects state deterministically after each accepted interval. The coupled multirotor plant implements this projection (\code{src/sim/PlantModels/CoupledMultirotor.jl}).
+
+\paragraph{Record $\to$ replay (high level).}
+The same engine can run in a mode that records boundary-aligned bus/plant streams, and a replay mode that replaces ``live'' sources with trace samplers. This converts a closed-loop PX4 run into a deterministic open-loop plant replay for integrator/model comparisons.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      node distance=6mm and 10mm,
+      font=\small,
+      box/.style={draw, align=center, minimum width=40mm, inner ysep=5pt, inner xsep=6pt},
+      arr/.style={-Latex, line width=0.4pt}
+    ]
+    \node[box] (b) {Boundary at $t_k$\\(sources + logging)};
+    \node[box, below=of b] (i) {Integrate plant\\$[t_k, t_{k+1}]$ with held $u_k$};
+    \node[box, below=of i] (p) {Optional projection\\$x \leftarrow \mathrm{plant\_project}(x)$};
+    \draw[arr] (b) -- (i);
+    \draw[arr] (i) -- (p);
+  \end{tikzpicture}
+  \caption{Engine rhythm: boundary processing on the union event axis, then continuous plant integration over the next interval under sample-and-hold inputs.}
+  \label{fig:engine-rhythm}
+\end{figure}

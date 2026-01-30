@@ -45,7 +45,7 @@ function main()
             t += dt
         end
 
-        r_ref, v_ref, ω = V.kepler_circular_analytic(case, T)
+        r_ref, v_ref, ω = V.kepler_circular_analytic(case, T_end)
         r_err = norm(x.pos_ned - r_ref)
 
         E1 = V.kepler_energy(case.μ, x.pos_ned, x.vel_ned)

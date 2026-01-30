@@ -1,0 +1,19 @@
+\section{Nonstandard modeling choices and rationale}
+\label{sec:design-choices}
+
+This simulator is optimized for deterministic regression and rapid iteration. A few modeling choices intentionally diverge from common aerospace references; they are not ``wrong,'' but they should be read as pragmatic tradeoffs rather than canonical physics. The list below records these choices and the intended future direction.
+
+\subsection{Local NED-to-LLA approximation}
+The NED-to-LLA conversion used for PX4 topic injection is a flat-Earth approximation with a fixed \(\cos(\varphi_0)\) longitude scale and linear altitude (\cref{sec:home-origin}). This is adequate for local missions (order \(\sim\)\SI{10}{km} from home) and deterministic regression, but it is not suitable for large-area navigation or high-latitude operations. A future extension could substitute a proper geodesic conversion or an Earth-centered frame.
+
+\subsection{Turbulence model: OU vs. Dryden/Von K\'arm\'an}
+The wind model uses an Ornstein--Uhlenbeck (OU/AR(1)) process (\cref{sec:wind}) rather than a Dryden or Von K\'arm\'an spectral model. OU is chosen because it is simple, strictly Markov, and deterministic under fixed random seeds, making it attractive for regression. It does not attempt to match turbulence power spectra used in certification-oriented literature. If spectral fidelity becomes a goal, Dryden/Von K\'arm\'an parameterizations should be added as alternative wind sources.
+
+\subsection{State injection instead of raw sensor simulation}
+The default lockstep bridge injects filtered state estimates into PX4 rather than simulating raw sensors and running an onboard estimator (\cref{sec:px4-bridge}, \cref{sec:limitations}). This provides stable, deterministic closed-loop regression but does not exercise estimator failure modes or sensor bandwidth limitations.
+
+\subsection{Simplified contact and aerodynamics}
+Ground contact is modeled as a single COM contact with a hybrid impact map and an impulse-based grounded solve (\cref{sec:contacts}). This is in the family of time-stepping / complementarity-inspired rigid-contact methods (e.g., Stewart--Trinkle 1996; Anitescu--Potra 1997), but implemented in a minimal single-contact form for determinism. Aerodynamics are linear drag only (\cref{sec:rigid-body}). These choices prioritize stability and determinism; they are not intended to represent landing gear dynamics or aerodynamic performance.
+
+\subsection{Ad-hoc prop inflow attenuation}
+The propeller inflow correction uses a simple \(\mu^2\) attenuation \(f(\mu)=1/(1+k\mu^2)\) (\cref{sec:propulsion-model}). This is a pragmatic shaping term (not a blade-element or momentum-theory model) and ignores the sign of axial velocity. It therefore cannot represent windmilling, vortex-ring, or braking regimes.

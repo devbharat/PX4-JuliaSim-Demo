@@ -1,0 +1,92 @@
+\section{Aircraft specification and composition}
+\label{sec:configuration}
+
+Simulation instances are built from an \code{AircraftSpec} (\code{src/sim/Aircraft/Spec.jl}) typically loaded from TOML via \code{Aircraft.load\_spec} (\code{src/sim/Aircraft/TOMLIO.jl}). The spec layer exists to separate:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item continuous plant integration choices (integrator, contact model),
+  \item environment and timeline definition,
+  \item aircraft component instances (airframe geometry, motors, batteries), and
+  \item runtime boundary configuration (PX4 library path, uORB config, logging/recording).
+\end{itemize}
+
+\subsection{TOML specs and inheritance}
+
+The repository ships TOML-backed default specs for common workflows (e.g. Iris). Specs support an \code{extends=[...]} field which deep-merges one or more base specs to form the final configuration (\code{_load\_toml\_with\_extends}). The merge rules are:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item tables merge recursively,
+  \item arrays replace (they do \emph{not} append),
+  \item scalars replace.
+\end{itemize}
+Cycles in the \code{extends} chain are detected and rejected.
+
+\paragraph{Strict schema checking.}
+When \code{strict=true} (the default in all shipped workflows), each TOML table is guarded by an explicit allowed-key set (\code{_known\_keys!}). Unknown keys are treated as errors rather than being ignored.
+
+\paragraph{Path resolution.}
+All file paths in the spec (e.g. \code{px4.mission\_path}, \code{px4.libpath}, battery asset CSVs) are resolved relative to the directory of the root spec file (\code{_resolve\_path}) with \code{\textasciitilde} expansion. Some fields require the file to exist (e.g. \code{extends} items), others allow non-existing outputs (e.g. log/record output paths).
+
+\paragraph{Microsecond quantization.}
+Timeline intervals in seconds are converted to integer microseconds with a strict exactness check (\cref{sec:runtime-timebase}). If you specify a cadence such as \(0.004\) seconds, it must be exactly representable as an integer number of microseconds.
+
+\subsection{Assembly into an engine}
+
+The build entrypoint constructs an \emph{aircraft instance} containing:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item a fully constructed hybrid timeline (autopilot/wind/log/scenario axes merged into a single event axis),
+  \item an initial plant state \(x_0\),
+  \item the plant RHS functor \(f(t,x,u)\) (typically \code{CoupledMultirotorModel}),
+  \item an integrator instance, and
+  \item a set of runtime sources (scenario, wind, estimator, autopilot) selected by run mode.
+\end{itemize}
+The runtime engine then wires these into \code{Sim.Runtime.Engine}.
+
+\subsection{Schema overview (TOML \texorpdfstring{$\to$}{->} \texorpdfstring{\code{AircraftSpec}}{AircraftSpec})}
+\label{sec:config-schema}
+
+The top-level TOML keys map to strongly-typed sub-structs inside \code{AircraftSpec} via \code{spec\_from\_toml\_dict}. \cref{tab:schema-overview} summarizes the main blocks; each block has additional substructure that is validated during parsing.
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l X@{}}
+    \toprule
+    TOML block & Julia type & Notes (defaults / build-time behavior) \\
+    \midrule
+    \code{schema\_version} & \code{Int} & Must be \code{1}. \\
+    \code{aircraft} & name + seed & \code{seed} drives deterministic RNGs (wind uses \code{seed}, estimator uses \code{seed+1}). \\
+    \code{home} & \code{Autopilots.HomeLocation} & Used for NED$\leftrightarrow$LLA injection into PX4. \\
+    \code{px4} & \code{PX4Spec} & \code{libpath} required for \code{:live}/\code{:record}; \code{uorb} contract defines pubs/subs. \\
+    \code{timeline} & \code{TimelineSpec} & Defines \code{t\_end} and axis cadences; converted to integer microseconds. \\
+    \code{environment} & \code{EnvironmentSpec} & Live build uses selected wind model; replay build forces \code{NoWind}. \\
+    \code{scenario} & \code{ScenarioSpec} & Default builder creates an \code{EventScenario} with \code{arm\_time} and \code{mission\_time}. \\
+    \code{estimator} & \code{EstimatorSpec} & \code{kind=:none} or \code{:noisy\_delayed}; delay defaults to \(2\,dt_{ap}\) when unset. \\
+    \code{plant} & \code{PlantSpec} & Selects integrator and contact model. \\
+    \code{airframe} & \code{AirframeSpec} & Multirotor geometry + propulsor + rigid-body parameters. \\
+    \code{actuation} & \code{ActuationSpec} & Maps PX4 channels to physical motors/servos; selects actuator dynamics models. \\
+    \code{power} & \code{PowerSpec} & Battery models + bus topology and sharing policy. \\
+    \code{sensors} & sensor list & Optional; currently GPS/rangefinder/radar stubs. \\
+    \code{run} & run defaults & Optional defaults for \code{mode}, recording paths, and CSV logging. \\
+    \bottomrule
+  \end{tabularx}
+  \caption{High-level TOML schema mapping into \code{AircraftSpec}. The code treats this schema as part of the simulator contract: unknown keys are rejected in strict mode.}
+  \label{tab:schema-overview}
+\end{table}
+
+
+\subsection{Live vs replay builds}
+
+The same plant model and engine are used in multiple modes:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Live}: sources are stateful components driven by deterministic RNGs (wind, estimator), and PX4 is stepped through the lockstep ABI.
+  \item \textbf{Record}: a live run with additional boundary-aligned stream capture.
+  \item \textbf{Replay}: live sources are replaced by trace samplers (ZOH/sample-and-hold) so the plant is driven by recorded inputs.
+\end{itemize}
+In replay, the environment's wind model is replaced with \code{NoWind} so that all wind forcing comes from the recorded wind trace and the bus sample-and-hold input.
+
+\subsection{Geometry-consistent PX4 configuration}
+
+When enabled, the builder derives PX4 control allocator geometry parameters from the multirotor spec (\cref{sec:px4-bridge}). This prevents a common lockstep failure mode where the controller allocates using a different rotor layout than the plant uses.
+
+\paragraph{Defaults.}
+{\raggedright
+Many \code{AircraftSpec} sub-structs have pragmatic defaults. For example, \code{PlantSpec.integrator=:RK45}. Environment defaults include \code{EnvironmentSpec.wind=:ou} and \code{EnvironmentSpec.gravity=:uniform}. The shipped Iris spec asset in \cref{app:iris} provides a concrete example.\par}

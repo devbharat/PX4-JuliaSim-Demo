@@ -1,0 +1,155 @@
+\section{Record \texorpdfstring{$\to$}{->} replay and determinism verification}
+\label{sec:record-replay}
+
+The runtime includes a deliberately small record/replay facility whose sole purpose is to make plant-side changes falsifiable without re-running PX4. A ``record'' run captures boundary-aligned streams on the engine's integer-microsecond axes. A ``replay'' run then swaps live sources for deterministic trace samplers (\cref{sec:runtime-boundary}), turning the closed-loop PX4 run into an open-loop plant replay driven by the recorded inputs.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      node distance=6mm and 10mm,
+      font=\small,
+      box/.style={draw, align=center, minimum width=38mm, inner ysep=4pt, inner xsep=6pt},
+      arr/.style={-Latex, line width=0.4pt}
+    ]
+    \node[box] (live) {Live run\\(PX4 lockstep)};
+    \node[box, right=of live] (rec) {\code{InMemoryRecorder}\\streams + times};
+    \node[box, right=of rec] (tier0) {\code{Tier0Recording}\\(optionally saved)};
+    \node[box, below=of tier0] (replay) {Replay runs\\(plant-only)};
+    \node[box, left=of replay] (metrics) {Error metrics\\vs reference};
+    \draw[arr] (live) -- (rec);
+    \draw[arr] (rec) -- (tier0);
+    \draw[arr] (tier0) -- (replay);
+    \draw[arr] (replay) -- (metrics);
+  \end{tikzpicture}
+  \caption{Record/replay workflow: a single PX4 live run records boundary-aligned streams which are then reused to replay the plant under different integrators or plant variants.}
+  \label{fig:record-replay-pipeline}
+\end{figure}
+
+\subsection{Trace representation}
+\label{sec:trace-model}
+
+Recorded streams are represented as typed traces indexed by an explicit integer-microsecond axis (\code{src/sim/Recording/Traces.jl}). The implementation provides three sampling semantics:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{\code{SampledTrace}}: defined only at exact axis times; sampling throws if the query time does not match an axis element.
+  \item \textbf{\code{ZOHTrace}}: zero-order hold; sampling at time $t$ returns the most recent sample with time $\le t$.
+  \item \textbf{\code{SampleHoldTrace}}: identical lookup to \code{ZOHTrace} but used to communicate ``sample-and-hold input'' intent (notably wind forcing).
+\end{itemize}
+All sampling is a deterministic binary search over the stored axis vector.
+
+\subsection{Recorder and axis validation}
+
+The default recorder is \code{Recording.InMemoryRecorder} (\code{src/sim/Recording/Recorder.jl}). It stores, for each named stream, a vector of timestamps and a vector of values.
+
+\paragraph{Record-time checks.}
+Each stream enforces nondecreasing timestamps (monotone time). It intentionally does \emph{not} require that every recorded timestamp belongs to a particular axis; that contract is validated when a trace is constructed.
+
+\paragraph{Trace-build checks.}
+When converting streams into traces, helpers such as \code{zoh\_trace(rec, name, axis)} validate that the recorded timestamps match the expected engine axis \emph{exactly} (\code{_require\_axis\_match!}). This is a fail-fast guard: ``almost aligned'' recordings do not silently produce incorrect sample-and-hold behavior.
+
+\subsection{What is recorded in \texorpdfstring{\code{mode=:record}}{mode=:record}}
+\label{sec:recorded-streams}
+
+Record mode is implemented in the canonical engine loop (\code{src/sim/Runtime/Engine.jl}) via explicit \code{record!(recorder, name, t\_us, value)} calls at boundary stages.
+
+\paragraph{Tier-0 streams.}
+The helper \code{Recording.tier0\_traces} builds a minimal bundle sufficient for plant-only replay:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{:cmd} (\code{ActuatorCommand}) recorded on the autopilot axis and replayed with ZOH semantics.
+  \item \code{:wind\_base\_ned} (\code{Vec3}) recorded on the wind axis and replayed as sample-and-hold.
+  \item \code{:plant}, \code{:battery}, \code{:batteries} recorded on the log axis as exact samples.
+\end{itemize}
+
+\paragraph{Scenario streams.}
+The engine can also record scenario outputs (arm/mission/RTL command, landed flag, faults, and optional wind disturbance). Two recording layouts exist (\code{src/sim/Recording/Recorder.jl}):
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Event-axis recording} (keys \code{*\_evt} on \code{timeline.evt}): enabled by \code{EngineConfig.record\_faults\_evt=true} (default in \code{Sim.simulate}). This captures scenario changes at the earliest possible hybrid boundary.
+  \item \textbf{Scenario-axis recording} (keys without suffix on \code{timeline.scn}): used when event-axis recording is disabled.
+\end{itemize}
+
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabular}{@{}llll@{}}
+    \toprule
+    Stream key & Value type & Axis & Trace semantics \\
+    \midrule
+    \code{:cmd} & \code{ActuatorCommand} & \code{ap} & \code{ZOHTrace} \\
+    \code{:wind\_base\_ned} & \code{Vec3} & \code{wind} & \code{SampleHoldTrace} \\
+    \code{:plant} & \code{PlantState} & \code{log} & \code{SampledTrace} \\
+    \code{:battery} & \code{BatteryStatus} & \code{log} & \code{SampledTrace} \\
+    \code{:batteries} & \code{Vector\{BatteryStatus\}} & \code{log} & \code{SampledTrace} \\
+    \code{:ap\_cmd\_evt}, \code{:landed\_evt}, \code{:faults\_evt} & scenario outputs & \code{evt} & \code{ZOHTrace} \\
+    (optional) \code{:wind\_dist\_evt} & \code{Vec3} & \code{evt} & \code{ZOHTrace} \\
+    (optional) \code{:est} & \code{EstimatedState} & \code{ap} & \code{ZOHTrace} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Primary recorded streams and how they are replayed. ``Tier-0'' refers to the minimal set required to replay plant dynamics without stepping PX4.}
+  \label{tab:recorded-streams}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/record_vs_replay_overlay.png}
+  \caption{Record/replay overlay for a single axis (position \(z\)) comparing the reference replay (RK45) to a replay with RK4.}
+  \label{fig:record-vs-replay}
+\end{figure}
+
+\paragraph{Log snapshots are pre-step.}
+When the log axis is due, the engine records the current plant state and battery telemetry \emph{before} integrating the next interval (see the \code{due\_log} block in \code{process\_events\_at!}). As a result, \code{:plant[k]} corresponds to the boundary state at \code{timeline.log.t\_us[k]}.
+
+\subsection{Replay builds}
+
+Replay runs are ordinary engine runs where live sources are replaced by trace-based sources:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{Sources.ReplayAutopilotSource} publishes recorded \code{bus.cmd} (ZOH on \code{timeline.ap}).
+  \item \code{Sources.ReplayWindSource} publishes recorded base wind (sample-and-hold on \code{timeline.wind}).
+  \item \code{Sources.ReplayScenarioSource} (optional) publishes recorded \code{bus.ap\_cmd}, \code{bus.landed}, \code{bus.faults}, and \code{bus.wind\_dist\_ned}.
+\end{itemize}
+To avoid double-forcing, the replay environment disables the live wind model (\code{Environment.NoWind}); all wind forcing comes from the recorded trace plus any replayed disturbance applied at event boundaries (\cref{sec:runtime-boundary}).
+
+\subsection{Integrator sweep workflow}
+\label{sec:integrator-sweep}
+
+The workflow \code{Workflows.RecordReplay.compare\_integrators\_recording} runs a reference replay and then replays the same recording under a solver sweep:\vspace{-2pt}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item Build replay sources from the recording (Tier-0 traces, plus scenario traces if required).
+  \item Run a \emph{reference} plant replay on the same \code{timeline} and \code{plant0}, recording \code{:plant} and \code{:battery} on the log axis.
+  \item For each candidate solver, rerun the plant replay and compute error series vs the reference trajectory.
+\end{enumerate}
+The default reference integrator is an RK45 instance with tighter tolerances than the nominal Iris config (\code{_default\_reference\_integrator()} in \code{src/Workflows/RecordReplay.jl}). Error metrics are computed by \code{Verification.error\_series} (\code{src/sim/Verification.jl}) and reported as max norms over the log-axis samples.
+
+\paragraph{Iris convenience wrapper.}
+\code{Workflows.RecordReplay.compare\_integrators\_iris\_mission} combines:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item an optional PX4 live record run via \code{Workflows.simulate\_iris\_mission(mode=:record)},
+  \item reconstruction of the replay plant model from the TOML spec, and
+  \item a plant-only replay sweep with optional CSV output.
+\end{itemize}
+
+\subsection{Determinism caveats}
+
+The recording format is Julia \code{Serialization} (\code{Recording.write\_recording}/\code{read\_recording}). To reduce foot-guns, a schema version field (\code{BUS\_SCHEMA\_VERSION}) is checked at load time. Nevertheless, recordings should be treated as best-effort artifacts: they are intended for within-repository regression and integrator envelope validation, not as a stable long-term interchange format.
+
+Finally, a \code{Tier0Recording} intentionally does not persist the full plant model or spec. Plant-only replay therefore assumes you rebuild the same \code{dynfun} (and consistent parameters) used to generate the recording.
+
+
+\subsection{TOML configuration: run modes and recording I/O}
+\label{sec:run-toml}
+
+Record/replay behavior is selected in the \code{[run]} block (\code{RunSpec} in \code{src/sim/Aircraft/Spec.jl}):
+
+\begin{lstlisting}[language=toml]
+[run]
+mode = "lockstep"        # "lockstep" or "replay"
+recording_out = "run.jls"  # optional; if set, writes a recording
+recording_in  = "run.jls"  # used only when mode="replay"
+log_csv = "log.csv"         # optional; if set, writes a CSV log
+\end{lstlisting}
+
+\paragraph{Semantics.}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \code{mode}: selects whether PX4 is stepped live (\code{"lockstep"}) or whether the simulator consumes a previously recorded input/bus stream (\code{"replay"}).
+  \item \code{recording\_out}: when non-null, the engine serializes the replayable boundary stream at the end of each run.
+  \item \code{recording\_in}: path to a previously recorded stream; required for replay.
+  \item \code{log\_csv}: optional human-readable CSV output independent of the replay stream.
+\end{itemize}

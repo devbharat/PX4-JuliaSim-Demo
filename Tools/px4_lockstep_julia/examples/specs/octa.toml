@@ -38,7 +38,7 @@ dt_log_s = 0.01
 
 [plant]
 integrator = "RK45"
-contact = "flat_ground"
+contact = "flat_ground_constraint"
 
 [airframe]
 kind = "multirotor"

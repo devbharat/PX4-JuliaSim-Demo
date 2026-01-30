@@ -62,5 +62,7 @@ This ordering is implemented in exactly one place: `Runtime.Engine`.
   but a future opt-in scenario cadence could reduce overhead for heavy scenarios.
 - Dynamic insertion of new explicit boundaries at runtime is not supported; timeline
   boundaries are computed up-front.
-- Contact event detection (root-finding) is not implemented; penalty contact is treated
-  as continuous forcing.
+- Contact event detection / hybrid discontinuities are implemented via the optional
+  `plant_integrate_interval` protocol. For example, the coupled multirotor model uses
+  integer-microsecond TOI localization + an impact map and can switch to grounded
+  time-stepping contact substeps.

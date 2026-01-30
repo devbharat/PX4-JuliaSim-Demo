@@ -15,6 +15,22 @@ A log entry is intended to represent a deterministic, pre-step snapshot of the s
 - (optionally) propulsion outputs (rotor thrust/omega, up to 12 channels)
 - (optionally) battery telemetry
 
+### Contact and landing diagnostics
+
+When available, the runtime also logs a small set of **contact/landing diagnostics** on the
+log axis (see `Sim.Logging.csv_schema()` for exact column names):
+
+- `landed_phy` — physics-derived landed flag
+- `acc_x/y/z` — inertial acceleration sample in NED at the log boundary
+- `spec_bx/by/bz` — accelerometer-like specific force in body/FRD at the log boundary
+- `impact_dv_*` — max impact Δv since the last log sample (NED)
+- `impact_acc_est_*` — estimated 1-tick impact acceleration computed as `impact_dv / dt_autopilot`
+- `impact_time_us`, `impact_count` — timestamp and count for impacts since the last log
+
+The impact acceleration values are **estimates** (impulses are discontinuous), but they are
+useful for not missing touchdown spikes when logging at a lower rate than the contact
+substep rate.
+
 ## Log sinks
 
 A *log sink* receives log entries and decides how to store them.

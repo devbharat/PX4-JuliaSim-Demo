@@ -8,7 +8,7 @@ extends = ["iris_lockstep.toml"]
 mission_path = "../../src/Workflows/assets/missions/iris_long_mission.waypoints"
 
 [timeline]
-t_end_s = 600.0
+t_end_s = 700.0
 
 [[power.batteries]]
 id = "bat1"

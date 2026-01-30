@@ -73,3 +73,39 @@ plant_on_autopilot_tick(model, x, cmd) -> x2
 The default is "no-op" (no method defined).
 """
 function plant_on_autopilot_tick end
+
+"""Protocol: integrate a plant state across a timeline interval.
+
+Why this exists
+---------------
+Most plant models can be advanced by calling `Integrators.step_integrator` directly.
+
+Ground contact, however, is inherently *hybrid* (it introduces discontinuities at
+touchdown / liftoff). Handling that robustly and deterministically often requires
+event localization (zero-crossing / time-of-impact search) and an impact map that
+modifies the state at an internal time within the interval.
+
+Rather than baking any specific contact logic into the canonical runtime engine,
+an advanced plant model can override interval integration by providing this method.
+
+Signature
+---------
+```
+plant_integrate_interval(dynfun, integrator, t0_us, x0, u, dt_us) -> x1
+```
+
+Arguments:
+- `dynfun`: dynamics functor used by the integrator (`f(t, x, u)`)
+- `integrator`: any integrator supported by `Integrators.step_integrator`
+- `t0_us`: interval start time in integer microseconds
+- `x0`: plant state at `t0_us`
+- `u`: held plant input over the interval (sample-and-hold)
+- `dt_us`: interval length in integer microseconds
+
+Notes
+-----
+* Implementations should be deterministic and must not use RNG.
+* The runtime engine will still apply `plant_project` after the interval if that
+  protocol is implemented.
+"""
+function plant_integrate_interval end

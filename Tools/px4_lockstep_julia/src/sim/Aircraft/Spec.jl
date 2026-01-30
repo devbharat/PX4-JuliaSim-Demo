@@ -419,7 +419,7 @@ Base.@kwdef struct PlantSpec
     integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45
 
     """Contact model used by the plant dynamics."""
-    contact::Contacts.AbstractContactModel = Contacts.FlatGroundContact()
+    contact::Contacts.AbstractContactModel = Contacts.FlatGroundConstraintContact()
 end
 
 Base.@kwdef struct AircraftSpec
@@ -490,7 +490,7 @@ function octa_spec(;
     seed::Integer = 1,
     integrator::Union{Symbol,Integrators.AbstractIntegrator} = :RK45,
     home = Autopilots.HomeLocation(),
-    contact = Contacts.FlatGroundContact(),
+    contact = Contacts.FlatGroundConstraintContact(),
     telemetry = Runtime.NullTelemetry(),
     log_sinks = nothing,
     # Geometry / mass properties

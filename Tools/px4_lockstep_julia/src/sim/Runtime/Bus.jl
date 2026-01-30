@@ -26,7 +26,7 @@ using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
 """Bump this when *field meanings or units* change."""
-const BUS_SCHEMA_VERSION = 10
+const BUS_SCHEMA_VERSION = 12
 
 """A minimal atmosphere snapshot for bus-level coupling."""
 Base.@kwdef struct EnvSample
@@ -47,7 +47,14 @@ Fields
 - `wind_dist_ned`: additive wind disturbance requested by scenario (ZOH between boundaries)
 - `faults`: bus-level fault state (scenario publishes; plant consumes)
 - `ap_cmd`: high-level autopilot request (arm/mission/RTL)
-- `landed`: landed flag for PX4
+- `landed`: landed flag for PX4 (scenario/system-level)
+- `landed_phy`: physics-derived landed flag (diagnostics/logging)
+- `accel_ned`: inertial acceleration sample (NED, m/s^2) at the current boundary
+- `spec_force_body`: accelerometer-like specific force sample (body/FRD, m/s^2)
+- `impact_dv_ned`: max impact Δv (NED, m/s) since the last log sample
+- `impact_accel_est_ned`: estimated impact acceleration (NED, m/s^2) from `impact_dv_ned / dt_autopilot`
+- `impact_time_us`: timestamp (us) of the max impact Δv
+- `impact_count`: number of impacts since the last log sample
 - `est`: estimated state presented to autopilot (truth or injected estimator)
 - `env`: minimal atmosphere sample (optional)
 - `batteries`: vector of battery telemetry (fixed length after build)
@@ -66,6 +73,19 @@ mutable struct SimBus
     # High-level autopilot command + status (piecewise-constant between boundaries).
     ap_cmd::AutopilotCommand
     landed::Bool
+
+    # Physics-derived landed flag. This does not override `landed` yet.
+    landed_phy::Bool
+
+    # Acceleration telemetry (for logging / future sensor synthesis).
+    accel_ned::Vec3
+    spec_force_body::Vec3
+
+    # Impact telemetry (latched until the next log boundary consumes it).
+    impact_dv_ned::Vec3
+    impact_accel_est_ned::Vec3
+    impact_time_us::UInt64
+    impact_count::UInt32
 
     # Estimated state presented to the autopilot.
     # Contract: updated *before* the autopilot tick at the same `time_us`.
@@ -98,6 +118,13 @@ function SimBus(; time_us::UInt64 = 0, n_batteries::Integer = 1)
         FaultState(),
         AutopilotCommand(),
         true,
+        true,
+        vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 0.0, 0.0),
+        UInt64(0),
+        UInt32(0),
         EstimatedState(
             pos_ned = vec3(0.0, 0.0, 0.0),
             vel_ned = vec3(0.0, 0.0, 0.0),
@@ -125,6 +152,14 @@ function reset_bus!(bus::SimBus, t_us::UInt64)
     bus.faults = FaultState()
     bus.ap_cmd = AutopilotCommand()
     bus.landed = true
+    bus.landed_phy = true
+
+    bus.accel_ned = vec3(0.0, 0.0, 0.0)
+    bus.spec_force_body = vec3(0.0, 0.0, 0.0)
+    bus.impact_dv_ned = vec3(0.0, 0.0, 0.0)
+    bus.impact_accel_est_ned = vec3(0.0, 0.0, 0.0)
+    bus.impact_time_us = UInt64(0)
+    bus.impact_count = UInt32(0)
     bus.est = EstimatedState(
         pos_ned = vec3(0.0, 0.0, 0.0),
         vel_ned = vec3(0.0, 0.0, 0.0),

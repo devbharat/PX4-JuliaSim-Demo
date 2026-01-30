@@ -298,11 +298,14 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
         k = lowercase(String(tbl_any))
         if k in ("none", "no", "off", "no_contact", "nocontact")
             return Contacts.NoContact()
-        elseif k in ("flat", "flat_ground", "ground")
+        elseif k in ("flat", "flat_ground", "ground", "flat_ground_penalty", "penalty")
             return Contacts.FlatGroundContact()
+        elseif k in
+               ("flat_ground_constraint", "constraint", "unilateral", "flat_constraint")
+            return Contacts.FlatGroundConstraintContact()
         else
             error(
-                "$ctx: unknown contact kind '$tbl_any' (expected 'flat_ground' or 'no_contact')",
+                "$ctx: unknown contact kind '$tbl_any' (expected 'flat_ground', 'flat_ground_constraint', or 'no_contact')",
             )
         end
     end
@@ -311,11 +314,30 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
     # Allow ASCII alias `mu` for convenience.
     strict && _known_keys!(
         tbl,
-        Set(["kind", "k_n_per_m", "c_n_per_mps", "μ", "mu", "v_eps", "enable_friction"]),
+        Set([
+            "kind",
+            # penalty
+            "k_n_per_m",
+            "c_n_per_mps",
+            # shared
+            "μ",
+            "mu",
+            "v_eps",
+            "enable_friction",
+            # constraint
+            "z_slop_m",
+            # hybrid impact (Phase 3+)
+            "restitution",
+            "e",
+            "v_rest_threshold_mps",
+            "enable_impact_friction",
+            # grounded time-stepping (Phase 4+)
+            "h_contact_us",
+        ]),
         ctx,
     )
     kind = lowercase(String(get(tbl, "kind", "flat_ground")))
-    if kind in ("flat", "flat_ground", "ground")
+    if kind in ("flat", "flat_ground", "ground", "flat_ground_penalty", "penalty")
         return Contacts.FlatGroundContact(
             k_n_per_m = _as_f64(get(tbl, "k_n_per_m", 5_000.0), "$ctx.k_n_per_m"),
             c_n_per_mps = _as_f64(get(tbl, "c_n_per_mps", 600.0), "$ctx.c_n_per_mps"),
@@ -326,10 +348,37 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
                 "$ctx.enable_friction",
             ),
         )
+    elseif kind in ("flat_ground_constraint", "constraint", "unilateral", "flat_constraint")
+        return Contacts.FlatGroundConstraintContact(
+            μ = _as_f64(get(tbl, haskey(tbl, "μ") ? "μ" : "mu", 0.8), "$ctx.mu"),
+            v_eps = _as_f64(get(tbl, "v_eps", 0.05), "$ctx.v_eps"),
+            enable_friction = _as_bool(
+                get(tbl, "enable_friction", true),
+                "$ctx.enable_friction",
+            ),
+            restitution = _as_f64(
+                get(tbl, haskey(tbl, "e") ? "e" : "restitution", 0.0),
+                "$ctx.restitution",
+            ),
+            v_rest_threshold_mps = _as_f64(
+                get(tbl, "v_rest_threshold_mps", 0.05),
+                "$ctx.v_rest_threshold_mps",
+            ),
+            enable_impact_friction = _as_bool(
+                get(tbl, "enable_impact_friction", true),
+                "$ctx.enable_impact_friction",
+            ),
+            h_contact_us = UInt64(
+                max(1, _as_int(get(tbl, "h_contact_us", 1000), "$ctx.h_contact_us")),
+            ),
+            z_slop_m = _as_f64(get(tbl, "z_slop_m", 1e-6), "$ctx.z_slop_m"),
+        )
     elseif kind in ("none", "no", "off", "no_contact", "nocontact")
         return Contacts.NoContact()
     else
-        error("$ctx: unknown contact kind '$kind' (expected 'flat_ground' or 'no_contact')")
+        error(
+            "$ctx: unknown contact kind '$kind' (expected 'flat_ground', 'flat_ground_constraint', or 'no_contact')",
+        )
     end
 end
 

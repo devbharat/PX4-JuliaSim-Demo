@@ -263,6 +263,62 @@ def plot_battery(data: dict[str, list[float]], output: Path, show: bool) -> None
     plt.close(fig)
 
 
+def plot_contact(data: dict[str, list[float]], output: Path, show: bool) -> None:
+    t = data.get("time_s", [])
+    if not t:
+        return
+
+    landed = data.get("landed_phy", [])
+    impact_count = data.get("impact_count", [])
+    impact_dv_z = data.get("impact_dv_z", [])
+    impact_acc_z = data.get("impact_acc_est_z", [])
+    acc_z = data.get("acc_z", [])
+    spec_bz = data.get("spec_bz", [])
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
+    ax_state, ax_impulse, ax_accel = axes
+
+    if landed and len(landed) == len(t):
+        ax_state.step(t, landed, where="post", label="landed_phy")
+    if impact_count and len(impact_count) == len(t):
+        ax_state.step(t, impact_count, where="post", label="impact_count")
+    ax_state.set_ylabel("flag / count")
+    ax_state.set_title("Contact State")
+    ax_state.legend()
+    ax_state.grid(True, alpha=0.3)
+
+    handles: list[plt.Line2D] = []
+    labels: list[str] = []
+    if impact_dv_z and len(impact_dv_z) == len(t):
+        # Keep dv around for potential future use but avoid plotting to reduce clutter.
+        pass
+    if impact_acc_z and len(impact_acc_z) == len(t):
+        (line_acc,) = ax_impulse.plot(t, impact_acc_z, color="tab:orange", label="impact_acc_est_z")
+        handles.append(line_acc)
+        labels.append("impact_acc_est_z")
+        ax_impulse.set_ylabel("m/s^2")
+    if handles:
+        ax_impulse.legend(handles, labels)
+    ax_impulse.set_title("Impact Accel (Z)")
+    ax_impulse.grid(True, alpha=0.3)
+
+    if acc_z and len(acc_z) == len(t):
+        ax_accel.plot(t, acc_z, label="acc_z (NED)")
+    if spec_bz and len(spec_bz) == len(t):
+        ax_accel.plot(t, spec_bz, label="spec_bz (body)")
+    ax_accel.set_xlabel("time (s)")
+    ax_accel.set_ylabel("m/s^2")
+    ax_accel.set_title("Acceleration / Specific Force")
+    ax_accel.legend()
+    ax_accel.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_inflow(data: dict[str, list[float]], output: Path, show: bool) -> None:
     t = data["time_s"]
     vz = data.get("vel_z", [])
@@ -344,6 +400,11 @@ def main() -> int:
         default="",
         help="Optional output path for a battery/thermal summary plot",
     )
+    parser.add_argument(
+        "--contact-output",
+        default="",
+        help="Optional output path for a contact/landing summary plot",
+    )
     parser.add_argument("--show", action="store_true", help="Display plot window")
     args = parser.parse_args()
 
@@ -362,9 +423,16 @@ def main() -> int:
         battery_output = output_path.with_name(f"{output_path.stem}_battery{output_path.suffix}")
     if battery_output:
         plot_battery(data, Path(battery_output), args.show)
+    contact_output = args.contact_output
+    if args.show and not contact_output:
+        contact_output = output_path.with_name(f"{output_path.stem}_contact{output_path.suffix}")
+    if contact_output:
+        plot_contact(data, Path(contact_output), args.show)
     print(f"Saved plot to {args.output}")
     if battery_output:
         print(f"Saved battery plot to {battery_output}")
+    if contact_output:
+        print(f"Saved contact plot to {contact_output}")
     return 0
 
 

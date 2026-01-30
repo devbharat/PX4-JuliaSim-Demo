@@ -6,10 +6,10 @@ libpath = "../../../../build/px4_sitl_lockstep/src/lib/px4_lockstep/libpx4_locks
 mission_path = "../../src/Workflows/assets/missions/simple_mission.waypoints"
 
 [timeline]
-t_end_s = 68.0
+t_end_s = 80.0
 
 [plant]
-contact = "flat_ground"
+contact = "flat_ground_constraint"
 
 [environment]
 wind = "ou"

@@ -18,6 +18,9 @@ include("verification_cases.jl")
 # These start as `@test_skip` shells and will be filled in incrementally.
 include("verification_contracts.jl")
 
+# Ground contact regression harness (Phase 0/1).
+include("ground_contact_harness.jl")
+
 # uORB interface + injection scheduling checks (no PX4 binary required).
 include("uorb_injection.jl")
 include("lockstep_runtime.jl")

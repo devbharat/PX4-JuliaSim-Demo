@@ -34,6 +34,7 @@ include("Environment.jl")
 include("Powertrain.jl")
 include("Propulsion.jl")
 include("Vehicles.jl")
+include("Contacts.jl")
 
 # Continuous-time plant state for full variable-step integration.
 include("Plant.jl")
@@ -43,7 +44,6 @@ include("PlantInterface.jl")
 
 include("Integrators.jl")
 include("Estimators.jl")
-include("Contacts.jl")
 include("Events.jl")
 include("Autopilots.jl")
 include("Scenario.jl")

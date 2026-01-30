@@ -137,7 +137,7 @@ dt_log_s = 0.01
 ```toml
 [plant]
 integrator = "RK45"       # Euler|RK4|RK23|RK45
-contact = "flat_ground"   # flat_ground|no_contact
+contact = "flat_ground_constraint"   # flat_ground_constraint|flat_ground|no_contact
 
 # Or a full table:
 # [plant.integrator]
@@ -172,10 +172,17 @@ contact = "flat_ground"   # flat_ground|no_contact
 # quantize_us = true
 #
 # [plant.contact]
-# kind = "flat_ground"
+# kind = "flat_ground"  # penalty
+# kind = "flat_ground_constraint"  # hybrid: TOI + impact map + grounded time-stepping
 # k_n_per_m = 5000.0
 # c_n_per_mps = 600.0
 # mu = 0.8
+# restitution = 0.0
+# v_rest_threshold_mps = 0.05
+# enable_friction = true
+# enable_impact_friction = true
+# h_contact_us = 1000
+# z_slop_m = 1.0e-6
 ```
 
 ### `[environment]`

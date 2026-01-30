@@ -39,6 +39,7 @@ using ..Vehicles
 using ..Propulsion
 using ..Powertrain
 using ..Faults: FaultState
+using ..Contacts: ContactInfo
 
 export PlantState,
     PlantDeriv,
@@ -201,6 +202,9 @@ Base.@kwdef struct PlantOutputs{N,B,K}
     rho_kgm3::Float64 = NaN
     temp_k::Float64 = NaN
     air_vel_body::Vec3 = Vec3(NaN, NaN, NaN)
+
+    # Ground contact observables (optional).
+    contact::Union{Nothing,ContactInfo} = nothing
 
     # Per-battery telemetry (deterministic order, length = B).
     battery_statuses::Union{Nothing,SVector{B,Powertrain.BatteryStatus}} = nothing

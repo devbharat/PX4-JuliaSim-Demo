@@ -25,7 +25,7 @@ export reserve!
 export LogColumn, LogSchema, csv_schema, csv_header_line, write_csv_header
 
 # Update this when CSV columns are added, removed, or renamed.
-const CSV_SCHEMA_VERSION = 4
+const CSV_SCHEMA_VERSION = 6
 
 # Logging currently records actuator motor commands as 12 channels (PX4 lockstep ABI).
 # For consistency (and to avoid silently dropping info for hex/octo/VTOL), rotor
@@ -156,6 +156,34 @@ const CSV_LOG_SCHEMA = LogSchema(
         LogColumn("mission_seq", "idx", "mission sequence index"),
         LogColumn("mission_count", "count", "mission item count"),
         LogColumn("mission_finished", "bool", "mission finished flag"),
+        # contact/landing diagnostics
+        LogColumn("landed_phy", "bool", "physics-derived landed flag"),
+        LogColumn("acc_x", "m/s^2", "inertial acceleration NED x"),
+        LogColumn("acc_y", "m/s^2", "inertial acceleration NED y"),
+        LogColumn("acc_z", "m/s^2", "inertial acceleration NED z"),
+        LogColumn("spec_bx", "m/s^2", "specific force body x"),
+        LogColumn("spec_by", "m/s^2", "specific force body y"),
+        LogColumn("spec_bz", "m/s^2", "specific force body z"),
+        LogColumn("impact_dv_x", "m/s", "max impact Δv NED x since last log"),
+        LogColumn("impact_dv_y", "m/s", "max impact Δv NED y since last log"),
+        LogColumn("impact_dv_z", "m/s", "max impact Δv NED z since last log"),
+        LogColumn(
+            "impact_acc_est_x",
+            "m/s^2",
+            "estimated impact acceleration NED x (impact_dv/dt_autopilot)",
+        ),
+        LogColumn(
+            "impact_acc_est_y",
+            "m/s^2",
+            "estimated impact acceleration NED y (impact_dv/dt_autopilot)",
+        ),
+        LogColumn(
+            "impact_acc_est_z",
+            "m/s^2",
+            "estimated impact acceleration NED z (impact_dv/dt_autopilot)",
+        ),
+        LogColumn("impact_time_us", "us", "timestamp of max impact Δv"),
+        LogColumn("impact_count", "count", "number of impacts since last log"),
         # lockstep clock
         LogColumn("time_us", "us", "authoritative lockstep clock"),
     ],
@@ -240,6 +268,15 @@ mutable struct SimLog <: AbstractLogSink
     mission_seq::Vector{Int32}
     mission_count::Vector{Int32}
     mission_finished::Vector{Int32}
+
+    # contact/landing diagnostics
+    landed_phy::Vector{Int32}
+    accel_ned::Vector{NTuple{3,Float64}}
+    spec_force_body::Vector{NTuple{3,Float64}}
+    impact_dv_ned::Vector{NTuple{3,Float64}}
+    impact_accel_est_ned::Vector{NTuple{3,Float64}}
+    impact_time_us::Vector{UInt64}
+    impact_count::Vector{Int32}
 end
 
 function SimLog()
@@ -271,6 +308,13 @@ function SimLog()
         Int32[],
         Int32[],
         Int32[],
+        Int32[],
+        Int32[],
+        NTuple{3,Float64}[],
+        NTuple{3,Float64}[],
+        NTuple{3,Float64}[],
+        NTuple{3,Float64}[],
+        UInt64[],
         Int32[],
     )
 end
@@ -310,6 +354,13 @@ function reserve!(log::SimLog, n::Int)
     sizehint!(log.mission_seq, n)
     sizehint!(log.mission_count, n)
     sizehint!(log.mission_finished, n)
+    sizehint!(log.landed_phy, n)
+    sizehint!(log.accel_ned, n)
+    sizehint!(log.spec_force_body, n)
+    sizehint!(log.impact_dv_ned, n)
+    sizehint!(log.impact_accel_est_ned, n)
+    sizehint!(log.impact_time_us, n)
+    sizehint!(log.impact_count, n)
     return log
 end
 
@@ -372,6 +423,13 @@ function log!(
     mission_seq::Int32 = Int32(0),
     mission_count::Int32 = Int32(0),
     mission_finished::Int32 = Int32(0),
+    landed_phy::Int32 = Int32(0),
+    accel_ned::NTuple{3,Float64} = (NaN, NaN, NaN),
+    spec_force_body::NTuple{3,Float64} = (NaN, NaN, NaN),
+    impact_dv_ned::NTuple{3,Float64} = (0.0, 0.0, 0.0),
+    impact_accel_est_ned::NTuple{3,Float64} = (0.0, 0.0, 0.0),
+    impact_time_us::UInt64 = UInt64(0),
+    impact_count::Int32 = Int32(0),
     pos_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     vel_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
@@ -414,6 +472,14 @@ function log!(
     push!(sink.mission_seq, mission_seq)
     push!(sink.mission_count, mission_count)
     push!(sink.mission_finished, mission_finished)
+
+    push!(sink.landed_phy, landed_phy)
+    push!(sink.accel_ned, accel_ned)
+    push!(sink.spec_force_body, spec_force_body)
+    push!(sink.impact_dv_ned, impact_dv_ned)
+    push!(sink.impact_accel_est_ned, impact_accel_est_ned)
+    push!(sink.impact_time_us, impact_time_us)
+    push!(sink.impact_count, impact_count)
     return nothing
 end
 
@@ -433,6 +499,13 @@ function log!(
     mission_seq::Int32 = Int32(0),
     mission_count::Int32 = Int32(0),
     mission_finished::Int32 = Int32(0),
+    landed_phy::Int32 = Int32(0),
+    accel_ned::NTuple{3,Float64} = (NaN, NaN, NaN),
+    spec_force_body::NTuple{3,Float64} = (NaN, NaN, NaN),
+    impact_dv_ned::NTuple{3,Float64} = (0.0, 0.0, 0.0),
+    impact_accel_est_ned::NTuple{3,Float64} = (0.0, 0.0, 0.0),
+    impact_time_us::UInt64 = UInt64(0),
+    impact_count::Int32 = Int32(0),
     pos_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     vel_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
     acc_sp::NTuple{3,Float64} = (NaN, NaN, NaN),
@@ -511,6 +584,28 @@ function log!(
         mission_finished
     )
 
+    # contact/landing diagnostics
+    @printf(io, "%d,", landed_phy)
+    @printf(io, "%.6f,%.6f,%.6f,", accel_ned[1], accel_ned[2], accel_ned[3])
+    @printf(
+        io,
+        "%.6f,%.6f,%.6f,",
+        spec_force_body[1],
+        spec_force_body[2],
+        spec_force_body[3]
+    )
+    @printf(io, "%.6f,%.6f,%.6f,", impact_dv_ned[1], impact_dv_ned[2], impact_dv_ned[3])
+    @printf(
+        io,
+        "%.6f,%.6f,%.6f,",
+        impact_accel_est_ned[1],
+        impact_accel_est_ned[2],
+        impact_accel_est_ned[3]
+    )
+    print(io, impact_time_us)
+    print(io, ",")
+    @printf(io, "%d,", impact_count)
+
     # lockstep clock
     print(io, time_us)
     print(io, "\n")
@@ -539,6 +634,13 @@ function write_csv(log::SimLog, path::AbstractString)
             airb = log.air_vel_body[i]
             ωr = log.rotor_omega_rad_s[i]
             Tr = log.rotor_thrust_n[i]
+            landed_phy = log.landed_phy[i]
+            accel_ned = log.accel_ned[i]
+            spec_force_body = log.spec_force_body[i]
+            impact_dv_ned = log.impact_dv_ned[i]
+            impact_accel_est_ned = log.impact_accel_est_ned[i]
+            impact_time_us = log.impact_time_us[i]
+            impact_count = log.impact_count[i]
 
             @printf(io, "%.6f,", log.t[i])
             @printf(io, "%.6f,%.6f,%.6f,", p[1], p[2], p[3])
@@ -603,6 +705,34 @@ function write_csv(log::SimLog, path::AbstractString)
                 log.mission_count[i],
                 log.mission_finished[i]
             )
+
+            # contact/landing diagnostics
+            @printf(io, "%d,", landed_phy)
+            @printf(io, "%.6f,%.6f,%.6f,", accel_ned[1], accel_ned[2], accel_ned[3])
+            @printf(
+                io,
+                "%.6f,%.6f,%.6f,",
+                spec_force_body[1],
+                spec_force_body[2],
+                spec_force_body[3]
+            )
+            @printf(
+                io,
+                "%.6f,%.6f,%.6f,",
+                impact_dv_ned[1],
+                impact_dv_ned[2],
+                impact_dv_ned[3]
+            )
+            @printf(
+                io,
+                "%.6f,%.6f,%.6f,",
+                impact_accel_est_ned[1],
+                impact_accel_est_ned[2],
+                impact_accel_est_ned[3]
+            )
+            print(io, impact_time_us)
+            print(io, ",")
+            @printf(io, "%d,", impact_count)
 
             # lockstep clock
             print(io, log.time_us[i])

@@ -27,15 +27,17 @@ The engine uses duck-typed protocols:
 Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 """
 
-using ..Types: Vec3, quat_rotate_inv
+using ..Types: Vec3, vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize, validate
 using ..Plant: PlantInput, PlantOutputs, PlantState, battery_temp_c
+using ..Contacts: CONTACT_GROUNDED
 using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
 
 import ..plant_outputs
 import ..plant_project
 import ..plant_on_autopilot_tick
+import ..plant_integrate_interval
 
 import ..Logging
 
@@ -215,6 +217,7 @@ mutable struct Engine{PS,DF,I,AP,W,SC,ES,TL,R}
     has_outputs::Bool
     has_project::Bool
     has_ap_tick::Bool
+    has_integrate_interval::Bool
 end
 
 function Engine(
@@ -251,6 +254,10 @@ function Engine(
         plant_on_autopilot_tick,
         Tuple{typeof(dynfun),typeof(plant0),ActuatorCommand},
     )
+    has_integrate_interval = hasmethod(
+        plant_integrate_interval,
+        Tuple{typeof(dynfun),typeof(integrator),UInt64,typeof(plant0),PlantInput,UInt64},
+    )
 
     return Engine(
         cfg,
@@ -275,6 +282,7 @@ function Engine(
         has_outputs,
         has_project,
         has_ap_tick,
+        has_integrate_interval,
     )
 end
 
@@ -343,6 +351,176 @@ end
 ############################
 # Boundary processing
 ############################
+
+# ------------------------------------------------------------
+# Phase 6 (Plan1): PX4-facing/diagnostic signals on the bus
+# ------------------------------------------------------------
+
+# Physics-derived landed detection (hysteresis).
+const LANDED_PHYS_V_ENTER_MPS = 0.20
+const LANDED_PHYS_W_ENTER_RADPS = 0.20
+const LANDED_PHYS_V_EXIT_MPS = 0.30
+const LANDED_PHYS_W_EXIT_RADPS = 0.30
+
+# Standard gravity used for accelerometer-like "specific force" synthesis.
+# Note: we intentionally keep this constant here; when we add IMU models we can
+# source gravity from the environment model instead.
+const G_MPS2 = 9.80665
+
+@inline _norm2(v::Vec3) = v[1] * v[1] + v[2] * v[2] + v[3] * v[3]
+
+@inline function _contact_grounded(contact)::Bool
+    contact === nothing && return false
+    # ContactInfo has `active::Bool` and `mode::ContactMode`.
+    return getproperty(contact, :active) &&
+           (getproperty(contact, :mode) == CONTACT_GROUNDED)
+end
+
+"""Update `bus.landed_phy` from contact + kinematics with hysteresis."""
+@inline function _update_landed_phys!(bus::SimBus, rb::RigidBodyState, contact)
+    grounded = _contact_grounded(contact)
+
+    v = sqrt(_norm2(rb.vel_ned))
+    w = sqrt(_norm2(rb.ω_body))
+
+    if bus.landed_phy
+        bus.landed_phy =
+            grounded && (v < LANDED_PHYS_V_EXIT_MPS) && (w < LANDED_PHYS_W_EXIT_RADPS)
+    else
+        bus.landed_phy =
+            grounded && (v < LANDED_PHYS_V_ENTER_MPS) && (w < LANDED_PHYS_W_ENTER_RADPS)
+    end
+
+    return nothing
+end
+
+"""Update bus acceleration fields at the current boundary time.
+
+This publishes:
+- `bus.accel_ned`: inertial acceleration sample (NED)
+- `bus.spec_force_body`: accelerometer-like specific force (body/FRD)
+
+These are intended for logging and future sensor emulation.
+"""
+function _update_bus_accel!(sim::Engine)
+    u = PlantInput(cmd = sim.bus.cmd, wind_ned = sim.bus.wind_ned, faults = sim.bus.faults)
+
+    a_ned = vec3(NaN, NaN, NaN)
+    try
+        d = sim.dynfun(sim.t_s, sim.plant, u)
+        if hasproperty(d, :rb)
+            rb_d = getproperty(d, :rb)
+            if hasproperty(rb_d, :vel_dot)
+                a_ned = getproperty(rb_d, :vel_dot)
+            end
+        end
+    catch
+        # Leave NaNs if the RHS evaluation fails for any reason.
+    end
+
+    sim.bus.accel_ned = a_ned
+
+    # Specific force (accelerometer-like): f = a - g, expressed in body.
+    g_ned = vec3(0.0, 0.0, G_MPS2)
+    sim.bus.spec_force_body = quat_rotate_inv(_rb_state(sim.plant).q_bn, a_ned - g_ned)
+    return nothing
+end
+
+"""Return the nominal autopilot tick period in seconds.
+
+This is derived from `timeline.ap` (which is constructed as a periodic axis).
+
+The value is used as the time scale for converting impact impulses (Δv) into a
+1-tick acceleration estimate for logging.
+"""
+@inline function _dt_autopilot_s(tl::Timeline)::Float64
+    t = tl.ap.t_us
+    (length(t) >= 2) || return NaN
+    dt_us = t[2] - t[1]
+    dt_us > 0 || return NaN
+    return Float64(dt_us) * 1e-6
+end
+
+"""Update `bus.impact_accel_est_ned` from the latched `impact_dv_ned`.
+
+Semantics
+---------
+Impacts are impulse-like and therefore not directly representable as a continuous
+acceleration sample. For observability at low log rates, we synthesize a
+"1-tick equivalent" acceleration estimate:
+
+`impact_accel_est_ned ≈ impact_dv_ned / dt_autopilot`
+
+where `dt_autopilot` is the nominal autopilot tick period from the timeline.
+"""
+function _update_bus_impact_accel_est!(sim::Engine)
+    dt_ap_s = _dt_autopilot_s(sim.timeline)
+    if !(isfinite(dt_ap_s) && dt_ap_s > 0)
+        sim.bus.impact_accel_est_ned = vec3(NaN, NaN, NaN)
+        return nothing
+    end
+    sim.bus.impact_accel_est_ned = sim.bus.impact_dv_ned / dt_ap_s
+    return nothing
+end
+
+"""Accumulate contact impact telemetry returned by a plant interval integrator.
+
+The expected "interval info" payload is either:
+- `nothing`
+- a NamedTuple or object with fields/properties:
+  * `impact_count`
+  * `impact_dv_ned`
+  * `impact_time_us`
+
+Semantics
+---------
+- `bus.impact_count` counts all impacts since the last log sample.
+- `bus.impact_dv_ned` / `bus.impact_time_us` track the *maximum* |Δv| impact since
+  the last log sample (so spikes are not missed even when logging is downsampled).
+"""
+function _accumulate_interval_impacts!(bus::SimBus, info)
+    info === nothing && return nothing
+
+    if !(
+        hasproperty(info, :impact_count) &&
+        hasproperty(info, :impact_dv_ned) &&
+        hasproperty(info, :impact_time_us)
+    )
+        return nothing
+    end
+
+    n = getproperty(info, :impact_count)
+    dv = getproperty(info, :impact_dv_ned)
+    t_imp = getproperty(info, :impact_time_us)
+
+    # Count (saturating to UInt32 range).
+    if n isa Integer
+        if n > 0
+            bus.impact_count =
+                UInt32(min(UInt64(typemax(UInt32)), UInt64(bus.impact_count) + UInt64(n)))
+        end
+    end
+
+    # Max |Δv| latch.
+    try
+        if _norm2(dv) > _norm2(bus.impact_dv_ned)
+            bus.impact_dv_ned = dv
+            bus.impact_time_us = t_imp
+        end
+    catch
+        # Ignore malformed payloads.
+    end
+
+    return nothing
+end
+
+@inline function _reset_bus_impacts!(bus::SimBus)
+    bus.impact_dv_ned = vec3(0.0, 0.0, 0.0)
+    bus.impact_accel_est_ned = vec3(0.0, 0.0, 0.0)
+    bus.impact_time_us = UInt64(0)
+    bus.impact_count = UInt32(0)
+    return nothing
+end
 
 """Process all discrete sources that are due at the current boundary time.
 
@@ -455,6 +633,12 @@ function process_events_at!(sim::Engine)
                 sim.outputs.derived_valid = false
             end
 
+            # Phase 6 (Plan1): physics-derived landed flag for diagnostics/logging.
+            contact_y =
+                (sim.outputs.derived_valid && (sim.outputs.plant_y !== nothing)) ?
+                getproperty(sim.outputs.plant_y, :contact) : nothing
+            _update_landed_phys!(sim.bus, _rb_state(sim.plant), contact_y)
+
         elseif stage === :estimator
             if ev.due_ap
                 update!(sim.estimator, sim.bus, sim.plant, sim.t_us)
@@ -500,8 +684,26 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :logging
             if ev.due_log
+                # Phase 6 (Plan1): publish acceleration diagnostics on the bus.
+                _update_bus_accel!(sim)
+                _update_bus_impact_accel_est!(sim)
+
                 # Boundary-time logs are *pre-step* snapshots.
                 record!(sim.recorder, :plant, sim.t_us, sim.plant)
+
+                # Bus-level diagnostics.
+                record!(sim.recorder, :accel_ned, sim.t_us, sim.bus.accel_ned)
+                record!(sim.recorder, :spec_force_body, sim.t_us, sim.bus.spec_force_body)
+                record!(sim.recorder, :impact_dv_ned, sim.t_us, sim.bus.impact_dv_ned)
+                record!(
+                    sim.recorder,
+                    :impact_accel_est_ned,
+                    sim.t_us,
+                    sim.bus.impact_accel_est_ned,
+                )
+                record!(sim.recorder, :impact_time_us, sim.t_us, sim.bus.impact_time_us)
+                record!(sim.recorder, :impact_count, sim.t_us, sim.bus.impact_count)
+                record!(sim.recorder, :landed_phy, sim.t_us, sim.bus.landed_phy)
 
                 # Always record battery on the log axis so tier0 recordings are schema-stable,
                 # even for simplified dynamics models that do not implement plant_outputs(...).
@@ -512,6 +714,9 @@ function process_events_at!(sim::Engine)
                 record!(sim.recorder, :batteries, sim.t_us, copy(sim.bus.batteries))
 
                 _emit_logs_to_sinks!(sim)
+
+                # Consume impact latches so spikes are not missed while keeping log rate low.
+                _reset_bus_impacts!(sim.bus)
             end
 
         else
@@ -626,6 +831,13 @@ function _emit_logs_to_sinks!(sim::Engine)
             rb,
             sim.bus.cmd;
             time_us = sim.t_us,
+            landed_phy = Int32(sim.bus.landed_phy),
+            accel_ned = _to_ntuple3_float(sim.bus.accel_ned),
+            spec_force_body = _to_ntuple3_float(sim.bus.spec_force_body),
+            impact_dv_ned = _to_ntuple3_float(sim.bus.impact_dv_ned),
+            impact_accel_est_ned = _to_ntuple3_float(sim.bus.impact_accel_est_ned),
+            impact_time_us = sim.bus.impact_time_us,
+            impact_count = Int32(sim.bus.impact_count),
             wind_ned = wind_ned,
             rho = sim.bus.env.rho_kgm3,
             air_vel_body = air_vel_body,
@@ -670,7 +882,26 @@ function step_to_next_event!(sim::Engine)
     u = PlantInput(cmd = sim.bus.cmd, wind_ned = sim.bus.wind_ned, faults = sim.bus.faults)
 
     reset!(sim.integrator)
-    sim.plant = step_integrator(sim.integrator, sim.dynfun, sim.t_s, sim.plant, u, dt_s)
+    if sim.has_integrate_interval
+        # Contact-aware plants may optionally return a second value containing
+        # interval metadata (e.g., impact summaries for logging).
+        res = plant_integrate_interval(
+            sim.dynfun,
+            sim.integrator,
+            sim.t_us,
+            sim.plant,
+            u,
+            dt_us,
+        )
+        if (res isa Tuple) && (length(res) == 2)
+            sim.plant = res[1]
+            _accumulate_interval_impacts!(sim.bus, res[2])
+        else
+            sim.plant = res
+        end
+    else
+        sim.plant = step_integrator(sim.integrator, sim.dynfun, sim.t_s, sim.plant, u, dt_s)
+    end
 
     # Optional post-step projection into physical bounds.
     if sim.has_project

@@ -159,7 +159,7 @@ soc0 = 1.0
 temp_c = 25.0
 
 [power.batteries.thermal]
-# Phase 7 thermal hook (optional)
+# Thermal hook (optional)
 #
 # If enabled, the simulator will integrate a simple 1-node pack temperature state
 # and feed it into the resistance model (R0(SOC,T)).

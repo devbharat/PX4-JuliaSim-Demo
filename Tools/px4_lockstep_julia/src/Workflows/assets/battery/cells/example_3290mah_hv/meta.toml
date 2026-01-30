@@ -16,7 +16,7 @@
 #
 #   This is only strictly valid if cell resistance dominates and pack overhead is negligible.
 #
-# Default modeling choice (Phase 5):
+# Default modeling choice:
 # - The simulator's "series resistance" term is whatever column is selected by `r0_col`.
 # - To match **loaded voltage under thrust**, we default to using the end-of-pulse DCIR column:
 #       r0_col = "rdc_ohm"

@@ -87,19 +87,27 @@ At each event time $t_k$ the engine executes boundary stages in a fixed canonica
 \end{enumerate}
 
 \paragraph{Why this order?}
-The order is a deliberate part of the execution model. It preserves invariants that a reader needs in order to reason about determinism and causality:
+The boundary protocol is part of the simulator semantics, not an implementation detail. At each boundary \(t_k\) the engine applies a discrete transition
+\[
+  (\mathrm{bus}_{k^-}, x_k) \;\xrightarrow{\;\text{boundary stages}\;}\; (\mathrm{bus}_{k^+}, x_k^+),
+\]
+where \(x_k\) is the continuous plant state at the boundary and \(x_k^+\) includes any boundary-time discontinuities (e.g.\ actuator snaps). The held plant input over the next interval is then defined by
+\[
+  u_k \coloneqq \mathrm{PlantInput}(\mathrm{bus}_{k^+}),\qquad
+  u(t)=u_k\ \text{for}\ t\in[t_k,t_{k+1}).
+\]
+Reordering stages changes which signals are held over which intervals and therefore changes the meaning of the simulation.
+
+The chosen ordering enforces the following invariants at PX4 ticks:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Fresh estimates at PX4 ticks:} when the autopilot axis is due, PX4 always consumes an estimator packet \emph{computed from truth at the same boundary time} $t_k$.
-  \item \textbf{Fresh telemetry at PX4 ticks:} battery and other algebraic telemetry are computed from the plant state at $t_k$ and published before stepping PX4, so uORB injection reflects the current plant state.
-  \item \textbf{Command-to-physics causality:} the command published at $t_k$ is the unique held plant input over the next interval:
-    \begin{equation}
-      u(t) = u_k \quad \text{for } t\in[t_k,t_{k+1}),\qquad u_k \coloneqq \mathrm{PlantInput}(\mathrm{bus}(t_k)).
-    \end{equation}
-  \item \textbf{Snap-after-command for direct actuators:}\\ boundary-time discontinuities (e.g. \code{DirectActuators}) are applied \emph{after} \code{bus.cmd} is published, so snapped actuator state is a deterministic function of that same command.
-  \item \textbf{Logs correspond to integration inputs:} logging occurs last so a snapshot at $t_k$ corresponds to the same bus packet that seeds integration over $[t_k,t_{k+1})$.
+  \item \textbf{No stale estimator inputs:} when the autopilot axis is due, PX4 consumes an estimator packet constructed from truth at the same boundary time \(t_k\).
+  \item \textbf{No stale telemetry:} algebraic telemetry (e.g.\ battery status) is computed from \((t_k,x_k,u_k)\) and published before stepping PX4, so uORB injection reflects the current plant state.
+  \item \textbf{Command-to-physics causality:} PX4 is stepped exactly once at \(t_k\), producing the unique command \(u_k\) that is held over \([t_k,t_{k+1})\).
+  \item \textbf{Snap-after-command:} boundary-time discontinuities are applied after \code{bus.cmd} is published, so snapped actuator state is a deterministic function of the newly produced command.
+  \item \textbf{Logs correspond to integration inputs:} logging occurs last so a snapshot at \(t_k\) corresponds to the same bus packet that seeds integration over \([t_k,t_{k+1})\).
 \end{itemize}
 
-Changing this ordering is not ``just refactoring'': it changes which signals are held over which intervals. For example, stepping PX4 before the estimator would make PX4 consume a stale estimate; logging before the autopilot stage would decouple recorded commands from the plant inputs that followed.
+Changing this ordering is therefore a semantic change (not ``just refactoring''): for example, stepping PX4 before the estimator would make PX4 consume a stale estimate; logging before PX4 would decouple recorded commands from the plant inputs that followed.
 
 \paragraph{Scenario cadence.}
 The scenario stage is currently executed at \emph{every} boundary on the union event axis, not only on the scenario axis. This makes hybrid \code{When(...)}-style logic responsive at the earliest possible boundary while preserving deterministic ordering (see the note in \code{src/sim/Runtime/BoundaryProtocol.jl} and the implementation in \code{process\_events\_at!}).
@@ -108,7 +116,7 @@ The scenario stage is currently executed at \emph{every} boundary on the union e
 If the scenario updates an additive wind disturbance at a boundary where the wind axis is \emph{not} due, the engine applies the disturbance delta immediately to the held wind sample so the piecewise-constant wind input remains consistent across axes.
 
 \paragraph{Sample-and-hold.}\label{sec:runtime-sample-hold}
-Between event times, all bus values are treated as sample-and-hold. The plant is integrated over $[t_k, t_{k+1}]$ with a single input packet
+Between event times, all bus values are treated as sample-and-hold. The plant is integrated over $[t_k, t_{k+1})$ with a single input packet
 \begin{equation}
   u_k \coloneqq \{\text{actuator command},\; \text{wind},\; \text{fault state}\},
 \end{equation}
@@ -157,7 +165,7 @@ The same engine can run in a mode that records boundary-aligned bus/plant stream
       arr/.style={-Latex, line width=0.4pt}
     ]
     \node[box] (b) {Boundary at $t_k$\\(sources + logging)};
-    \node[box, below=of b] (i) {Integrate plant\\$[t_k, t_{k+1}]$ with held $u_k$};
+    \node[box, below=of b] (i) {Integrate plant\\$[t_k, t_{k+1})$ with held $u_k$};
     \node[box, below=of i] (p) {Optional projection\\$x \leftarrow \mathrm{plant\_project}(x)$};
     \draw[arr] (b) -- (i);
     \draw[arr] (i) -- (p);

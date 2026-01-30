@@ -70,7 +70,7 @@ Base.@kwdef struct PackAsset
     r0_soc_units::Symbol = :fraction
     r0_soc_convention::Symbol = :remaining
 
-    # Optional simple thermal parameters (pack-level, Phase 7).
+    # Optional simple thermal parameters (pack-level).
     thermal_c_th_j_per_k::Union{Nothing,Float64} = nothing
     thermal_k_to_ambient_w_per_k::Union{Nothing,Float64} = nothing
 end
@@ -248,7 +248,7 @@ function load_pack_asset_from_meta(meta_path::AbstractString)::PackAsset
         r0_soc_conv = _norm_soc_convention(get(r0_tbl, "soc_convention", r0_soc_conv))
     end
 
-    # Optional thermal parameters (Phase 7)
+    # Optional thermal parameters
     thermal_tbl = get(cfg, "thermal", nothing)
     thermal_c_th_j_per_k = nothing
     thermal_k_to_ambient_w_per_k = nothing

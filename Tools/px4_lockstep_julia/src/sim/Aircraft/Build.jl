@@ -589,7 +589,7 @@ function _build_battery(bs::BatterySpec)
     end
 
     # -----------------------------
-    # Thermal hook (Phase 7)
+    # Thermal hook
     # -----------------------------
     # Temperature is a plant state. If thermal is disabled, its derivative is held at 0
     # and the initial value acts as a constant.

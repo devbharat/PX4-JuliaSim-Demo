@@ -6,16 +6,27 @@ The runtime in \cref{sec:runtime} makes the execution model explicit. This secti
 \subsection{What ``determinism'' means here}
 \label{sec:determinism-definition}
 
-We use ``determinism'' in a concrete, falsifiable sense: for a fixed initial plant state, a fixed simulation specification, a fixed integer-microsecond timeline, and fixed seeds for any stochastic sources, the simulator should produce boundary-aligned traces that are \emph{numerically identical within tight tolerances} across repeated runs in a controlled software/hardware environment. Bitwise identity is a stronger property that is only expected under strict runtime controls (single-threaded execution, pinned dependencies, and stable CPU/libm); we therefore treat bitwise identity as a best-case outcome rather than the baseline contract.
+We treat determinism as a \emph{trace-level} property of the simulator under a fixed execution environment. Let
+\(\mathcal{S}\) denote the full experiment specification: the aircraft configuration (TOML), the initial plant state, and the seeds for any stochastic sources, together with the exact software stack that executes the floating-point path (Julia version, \code{Manifest.toml}, and relevant runtime environment variables).
 
-More specifically, the codebase targets three nested determinism properties:
+A run maps \(\mathcal{S}\) to a set of ordered, boundary-aligned traces: commands on the autopilot axis, wind on the wind axis, optional scenario/fault outputs on the event axis, and plant/telemetry snapshots on the log axis (see the Tier-0 recording bundle in \cref{sec:recorded-streams}).
+
+\paragraph{Definition (trace determinism under a fixed environment).}
+Fix an execution environment \(E\) (single-threaded execution, pinned dependencies, stable CPU/libm). The simulator is deterministic with respect to \(E\) if two executions with identical \(\mathcal{S}\) produce:
+\begin{enumerate}[leftmargin=*]
+  \item the same event axis \(\{t_k\}\) (integer microseconds, same ordering), and
+  \item identical trace payloads at each recorded timestamp (bytewise identity when serialized is the strongest form; in practice we also report max-norm error metrics for convenience).
+\end{enumerate}
+When \(E\) changes (different OS/CPU/libm or dependency drift), we do \emph{not} claim bytewise identity a priori; instead we treat this as a \emph{reproducibility} experiment and report drift envelopes explicitly.
+
+\paragraph{Decomposed properties (what the design enforces vs.\ what is empirical).}
+With the above scope, the codebase targets three nested properties:
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Scheduling determinism:} the same set of event times \(\{t_k\}\) is generated from the same configuration, and the engine visits them in a deterministic order (\cref{sec:runtime-timebase}).
-  \item \textbf{Discrete-source determinism:} for each boundary time \(t_k\), each source publishes an unambiguous bus update in a fixed stage ordering (\cref{sec:runtime-boundary}).
-  \item \textbf{Numerical determinism:} given the same held inputs and floating-point execution environment, the plant integration produces the same state at each boundary time (up to tight tolerances).
+  \item \textbf{Discrete-transition determinism:} at each boundary time \(t_k\), all sources update the bus in a single canonical order, yielding one unambiguous \(\mathrm{bus}(t_k)\) (\cref{sec:runtime-boundary}).
+  \item \textbf{Numerical determinism:} given identical held inputs and a fixed floating-point execution environment, plant integration produces identical \(x(t_k)\) at every boundary time.
 \end{enumerate}
-
-The first two properties are architectural and are largely ``by construction'' once time is represented as integer microseconds. The third property depends on floating-point behavior and library/environment controls.
+The first two are architectural (by construction once time is integer microseconds and ordering is fixed). The third is conditional on floating-point and dependency controls and is therefore verified empirically by record/replay trace comparisons and regression tests.
 
 \subsection{Mechanisms used in the implementation}
 \label{sec:determinism-mechanisms}

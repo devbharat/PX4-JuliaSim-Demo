@@ -327,12 +327,12 @@ function _parse_contact(tbl_any; strict::Bool, ctx::AbstractString)
             # constraint
             "z_slop_m",
             "vz_slop_mps",
-            # hybrid impact (Phase 3+)
+            # hybrid impact (TOI + impact map)
             "restitution",
             "e",
             "v_rest_threshold_mps",
             "enable_impact_friction",
-            # grounded time-stepping (Phase 4+)
+            # grounded time-stepping
             "h_contact_us",
         ]),
         ctx,
@@ -1282,7 +1282,7 @@ function _parse_power(
                 haskey(b, "temp_c") ? _as_f64(b["temp_c"], "$ctx.batteries[$i].temp_c") :
                 25.0
 
-            # Optional thermal hook (Phase 7). If enabled, the plant integrates a
+            # Optional thermal hook. If enabled, the plant integrates a
             # per-battery temperature state and uses it as the temperature input for
             # resistance models (R0 surfaces / temperature fits).
             thermal = BatteryThermalSpec()

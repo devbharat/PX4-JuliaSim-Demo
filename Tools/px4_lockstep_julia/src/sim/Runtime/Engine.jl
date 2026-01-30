@@ -353,7 +353,7 @@ end
 ############################
 
 # ------------------------------------------------------------
-# Phase 6 (Plan1): PX4-facing/diagnostic signals on the bus
+# PX4-facing / diagnostic signals on the bus
 # ------------------------------------------------------------
 
 # Physics-derived landed detection (hysteresis).
@@ -633,7 +633,7 @@ function process_events_at!(sim::Engine)
                 sim.outputs.derived_valid = false
             end
 
-            # Phase 6 (Plan1): physics-derived landed flag for diagnostics/logging.
+            # Physics-derived landed flag for diagnostics/logging.
             contact_y =
                 (sim.outputs.derived_valid && (sim.outputs.plant_y !== nothing)) ?
                 getproperty(sim.outputs.plant_y, :contact) : nothing
@@ -684,7 +684,7 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :logging
             if ev.due_log
-                # Phase 6 (Plan1): publish acceleration diagnostics on the bus.
+                # Publish acceleration diagnostics on the bus.
                 _update_bus_accel!(sim)
                 _update_bus_impact_accel_est!(sim)
 

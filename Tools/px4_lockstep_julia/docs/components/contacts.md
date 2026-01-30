@@ -13,8 +13,8 @@ into the plant dynamics.
     with smooth Coulomb friction.
   - **Constraint + hybrid contact model** (`FlatGroundConstraintContact`): parameters for
     a non-stiff unilateral normal reaction *and* a hybrid event/impulse contact protocol:
-    - **Impact map (Phase 3+)**: restitution + optional tangential impact friction.
-    - **Grounded time-stepping (Phase 4+)**: fixed substeps + a 1-contact impulse solve
+    - **Impact map (TOI + restitution)**: restitution + optional tangential impact friction.
+    - **Grounded time-stepping**: fixed substeps + a 1-contact impulse solve
       for stable rest and stick-slip-like behavior.
 - **Force-at-COM only:** contact is applied at the center of mass to avoid modeling
   moments or landing-gear geometry; this keeps the model deterministic but limits

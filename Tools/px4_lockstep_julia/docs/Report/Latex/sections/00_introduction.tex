@@ -88,6 +88,38 @@ The codebase is modular, but the paper uses a small number of terms consistently
   \label{tab:terminology}
 \end{table}
 
+\begin{table}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l X l@{}}
+    \toprule
+    Category & Symbol & Meaning & Units \\
+    \midrule
+    Time & $t_k$ & $k$-th boundary time on the union event axis (real-valued seconds). & s \\
+         & $t_{k,\mu s}$ & Same boundary time stored as integer microseconds. & $\mu$s \\
+         & $\Delta t_k$ & Step length $t_{k+1}-t_k$. & s \\
+         & $\mathcal{T}_{ap},\mathcal{T}_{wind},\mathcal{T}_{log},\mathcal{T}_{evt}$ & Autopilot / wind / log / union event axes (sorted integer-$\mu$s vectors). & $\mu$s \\
+    Plant & $x(t),x_k$ & Continuous plant state at time $t$ and at boundary $t_k$. & mixed \\
+    Input & $u_k$ & Held plant input packet derived from $\mathrm{bus}(t_k)$; held on $[t_k,t_{k+1})$. & mixed \\
+    Frames & $\vect{p}_{ned},\vect{v}_{ned}$ & Position and velocity in NED. & m, m/s \\
+           & $\vect{\omega}_{body}$ & Angular rate in body/FRD. & rad/s \\
+           & $\qbn,\Rbn$ & Attitude quaternion and DCM for Body $\to$ NED. & -- \\
+    Contact & $\phi(\vect{p})$ & Gap function; $\phi>0$ above ground plane. & m \\
+            & $\delta$ & Penetration depth $\max(0,-\phi)$. & m \\
+            & $F_n$ & Normal contact force magnitude (upward). & N \\
+            & $\vect{v}_t,\ v_t$ & Tangential (ground-plane) velocity and its magnitude. & m/s \\
+            & $\vect{F}_t$ & Tangential friction force. & N \\
+    Power & $s$ & State-of-charge (fraction). & -- \\
+          & $v_1$ & Thevenin polarization voltage state. & V \\
+          & $T$ & Battery temperature. & \si{\celsius} \\
+          & $r_0,r_1,C_1$ & Thevenin parameters (series resistance, polarization resistance/capacitance). & $\Omega,\Omega,\mathrm{F}$ \\
+          & $V_{bus},I_{bus}$ & Bus voltage and current. & V, A \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Notation used throughout the paper. Scalars are italic, vectors/matrices are bold, and frame tags are explicit in subscripts.}
+  \label{tab:notation}
+\end{table}
+
 \subsection{Design goals and reader takeaways}
 \label{sec:intro-goals}
 
@@ -103,7 +135,7 @@ Even if a reader never opens the repository, the intended takeaways are the four
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Integer time contract:} all subsystem cadences and delays are exact multiples of \SI{1}{\micro\second} (otherwise the code errors).
   \item \textbf{Fixed boundary protocol:} all discrete updates at $t_k$ occur in a single canonical order (\cref{sec:runtime-boundary}), producing one well-defined bus value \code{bus(t\_k)}.
-  \item \textbf{Sample-and-hold integration:} the plant integrates over $[t_k,t_{k+1}]$ using a single held input packet derived from \code{bus(t\_k)}.
+  \item \textbf{Sample-and-hold integration:} the plant integrates over $[t_k,t_{k+1})$ using a single held input packet derived from \code{bus(t\_k)}.
   \item \textbf{Record/replay falsifiability:} boundary-aligned traces are recorded and replayed with exact axis alignment, enabling deterministic open-loop plant comparisons (\cref{sec:record-replay}).
 \end{enumerate}
 

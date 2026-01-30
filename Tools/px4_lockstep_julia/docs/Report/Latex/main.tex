@@ -62,13 +62,11 @@
 
 \begin{abstract}
 \noindent
-\code{PX4Lockstep.jl} is a PX4 lockstep SITL driver and integration harness that connects independently developed component models (plant, power, environment, scenarios, estimator models, and uORB interfaces) into a single, executable closed-loop system. PX4 is advanced through a minimal C ABI on an injected integer-microsecond clock, while Julia owns the hybrid simulation timeline, continuous plant integration, environment forcing, scenario orchestration, and structured logging.
+\code{PX4Lockstep.jl} is a lockstep software-in-the-loop (SITL) harness for PX4 in which the autopilot is advanced through a minimal C ABI on an injected integer-microsecond clock, while a Julia runtime owns the hybrid simulation. The runtime builds a multi-rate union event axis from subsystem cadences, executes all discrete components in a fixed boundary protocol, and integrates the continuous plant between boundaries under sample-and-hold inputs.
 
-A key goal is system-level evaluation across operating conditions. The environment is modeled explicitly (atmosphere with altitude-dependent pressure, density, and temperature; gravity; and wind/turbulence), and scenarios provide repeatable command and fault sequences. This enables assessing vehicle and controller performance under a range of conditions, and it supports rapid ``what changed?'' experiments by swapping individual components (or their parameters) and observing the impact on other subsystems and on end-to-end outcomes.
+The resulting execution model is explicit enough to be reviewed and tested: for a fixed aircraft specification, initial plant state, and stochastic seeds, repeated runs under a fixed execution environment (single-threaded execution and pinned dependencies) produce the same boundary times and the same boundary-aligned traces (bytewise in the best case). Closed-loop missions can be recorded and replayed as open-loop plant experiments, isolating plant/integrator changes from controller behavior.
 
-Deterministic scheduling and record $\to$ replay are treated as enabling tools for debugging and regression: when executed in a controlled environment (single-threaded execution, pinned dependency versions, and seeded RNGs for stochastic sources), experiments can be reproduced and plant-side changes can be compared against recorded traces.
-
-This paper is \emph{code-faithful}: it documents the implementation directly from the source (equations, defaults, and corner cases) and summarizes current verification coverage and the evaluation plan.
+The simulator provides modular models for rigid-body multirotor dynamics, actuation/propulsion, battery and power-network coupling, atmosphere, and sampled wind/turbulence, plus scenario orchestration and structured logging. This paper documents the implementation code-faithfully, states the determinism threat model, and summarizes current verification coverage and planned evaluation.
 \end{abstract}
 
 \clearpage

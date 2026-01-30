@@ -15,7 +15,7 @@ where $\vect{s}\in[0,1]^B$ is state-of-charge (fraction remaining), $\vect{v}_1\
 Two battery model types are supported in the coupled plant (\code{src/sim/Powertrain.jl}, \code{src/sim/PlantModels/CoupledMultirotor.jl}):
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{IdealBattery}: constant open-circuit voltage, coulomb-counted SOC, no droop, no polarization state dynamics.
-  \item \textbf{TheveninBattery}: open-circuit voltage $\mathrm{OCV}(s)$ via a table, series resistance $R_0(s,T)$ via a typed resistance model, and an optional polarization branch $(R_1, C_1)$ with state $v_1$.
+  \item \textbf{TheveninBattery}: open-circuit voltage $\mathrm{OCV}(s)$ via a table, series resistance $r_0(s,T)$ via a typed resistance model, and an optional polarization branch $(r_1, C_1)$ with state $v_1$.
 \end{itemize}
 
 In both cases, the models are \emph{parameter-only}: all dynamic state is kept inside \code{PlantState} so it is integrated by the engine.
@@ -28,11 +28,11 @@ SOC is integrated from bus current by coulomb counting. For battery $i$ with cap
 \end{equation}
 with a clamp that prevents SOC from decreasing below zero.
 
-For \code{TheveninBattery} with a polarization branch $(R_1, C_1)$, the internal voltage state evolves as
+For \code{TheveninBattery} with a polarization branch $(r_1, C_1)$, the internal voltage state evolves as
 \begin{equation}
-  \dot{v}_{1,i} = -\frac{v_{1,i}}{R_1 C_1} + \frac{I_i}{C_1},
+  \dot{v}_{1,i} = -\frac{v_{1,i}}{r_1 C_1} + \frac{I_i}{C_1},
 \end{equation}
-and is disabled if $R_1\le 0$ or $C_1\le 0$.
+and is disabled if $r_1\le 0$ or $C_1\le 0$.
 
 \subsection{Optional lumped thermal hook}
 \label{sec:battery-thermal}
@@ -45,7 +45,7 @@ where $C_{th}$ is an effective thermal capacitance and $k$ is a linear heat tran
 
 The internal electrical loss used by the code is
 \begin{equation}
-  P_{loss} = I^2\,R_0(s,T) + \mathbf{1}_{R_1>0}\,\frac{v_1^2}{R_1},
+  P_{loss} = I^2\,r_0(s,T) + \mathbf{1}_{r_1>0}\,\frac{v_1^2}{r_1},
 \end{equation}
 with the discharge-only current convention $I=\max(0,I_{bus})$.
 
@@ -115,7 +115,7 @@ After solving $V_{bus,k}$, the plant computes the true avionics current as $I_{a
 This current is then distributed across batteries on the same bus according to \code{share\_mode}:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \code{:equal}: equal current share.
-  \item \code{:inv\_r0}: share proportional to $1/R_0(s,T)$.
+  \item \code{:inv\_r0}: share proportional to $1/r_0(s,T)$.
 \end{itemize}
 
 \paragraph{Battery disconnect fault.}
@@ -156,7 +156,7 @@ When the transient Thevenin parameters are marked cell-level via \code{thevenin\
   C_{1,pack} &= \frac{N_p}{N_s}\,C_{1,cell}, &
   v_{1,pack}(0) &= N_s\,v_{1,cell}(0),
 \end{align}
-which preserves the RC time constant \(R_1C_1\) under series/parallel aggregation while scaling voltages and resistances in the usual way. For an SOC/temperature resistance surface, the scaling is controlled independently by \code{r0\_surface\_is\_cell} (defaults to \code{true} when the surface comes from a cell asset and \code{false} when it comes from a pack asset).
+which preserves the RC time constant \(r_1C_1\) under series/parallel aggregation while scaling voltages and resistances in the usual way. For an SOC/temperature resistance surface, the scaling is controlled independently by \code{r0\_surface\_is\_cell} (defaults to \code{true} when the surface comes from a cell asset and \code{false} when it comes from a pack asset).
 
 \begin{figure}[t]
   \centering
@@ -222,7 +222,7 @@ For each battery entry:
   \item \code{capacity\_ah}: pack capacity \(Q_{pack}\) used in SOC integration.
   \item \code{soc0}: initial SOC \(s(0)\) (fraction remaining).
   \item \code{ocv\_soc}, \code{ocv\_v}: piecewise-linear OCV table \(OCV(s)\).
-  \item \code{r0}, \code{r1}, \code{c1}, \code{v1\_0}: Thevenin parameters in \cref{sec:battery-model}; \code{r0} is used as a constant \(R_0\) when no surface is provided.
+  \item \code{r0}, \code{r1}, \code{c1}, \code{v1\_0}: Thevenin parameters in \cref{sec:battery-model}; \code{r0} is used as a constant \(r_0\) when no surface is provided.
   \item \code{min\_voltage\_v}: clamp floor \(V_{\min}\) used by the bus solver when \(V_0 \ge V_{\min}\); if \(V_0 < V_{\min}\), the solver returns \(V_0\) rather than forcing a higher voltage.
   \item \code{low\_thr}, \code{crit\_thr}, \code{emerg\_thr}: SOC thresholds used only for the warning/telemetry state (\cref{sec:battery-model}).
 \end{itemize}
@@ -290,9 +290,9 @@ k_to_ambient_w_per_k = 1.0
   \item \code{cell\_asset} / \code{pack\_asset}: path to a \code{meta.toml} describing an asset; paths are resolved relative to the spec file (\code{_resolve\_path} in \code{src/sim/Aircraft/TOMLIO.jl}).
   \item \code{series}, \code{parallel}: \(N_s,N_p\) used for the scaling rules in \cref{sec:battery-assets}.
   \item \code{cell\_capacity\_ah}: per-cell capacity; when \code{capacity\_ah} is not explicitly set, the builder sets \(\texttt{capacity\_ah}=N_p\,\texttt{cell\_capacity\_ah}\).
-  \item \code{r0\_surface\_r0\_col}: selects which CSV column becomes \(R_0\) in the surface model (e.g., DCIR vs. ohmic). All other surface metadata (CSV path, SOC units/convention, temp/SOC column names) can be inherited from the asset or overridden explicitly via \code{r0\_surface\_csv\_path}, \code{r0\_surface\_temp\_col}, \code{r0\_surface\_soc\_col}, \code{r0\_surface\_soc\_units}, \code{r0\_surface\_soc\_convention}.
-  \item \code{thevenin\_is\_cell}: applies the RC scaling rules \((R_1,C_1,v_1(0))\) and, when using scalar \code{r0}, also scales \(R_0\) by \(N_s/N_p\). For a surface \(R_0(s,T)\), use \code{r0\_surface\_is\_cell} to control surface scaling.
-  \item \code{thermal.*}: enables the optional temperature state integrated by the plant (see \cref{sec:battery-thermal}). When enabled, the battery temperature drives \(R_0(s,T)\) evaluation.
+  \item \code{r0\_surface\_r0\_col}: selects which CSV column becomes \(r_0\) in the surface model (e.g., DCIR vs. ohmic). All other surface metadata (CSV path, SOC units/convention, temp/SOC column names) can be inherited from the asset or overridden explicitly via \code{r0\_surface\_csv\_path}, \code{r0\_surface\_temp\_col}, \code{r0\_surface\_soc\_col}, \code{r0\_surface\_soc\_units}, \code{r0\_surface\_soc\_convention}.
+  \item \code{thevenin\_is\_cell}: applies the RC scaling rules \((r_1,C_1,v_1(0))\) and, when using scalar \code{r0}, also scales \(r_0\) by \(N_s/N_p\). For a surface \(r_0(s,T)\), use \code{r0\_surface\_is\_cell} to control surface scaling.
+  \item \code{thermal.*}: enables the optional temperature state integrated by the plant (see \cref{sec:battery-thermal}). When enabled, the battery temperature drives \(r_0(s,T)\) evaluation.
 \end{itemize}
 
 \subsection{Battery asset schema and surface ingestion workflow}
@@ -348,8 +348,8 @@ k_to_ambient_w_per_k = 1.0
 \paragraph{Offline ingestion (how surfaces are generated).}
 The repository includes an example ingestion script (\code{scripts/battery\_assets/ingest\_example\_3290mah\_8s1p.py}) that demonstrates one \emph{heuristic} way to derive resistance surfaces from pulse traces. In that workflow, a DCIR-style pulse at current \(I\) yields (pack-level) estimates
 \begin{align}
-  R_0^{(50\text{ms},100\text{ms})} &\approx \frac{1}{2}\left(\frac{V_{pre}-V_{50\text{ms}}}{I}+\frac{V_{pre}-V_{100\text{ms}}}{I}\right),\\
-  R_{dc}^{(\text{end})} &\approx \frac{V_{pre}-V_{min}}{I},\\
-  R_1 &\approx \max(R_{dc}-R_0, 0).
+  r_0^{(50\text{ms},100\text{ms})} &\approx \frac{1}{2}\left(\frac{V_{pre}-V_{50\text{ms}}}{I}+\frac{V_{pre}-V_{100\text{ms}}}{I}\right),\\
+  r_{dc}^{(\text{end})} &\approx \frac{V_{pre}-V_{min}}{I},\\
+  r_1 &\approx \max(r_{dc}-r_0, 0).
 \end{align}
-where \(V_{pre}\) is the pre-pulse voltage, \(V_{0.05}\) and \(V_{0.10}\) are the pulse voltages at 50\,ms and 100\,ms, and \(V_{min}\) is the minimum voltage during the pulse. These timing choices are \emph{not canonical}; they are an example data-reduction choice to build an \(R_0(s,T)\) surface for this simulator. If you have a different DCIR definition (e.g.\ HPPC windows), adjust the ingestion accordingly. The script then bins samples onto a \((T,\text{SOC})\) grid and writes \code{resistance\_surface\_*.csv}. This is an \emph{offline} data-processing step; the simulator runtime only consumes the resulting CSV tables.
+where \(V_{pre}\) is the pre-pulse voltage, \(V_{0.05}\) and \(V_{0.10}\) are the pulse voltages at 50\,ms and 100\,ms, and \(V_{min}\) is the minimum voltage during the pulse. These timing choices are \emph{not canonical}; they are an example data-reduction choice to build an \(r_0(s,T)\) surface for this simulator. If you have a different DCIR definition (e.g.\ HPPC windows), adjust the ingestion accordingly. The script then bins samples onto a \((T,\text{SOC})\) grid and writes \code{resistance\_surface\_*.csv}. This is an \emph{offline} data-processing step; the simulator runtime only consumes the resulting CSV tables.

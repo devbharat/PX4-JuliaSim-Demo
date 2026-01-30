@@ -297,8 +297,8 @@ This is used by the optional thermal hook. The intent is to keep the definition 
 * If an RC polarization branch is enabled (`r1>0`), include the dissipated power
   in R1: `V1^2 / R1`.
 
-For packs calibrated using end-of-pulse DCIR as the effective droop resistance
-(Phase-5 policy), `R0` is already DCIR-like, so this aligns well with the qualification
+For packs calibrated using end-of-pulse DCIR as the effective droop resistance,
+`R0` is already DCIR-like, so this aligns well with the qualification
 doc's suggestion `P_loss = I^2 * R_DC`.
 """
 @inline function _battery_power_loss_w(
@@ -1176,7 +1176,7 @@ function plant_project(f::CoupledMultirotorModel, x::PlantState{N,B}) where {N,B
     # on the ground.
     rb_proj = x.rb
     if f.contact isa FlatGroundConstraintContact
-        # Phase 5 (Plan1): **position-only** post-stabilization.
+        # Position-only post-stabilization.
         #
         # We correct small penetration/drift in `z` without injecting momentum.
         # Velocities are determined by the contact impulse solve inside
@@ -1334,14 +1334,14 @@ end
 end
 
 
-# Internal helper: grounded candidate predicate (Phase 4 time-stepping mode).
+# Internal helper: grounded candidate predicate (time-stepping mode).
 @inline function _ground_candidate(c::FlatGroundConstraintContact, rb::RigidBodyState)::Bool
     # Treat tiny upward velocities as numerical noise to reduce mode chattering.
     return (rb.pos_ned[3] >= -c.z_slop_m) && (rb.vel_ned[3] >= -c.vz_slop_mps)
 end
 
 
-# Internal helper: Phase 2 (Plan1) safe step-size limiter near the ground guard.
+# Internal helper: safe step-size limiter near the ground guard.
 #
 # When airborne and descending toward the plane, cap the size of the next integration
 # chunk to O(time-to-impact) based on the current distance-to-ground and closing speed.
@@ -1390,7 +1390,7 @@ end
 
 """Advance one grounded contact substep using a 1-contact BLCP impulse solve.
 
-This is the Phase 4 (Plan1) grounded-mode integrator:
+This is the grounded-mode integrator:
 
 * Integrate the *smooth* plant dynamics (no contact) over `dt_s` using a single
   explicit evaluation (Euler).
@@ -1485,7 +1485,7 @@ function _grounded_blcp_substep(
     # Symplectic position update.
     pos1 = x.rb.pos_ned + v_post * dt_s
 
-    # Phase 5 (Plan1): position-only post-stabilization.
+    # Position-only post-stabilization.
     z = pos1[3]
     if z > 0.0
         z = 0.0
@@ -1507,7 +1507,7 @@ function _grounded_blcp_substep(
         power = power,
     )
 
-    # Phase 4 guardrail: clamp physical bounds *per grounded substep* so invalid
+    # Guardrail: clamp physical bounds *per grounded substep* so invalid
     # actuator/rotor states cannot feed into subsequent substeps.
     return plant_project(f_free, x1)
 end
@@ -1542,14 +1542,14 @@ end
 
 """Protocol override: integrate with hybrid ground-contact handling.
 
-For `FlatGroundConstraintContact` this implements Plan1 Phases 3–5:
+For `FlatGroundConstraintContact` this implements a hybrid contact path:
 
-* **Phase 3**: detect descending crossings of the `z=0` plane within the interval,
+* detect descending crossings of the `z=0` plane within the interval,
   localize the time of impact (TOI) to integer microseconds via bisection, and apply
   an instantaneous velocity reset (impact map).
-* **Phase 4**: while grounded, integrate using a fixed-step time-stepping loop and
+* while grounded, integrate using a fixed-step time-stepping loop and
   a 1-contact BLCP impulse solve (normal + Coulomb friction).
-* **Phase 5**: use position-only post-stabilization (no velocity clamping) to prevent
+* use position-only post-stabilization (no velocity clamping) to prevent
   long-horizon drift into the plane.
 """
 function plant_integrate_interval(
@@ -1562,7 +1562,7 @@ function plant_integrate_interval(
 ) where {N,B}
     dt_us == 0 && return x0
 
-    # Only special-case the constraint ground-contact model (Phase 2+).
+    # Only special-case the constraint ground-contact model.
     if !(f.contact isa FlatGroundConstraintContact)
         t0_s = Float64(t0_us) * 1e-6
         dt_s = Float64(dt_us) * 1e-6
@@ -1590,7 +1590,7 @@ function plant_integrate_interval(
     MAX_IMPACTS_PER_INTERVAL = 4
     n_impacts = 0
 
-    # Interval contact telemetry (Phase 6): max impact Δv and its timestamp.
+    # Interval contact telemetry: max impact Δv and its timestamp.
     #
     # This is latched and returned to the engine so we can log spikes without
     # requiring high-rate per-substep logging.
@@ -1609,7 +1609,7 @@ function plant_integrate_interval(
     probe = integrator
 
     while remaining_us > 0
-        # Phase 4: grounded time-stepping loop (fixed substeps + impulse solve).
+        # Grounded time-stepping loop (fixed substeps + impulse solve).
         if _ground_candidate(c, x.rb)
             h_us = max(UInt64(1), c.h_contact_us)
             dt_step_us = remaining_us < h_us ? remaining_us : h_us
@@ -1623,10 +1623,10 @@ function plant_integrate_interval(
             continue
         end
 
-        # Phase 3: airborne segment with TOI localization and impact map.
+        # Airborne segment with TOI localization and impact map.
         t_seg_s = Float64(t_seg_us) * 1e-6
 
-        # Phase 2 (Plan1): safe step-size limiter near the guard.
+        # Safe step-size limiter near the guard.
         #
         # We integrate flight in chunks capped to O(time-to-impact) based on the
         # current distance to the plane and closing speed. This reduces the chance
@@ -1658,7 +1658,7 @@ function plant_integrate_interval(
             rb_post = _apply_ground_impact(c, rb_pre)
             x = _with_rb(x_imp, rb_post)
 
-            # Phase 6: impact telemetry (Δv) for logging.
+            # Impact telemetry (Δv) for logging.
             dv = rb_post.vel_ned - rb_pre.vel_ned
             dv_norm2 = dv[1] * dv[1] + dv[2] * dv[2] + dv[3] * dv[3]
             if dv_norm2 > max_impact_dv_norm2

@@ -367,7 +367,7 @@ min_voltage_v = 9.9
 # If true, min_voltage_v is per-cell and will be scaled by `series`.
 min_voltage_is_cell = false
 
-# Optional thermal hook (Phase 7).
+# Optional thermal hook.
 # When enabled, the plant integrates a per-battery temperature state:
 #   dT/dt = (P_loss - k*(T - T_amb)) / C_th
 # where P_loss ≈ I^2*R0 + (V1^2 / R1 if RC is enabled).

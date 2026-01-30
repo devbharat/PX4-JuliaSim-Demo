@@ -53,7 +53,7 @@ For a rigid-body state \((\vect{p}_{ned}, \vect{v}_{ned})\) the implementation d
   \delta(\vect{p}) &\coloneqq \max(0,\,-\phi)=\max(0,\,p_{ned,z})\qquad &&\text{(penetration)},\\
   \vect{n}_{ned} &\coloneqq (0,0,-1)\qquad &&\text{(unit normal; upward in NED)}.
 \end{align}
-These correspond directly to \code{ground\_gap\_m} and \code{ground\_normal\_ned} (\code{src/sim/Contacts.jl}). Tangential quantities are taken in the ground plane: \(\vect{v}_{xy}=(v_x,v_y)\), \(v_{xy}=\|\vect{v}_{xy}\|\).
+These correspond directly to \code{ground\_gap\_m} and \code{ground\_normal\_ned} (\code{src/sim/Contacts.jl}). Tangential quantities are taken in the ground plane: \(\vect{v}_{t}=(v_x,v_y)\), \(v_{t}=\|\vect{v}_{t}\|\).
 
 The contact layer exposes a lightweight \code{ContactInfo} snapshot (gap, penetration, mode, and instantaneous force estimates) through \code{PlantOutputs} for logging and for derived diagnostics (e.g.\ the physics-derived landed flag in \code{Runtime.Engine}). Modes are encoded as \code{CONTACT\_AIRBORNE}, \code{CONTACT\_IMPACTING}, and \code{CONTACT\_GROUNDED}.
 
@@ -70,17 +70,17 @@ Two contact styles are implemented and selectable via \code{PlantSpec.contact}:
 
 The penalty model is active only when penetrating the plane (\(\delta>0\)). The implemented normal force is
 \begin{equation}
-  N = \max\!\bigl(0,\; k\,\delta + c\,\max(v_z,0)\bigr),
+  F_n = \max\!\bigl(0,\; k\,\delta + c\,\max(v_z,0)\bigr),
 \end{equation}
 where \(v_z\) is the NED vertical velocity (down-positive). The damping term resists compression only (\(v_z>0\)). A smooth Coulomb friction approximation is applied in the tangential plane:
 \begin{equation}
-  \vect{F}_t = -\mu N\,\frac{\vect{v}_{xy}}{\|\vect{v}_{xy}\| + v_{\epsilon}}.
+  \vect{F}_t = -\mu F_n\,\frac{\vect{v}_{t}}{\|\vect{v}_{t}\| + v_{\epsilon}}.
 \end{equation}
 The resulting NED contact force applied at the COM is
 \begin{equation}
-  \vect{F}_{contact,ned} = (F_x, F_y, -N).
+  \vect{F}_{contact,ned} = (F_x, F_y, -F_n).
 \end{equation}
-Friction can be disabled. Because the friction law is smooth, it does not model true stiction: as \(\|\vect{v}_{xy}\|\to 0\), \(\vect{F}_t \to \vect{0}\).
+Friction can be disabled. Because the friction law is smooth, it does not model true stiction: as \(\|\vect{v}_{t}\|\to 0\), \(\vect{F}_t \to \vect{0}\).
 
 \subsubsection{Constraint + hybrid contact (FlatGroundConstraintContact)}
 \label{sec:contacts-hybrid}
@@ -95,18 +95,18 @@ A state is treated as a \emph{ground candidate} when it lies on (or very near) t
 The \code{z\_slop\_m} band is a numerical tolerance for treating small negative heights (slightly above the plane due to integration drift) as ``on ground''.
 The \code{vz\_slop\_mps} band treats tiny upward velocities as numerical noise; it reduces mode chattering when \(v_z\approx 0\).
 
-\paragraph{Continuous normal-reaction estimate (Phase 2 behavior).}
+\paragraph{Continuous normal-reaction estimate (force-level evaluation).}
 When \code{FlatGround\allowbreak ConstraintContact} is evaluated as a continuous force (e.g.\ in unit-test harnesses, or when computing \code{ContactInfo} from \code{plant\_outputs}), it uses the \emph{unconstrained} translational acceleration \( \vect{a}^{free}_{ned}\) (gravity, thrust, drag, \emph{no} contact) to compute a unilateral normal reaction:
 \begin{equation}
-  N = 
+  F_n =
   \begin{cases}
     m\,a^{free}_{z}, & \text{if } \texttt{ground\_candidate}(x)\ \wedge\ a^{free}_{z}>0,\\
     0, & \text{otherwise}.
   \end{cases}
 \end{equation}
-This cancels downward acceleration during resting contact (yielding \(\ddot{z}\approx 0\)) without introducing a stiff penalty spring. Continuous friction (when enabled) uses the same smoothed Coulomb form as \cref{sec:contacts-penalty}, but with this \(N\).
+This cancels downward acceleration during resting contact (yielding \(\ddot{z}\approx 0\)) without introducing a stiff penalty spring. Continuous friction (when enabled) uses the same smoothed Coulomb form as \cref{sec:contacts-penalty}, but with this \(F_n\).
 
-\paragraph{Hybrid interval integration in the coupled multirotor plant (Phase 3--5).}
+\paragraph{Hybrid interval integration in the coupled multirotor plant.}
 In the canonical runtime, the coupled multirotor plant overrides interval integration via the protocol hook \code{plant\_integrate\_interval} (\cref{sec:runtime-hybrid-integrators}). The key design rule is: \emph{integrate the smooth dynamics with \code{NoContact()} and apply contact impulses/maps separately}. In code, the interval integrator constructs
 \begin{equation}
   f_{\mathrm{free}} \;\coloneqq\; \texttt{CoupledMultirotorModel}(\ldots,\ \texttt{NoContact()},\ \ldots)
@@ -158,13 +158,13 @@ The implemented update is
 \begin{equation}
   \vect{v}^{+}_{t} =
   \begin{cases}
-    \vect{0}, & v^{-}_{xy} \le \Delta v_{t,\max} \quad (\text{sticking impact}),\\[4pt]
+    \vect{0}, & v^{-}_{t} \le \Delta v_{t,\max} \quad (\text{sticking impact}),\\[4pt]
     \left(1-\dfrac{\Delta v_{t,\max}}{v^{-}_{t}}\right)\vect{v}^{-}_{t}, & \text{otherwise}.
   \end{cases}
 \end{equation}
 Attitude and body rates are unchanged by the current impact map (COM impulse only).
 
-\subparagraph{Grounded time-stepping loop (Phase 4).}
+\subparagraph{Grounded time-stepping loop.}
 While \texttt{ground\_candidate} remains true, the plant advances in fixed substeps of size \code{h\_contact\_us} (default \SI{1000}{\micro\second}). Each grounded substep uses a single evaluation of the \emph{smooth} derivative \(d = f_{\mathrm{free}}(t,x,u)\) and then applies a closed-form, single-contact impulse solve.
 
 \paragraph{Relation to contact time-stepping literature.}
@@ -215,7 +215,7 @@ Finally, the position update uses the post-impulse velocity (symplectic Euler fo
   \vect{p}_{k+1} = \vect{p}_k + \vect{v}^{post}\,\Delta t.
 \end{equation}
 
-\emph{3) Position-only post-stabilization (Phase 5).}
+\emph{3) Position-only post-stabilization.}
 To remove numerical drift without injecting momentum, the grounded loop snaps small height errors to the plane by clamping the next position:
 \begin{equation}
   p_{z,k+1} \leftarrow
@@ -325,7 +325,7 @@ contact = { kind="flat_ground_constraint",
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{Penalty model (\code{FlatGroundContact}).} Keys map to the compliant spring--damper:
     \begin{itemize}[leftmargin=*,itemsep=1pt]
-      \item \code{k\_n\_per\_m}: normal spring constant \(k\) in \(N = k\,\delta + c\,v_z\).
+      \item \code{k\_n\_per\_m}: normal spring constant \(k\) in \(F_n = k\,\delta + c\,v_z\).
       \item \code{c\_n\_per\_mps}: normal damping \(c\) (applied only when compressing, \(v_z>0\)).
       \item \code{mu} (also accepts unicode $\mu$): friction coefficient \(\mu\) in the smoothed Coulomb model.
       \item \code{v\_eps}: smoothing velocity \(v_{\epsilon}\).

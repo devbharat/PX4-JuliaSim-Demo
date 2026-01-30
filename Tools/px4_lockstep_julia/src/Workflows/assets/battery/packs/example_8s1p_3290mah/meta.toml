@@ -25,7 +25,7 @@ qualified_capacity_ah = 3.18
 ref = "../../cells/example_3290mah_hv/meta.toml"
 
 [thevenin_fit]
-# Phase 5 mapping policy (see docs / plan):
+# Mapping policy (see docs):
 # - We want to match **loaded voltage under thrust**, not the instantaneous dip.
 # - Use end-of-pulse DCIR (Rdc) as the effective series droop resistance.
 # - Disable the RC branch unless/until a validated (R1,C1) dynamic fit is added.
@@ -47,7 +47,7 @@ units = "ohm"
 notes = "Direct pack-level aggregation from the dashboard extraction (no additional scaling). r0_col selects which column is used as the sim's series droop resistance."
 
 [thermal]
-# Simple 1-node lumped thermal hook (Phase 7)
+# Simple 1-node lumped thermal hook
 #
 # The plant integrates a battery temperature state when enabled:
 #   dT/dt = (P_loss - k*(T - T_amb)) / C_th

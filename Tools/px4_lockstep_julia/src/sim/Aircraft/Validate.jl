@@ -230,7 +230,7 @@ function validate_spec(spec::AircraftSpec; mode::Symbol = :live, recording_in = 
             ),
         )
 
-        # Optional thermal hook (Phase 7): validate user-provided overrides.
+        # Optional thermal hook: validate user-provided overrides.
         th = b.thermal
         if th.enabled
             if th.c_th_j_per_k !== nothing

@@ -73,7 +73,7 @@ Base.@kwdef struct ContactInfo
     normal_force_n::Float64 = 0.0
     friction_force_ned::Vec3 = vec3(0.0, 0.0, 0.0)
 
-    # Hybrid-impact bookkeeping (Phase 3+).
+    # Hybrid-impact bookkeeping (TOI/impact map).
     v_n_pre_mps::Float64 = NaN
     v_n_post_mps::Float64 = NaN
     normal_impulse_ns::Float64 = 0.0
@@ -155,14 +155,14 @@ Notes
 -----
 * This model is intended to make **resting contact** stable for adaptive explicit
   integrators.
-* Touchdown timing/impact is still handled by projection or hybrid events (Phase 3+).
+* Touchdown timing/impact is still handled by projection or hybrid events.
 """
 Base.@kwdef mutable struct FlatGroundConstraintContact <: AbstractContactModel
     μ::Float64 = 0.8
     v_eps::Float64 = 0.05
     enable_friction::Bool = true
 
-    """Coefficient of restitution for the *impact map* (Phase 3+).
+    """Coefficient of restitution for the *impact map*.
 
 `e = 0` is perfectly inelastic (no bounce), `e = 1` is perfectly elastic.
 
@@ -178,7 +178,7 @@ an inelastic capture (`v_n_post = 0`) to avoid Zeno/chatter loops.
 """
     v_rest_threshold_mps::Float64 = 0.05
 
-    """If true, apply a tangential Coulomb impulse at impact (Phase 3+).
+    """If true, apply a tangential Coulomb impulse at impact.
 
 This is a single-point COM contact approximation. Continuous friction in grounded
 mode still applies independently.
@@ -187,7 +187,7 @@ mode still applies independently.
 
     """Grounded-mode contact substep (microseconds).
 
-Phase 4 (Plan1) moves resting/sliding contact to a **time-stepping impulse solve**.
+Resting/sliding contact is handled by a **time-stepping impulse solve**.
 While the vehicle is grounded, the plant integrator runs a fixed-step contact loop
 with step size `h_contact_us` (rather than letting an adaptive RK solver shrink to
 resolve contact stiffness).

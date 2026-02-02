@@ -6,7 +6,7 @@ const Sim = PX4Lockstep.Sim
     AC = Sim.Aircraft
     PT = Sim.Powertrain
     PM = Sim.PlantModels
-    assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+    assets_root = normpath(joinpath(@__DIR__, "..", "..", "src", "Workflows", "assets", "battery"))
     pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
 
     b = AC.build_battery(

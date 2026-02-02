@@ -20,7 +20,7 @@ framework under `Tools/px4_lockstep_julia`.
 
 There are two primary layers:
 
-1. **`PX4Lockstep` ABI wrapper** (`src/PX4Lockstep.jl`)
+1. **`PX4Lockstep` ABI wrapper** (`src/PX4Lockstep.jl`, with implementation split across `src/lockstep/*.jl`)
    - Loads `libpx4_lockstep` and exposes `create`, `step_uorb!`, `load_mission`, etc.
    - Ensures ABI compatibility and enforces the single-handle default.
 2. **`PX4Lockstep.Sim` simulation framework** (`src/sim/*`)
@@ -296,7 +296,7 @@ The same engine supports:
 
 ## Component Docs Index
 
-- [x] `PX4Lockstep` C ABI wrapper (`src/PX4Lockstep.jl`)
+- [x] `PX4Lockstep` C ABI wrapper (`src/PX4Lockstep.jl` + `src/lockstep/*.jl`)
 - [x] Fixed-step semantics via `Sim.Runtime.Engine` + `timeline.phys`
 - [x] Event-driven integration (`src/sim/Runtime/Engine.jl`)
 - [x] Integrators (`src/sim/Integrators.jl`)

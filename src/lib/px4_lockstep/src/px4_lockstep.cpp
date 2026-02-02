@@ -31,6 +31,8 @@
 
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_control_mode.h>
+#include <uORB/topics/actuator_armed.h>
+#include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_global_position.h>
 #include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/vehicle_rates_setpoint.h>
@@ -159,6 +161,10 @@ struct LockstepRuntime {
 	uORB::Publication<home_position_s>   pub_home{ORB_ID(home_position)};
 	uORB::Publication<mission_s>         pub_mission{ORB_ID(mission)};
 	uORB::Publication<geofence_status_s> pub_geofence_status{ORB_ID(geofence_status)};
+	uORB::Publication<vehicle_status_s> pub_vehicle_status{ORB_ID(vehicle_status)};
+	uORB::Publication<vehicle_control_mode_s> pub_vehicle_control_mode{ORB_ID(vehicle_control_mode)};
+	uORB::Publication<actuator_armed_s> pub_actuator_armed{ORB_ID(actuator_armed)};
+	uORB::Publication<mission_result_s> pub_mission_result{ORB_ID(mission_result)};
 
 	// Debug/inspection subscriptions
 	uORB::Subscription sub_vehicle_status_dbg{ORB_ID(vehicle_status)};
@@ -172,6 +178,9 @@ struct LockstepRuntime {
 	uORB::Subscription sub_mission_result_dbg{ORB_ID(mission_result)};
 	uORB::Subscription sub_att_sp{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Subscription sub_rates_sp{ORB_ID(vehicle_rates_setpoint)};
+	uORB::Subscription sub_mission_result{ORB_ID(mission_result)};
+	uORB::Subscription sub_land_detected{ORB_ID(vehicle_land_detected)};
+	uORB::Subscription sub_vehicle_local_position{ORB_ID(vehicle_local_position)};
 
 	// PX4 modules we step
 	Commander *commander{nullptr};
@@ -199,6 +208,11 @@ struct LockstepRuntime {
 	uint64_t last_time_us{0};
 	uint64_t last_debug_us{0};
 	bool debug_enabled{false};
+
+	// Commander-lite command inputs and state (used when commander is disabled).
+	px4_lockstep_cmd_t cmd{};
+	bool cmd_mission_started{false};
+	bool cmd_mission_completed{false};
 	// ---------------------------------------------------------------------
 	// External (Julia) uORB pub/sub handles
 	// ---------------------------------------------------------------------
@@ -745,6 +759,16 @@ void px4_lockstep_destroy(px4_lockstep_handle_t handle)
 	g_lockstep_active.store(0);
 }
 
+int px4_lockstep_set_cmd(px4_lockstep_handle_t handle, const px4_lockstep_cmd_t *cmd)
+{
+	if (!handle || !cmd) {
+		return -1;
+	}
+	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
+	rt->cmd = *cmd;
+	return 0;
+}
+
 int px4_lockstep_load_mission_qgc_wpl(px4_lockstep_handle_t handle, const char *mission_path)
 {
 	LockstepRuntime *rt = reinterpret_cast<LockstepRuntime *>(handle);
@@ -942,6 +966,135 @@ static int publish_queued_uorb(LockstepRuntime &rt)
 
 static void debug_state(LockstepRuntime &rt, uint64_t now_us);
 
+static void commander_lite_step(LockstepRuntime &rt, uint64_t time_us)
+{
+	if (rt.cfg.enable_commander != 0) {
+		return;
+	}
+
+	const bool cmd_armed = (rt.cmd.armed != 0);
+	bool req_mission = (rt.cmd.request_mission != 0);
+	const bool req_rtl = (rt.cmd.request_rtl != 0);
+
+	mission_result_s mres{};
+	const bool has_mission_result = rt.sub_mission_result.copy(&mres);
+	const bool mission_valid = has_mission_result && mres.valid;
+	const bool mission_unknown = !has_mission_result;
+	const bool mission_finished = has_mission_result && mres.finished;
+	const uint16_t mission_seq = has_mission_result ? mres.seq_current : 0;
+	const uint16_t mission_count = has_mission_result ? mres.seq_total : 0;
+
+	vehicle_land_detected_s land{};
+	const bool has_land = rt.sub_land_detected.copy(&land);
+	const bool landed = has_land ? land.landed : false;
+
+	home_position_s home{};
+	const bool has_home = rt.sub_home_position.copy(&home);
+	const bool home_ready = has_home && home.valid_hpos && home.valid_lpos && home.valid_alt && (home.update_count > 0);
+
+	vehicle_local_position_s lpos{};
+	const bool has_lpos = rt.sub_vehicle_local_position.copy(&lpos);
+	const bool est_ready = has_lpos && lpos.xy_valid && lpos.z_valid && lpos.v_xy_valid && lpos.v_z_valid;
+
+	const bool can_start_mission = cmd_armed && req_mission && home_ready && est_ready &&
+				       (mission_valid || mission_unknown);
+	const bool can_mark_mission_started = cmd_armed && req_mission && home_ready && est_ready && mission_valid;
+
+	if (!cmd_armed) {
+		rt.cmd_mission_started = false;
+		rt.cmd_mission_completed = false;
+	} else {
+		if (!req_mission) {
+			rt.cmd_mission_started = false;
+			rt.cmd_mission_completed = false;
+		} else if (can_mark_mission_started) {
+			rt.cmd_mission_started = true;
+		}
+		if (rt.cmd_mission_started && mission_finished && landed
+		    && mission_count > 0 && mission_seq >= static_cast<uint16_t>(mission_count - 1)) {
+			rt.cmd_mission_completed = true;
+		}
+	}
+
+	if (rt.cmd_mission_completed) {
+		req_mission = false;
+	}
+
+	uint8_t nav_state = vehicle_status_s::NAVIGATION_STATE_MANUAL;
+	if (cmd_armed) {
+		if (req_rtl) {
+			nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
+		} else if (rt.cmd_mission_completed) {
+			nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER;
+		} else if (can_start_mission) {
+			nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+		}
+	}
+
+	const bool auto_mode = (nav_state != vehicle_status_s::NAVIGATION_STATE_MANUAL);
+
+	vehicle_status_s status{};
+	status.timestamp = time_us;
+	status.arming_state = cmd_armed ? vehicle_status_s::ARMING_STATE_ARMED : vehicle_status_s::ARMING_STATE_DISARMED;
+	status.nav_state = nav_state;
+	status.nav_state_user_intention = nav_state;
+	status.nav_state_timestamp = time_us;
+	status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	status.is_vtol = false;
+	status.is_vtol_tailsitter = false;
+	status.in_transition_mode = false;
+	status.in_transition_to_fw = false;
+	rt.pub_vehicle_status.publish(status);
+
+	vehicle_control_mode_s vcm{};
+	vcm.timestamp = time_us;
+	vcm.flag_armed = cmd_armed;
+	vcm.flag_multicopter_position_control_enabled = true;
+	vcm.flag_control_manual_enabled = !auto_mode;
+	vcm.flag_control_auto_enabled = auto_mode;
+	vcm.flag_control_offboard_enabled = false;
+	vcm.flag_control_position_enabled = true;
+	vcm.flag_control_velocity_enabled = true;
+	vcm.flag_control_altitude_enabled = true;
+	vcm.flag_control_climb_rate_enabled = true;
+	vcm.flag_control_acceleration_enabled = false;
+	vcm.flag_control_attitude_enabled = true;
+	vcm.flag_control_rates_enabled = true;
+	vcm.flag_control_allocation_enabled = (rt.cfg.enable_control_allocator != 0);
+	vcm.flag_control_termination_enabled = false;
+	vcm.source_id = 0;
+	rt.pub_vehicle_control_mode.publish(vcm);
+
+	actuator_armed_s armed{};
+	armed.timestamp = time_us;
+	armed.armed = cmd_armed;
+	armed.prearmed = cmd_armed;
+	armed.ready_to_arm = true;
+	armed.lockdown = false;
+	armed.kill = false;
+	armed.termination = false;
+	armed.in_esc_calibration_mode = false;
+	rt.pub_actuator_armed.publish(armed);
+}
+
+static void commander_lite_filter_mission_result(LockstepRuntime &rt, uint64_t time_us)
+{
+	if (rt.cfg.enable_commander != 0) {
+		return;
+	}
+
+	mission_result_s mres{};
+	if (!rt.sub_mission_result.copy(&mres)) {
+		return;
+	}
+
+	if (!rt.cmd_mission_started && mres.finished) {
+		mres.finished = false;
+		mres.timestamp = time_us;
+		rt.pub_mission_result.publish(mres);
+	}
+}
+
 static int step_lockstep_common(LockstepRuntime &rt, uint64_t time_us)
 {
 	// Basic monotonic guarantee
@@ -968,6 +1121,8 @@ static int step_lockstep_common(LockstepRuntime &rt, uint64_t time_us)
 	// Commander first: it updates vehicle_status/nav_state (and triggers RTL on battery, etc).
 	if (rt.commander && rt.cmd_rate.should_run(now)) {
 		rt.commander->run_once();
+	} else if (rt.cmd_rate.should_run(now)) {
+		commander_lite_step(rt, now);
 	}
 
 	if (rt.nav_rate.should_run(now)) {
@@ -993,6 +1148,8 @@ static int step_lockstep_common(LockstepRuntime &rt, uint64_t time_us)
 	if (rt.control_alloc && rt.alloc_rate.should_run(now)) {
 		rt.control_alloc->run_once();
 	}
+
+	commander_lite_filter_mission_result(rt, time_us);
 
 	maybe_force_geofence_ready(rt, time_us);
 

@@ -153,6 +153,7 @@ Base.@kwdef mutable struct ScriptedScenario <: AbstractScenario
     # Land detection thresholds (best effort). In many PX4 stacks, landed status affects arming + takeoff.
     land_z_thresh_m::Float64 = 0.05
     land_vz_thresh_mps::Float64 = 0.2
+    _ever_airborne::Bool = false
 end
 
 """Compute scenario outputs for this tick.
@@ -176,8 +177,12 @@ function scenario_step(
 
     landed =
         (x.pos_ned[3] >= -s.land_z_thresh_m) && (abs(x.vel_ned[3]) < s.land_vz_thresh_mps)
+    s._ever_airborne |= !landed
     if !isnothing(s.takeoff_override_delay_s)
-        if armed && request_mission && t >= (s.mission_time_s + s.takeoff_override_delay_s)
+        if armed &&
+           request_mission &&
+           t >= (s.mission_time_s + s.takeoff_override_delay_s) &&
+           !s._ever_airborne
             landed = false
         end
     end
@@ -231,6 +236,7 @@ Base.@kwdef mutable struct EventScenario <: AbstractScenario
     _mission_started::Bool = false
     _mission_start_time_s::Float64 = NaN
     _last_process_us::UInt64 = typemax(UInt64)
+    _ever_airborne::Bool = false
 end
 
 """Return the current fault state for an `EventScenario`."""
@@ -276,10 +282,12 @@ function scenario_step(
 
     landed =
         (x.pos_ned[3] >= -s.land_z_thresh_m) && (abs(x.vel_ned[3]) < s.land_vz_thresh_mps)
+    s._ever_airborne |= !landed
     if !isnothing(s.takeoff_override_delay_s)
         if s.state.cmd.armed &&
            s._mission_started &&
-           t >= (s._mission_start_time_s + s.takeoff_override_delay_s)
+           t >= (s._mission_start_time_s + s.takeoff_override_delay_s) &&
+           !s._ever_airborne
             landed = false
         end
     end

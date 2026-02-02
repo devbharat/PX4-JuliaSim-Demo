@@ -41,6 +41,17 @@ typedef struct px4_lockstep_config_t {
 	int32_t control_allocator_rate_hz;     // <=0 => step every tick
 } px4_lockstep_config_t;
 
+// Minimal commander-lite command inputs.
+//
+// These are interpreted inside the lockstep harness when Commander-in-loop
+// is disabled. The harness publishes vehicle_status/control_mode/actuator_armed
+// based on these inputs and mission_result.
+typedef struct px4_lockstep_cmd_t {
+	uint8_t armed;            // 0/1
+	uint8_t request_mission;  // 0/1
+	uint8_t request_rtl;      // 0/1
+} px4_lockstep_cmd_t;
+
 // -----------------------------------------------------------------------------
 // PX4 parameter set/get helpers
 // -----------------------------------------------------------------------------
@@ -112,6 +123,11 @@ PX4_LOCKSTEP_EXPORT void px4_lockstep_sizes(uint32_t *in_sz,
 // Create/destroy.
 PX4_LOCKSTEP_EXPORT px4_lockstep_handle_t px4_lockstep_create(const px4_lockstep_config_t *cfg);
 PX4_LOCKSTEP_EXPORT void px4_lockstep_destroy(px4_lockstep_handle_t handle);
+
+// Update the commander-lite command inputs (arm/mission/RTL requests).
+// Returns 0 on success, <0 on invalid arguments.
+PX4_LOCKSTEP_EXPORT int px4_lockstep_set_cmd(px4_lockstep_handle_t handle,
+					     const px4_lockstep_cmd_t *cmd);
 
 // Load a mission (QGC WPL 110) and preload it into Dataman.
 // Returns 0 on success.

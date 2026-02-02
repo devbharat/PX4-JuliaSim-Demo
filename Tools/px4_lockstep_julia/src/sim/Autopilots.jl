@@ -19,8 +19,8 @@ using ..Types: Vec3, Quat, WorldOrigin, vec3, yaw_from_quat
 using ..Powertrain: BatteryStatus
 
 # C ABI wrapper lives in the top-level `PX4Lockstep` module.
-using PX4Lockstep: LockstepHandle
-using PX4Lockstep: create, destroy, load_mission, step_uorb!
+using PX4Lockstep: LockstepHandle, LockstepCmd
+using PX4Lockstep: create, destroy, load_mission, step_uorb!, set_cmd!
 using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
 using PX4Lockstep: create_publisher, create_subscriber, publish!
 using PX4Lockstep: uorb_check, uorb_copy, uorb_unsubscribe!
@@ -97,8 +97,6 @@ mutable struct PX4LockstepAutopilot <: AbstractAutopilot
     home::HomeLocation
     edge_trigger::Bool
     last_cmd::AutopilotCommand
-    mission_rearm_pending::Bool
-    mission_rearm_until_us::UInt64
     uorb::UORBBridge
     uorb_outputs::UORBOutputs
     injector::PX4UORBInjector
@@ -192,8 +190,6 @@ function init!(;
         home,
         edge_trigger,
         AutopilotCommand(),
-        false,
-        UInt64(0),
         uorb,
         uorb_outputs,
         injector,
@@ -263,36 +259,14 @@ function autopilot_step(
     req_rtl =
         ap.edge_trigger ? (cmd.request_rtl && !ap.last_cmd.request_rtl) : cmd.request_rtl
 
-    if !ap.edge_trigger
-        if cmd.request_mission
-            mission_valid = ap.uorb_outputs.mission_valid != 0
-            if !mission_valid
-                ap.mission_rearm_pending = true
-            elseif ap.mission_rearm_pending
-                # Hold manual for at least one navigator tick so activation re-triggers.
-                nav_rate = ap.handle.config.navigator_rate_hz
-                hold_us = nav_rate > 0 ? UInt64(cld(1_000_000, nav_rate)) : UInt64(1)
-                ap.mission_rearm_until_us = time_us + hold_us
-                ap.mission_rearm_pending = false
-            end
-            if ap.mission_rearm_until_us != 0
-                if time_us < ap.mission_rearm_until_us
-                    req_mission = false
-                else
-                    ap.mission_rearm_until_us = 0
-                end
-            end
-        else
-            ap.mission_rearm_pending = false
-            ap.mission_rearm_until_us = 0
-        end
-    end
-
-    auto_mode = req_mission || req_rtl
-    nav_state =
-        req_rtl ? NAV_STATE_AUTO_RTL :
-        req_mission ? NAV_STATE_AUTO_MISSION : NAV_STATE_MANUAL
-    arming_state = cmd.armed ? ARMING_STATE_ARMED : ARMING_STATE_DISARMED
+    set_cmd!(
+        ap.handle,
+        LockstepCmd(
+            armed = cmd.armed ? 0x01 : 0x00,
+            request_mission = req_mission ? 0x01 : 0x00,
+            request_rtl = req_rtl ? 0x01 : 0x00,
+        ),
+    )
 
     # Commander-in-loop is currently disabled; keep this switch for future re-enable.
     use_home = ap.handle.config.enable_commander == 0
@@ -317,10 +291,6 @@ function autopilot_step(
         ref_lat_deg = ref_lat,
         ref_lon_deg = ref_lon,
         ref_alt_m = ref_alt,
-        auto_mode = auto_mode,
-        nav_state = nav_state,
-        arming_state = arming_state,
-        control_allocator_enabled = ap.handle.config.enable_control_allocator != 0,
     )
 
     # Queue any uORB publishes that are due at this time.

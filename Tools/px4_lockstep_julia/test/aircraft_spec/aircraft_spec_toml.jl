@@ -28,7 +28,7 @@ end
 
 @testset "AircraftSpec battery explicit keys" begin
     mktempdir() do dir
-        assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+        assets_root = normpath(joinpath(@__DIR__, "..", "..", "src", "Workflows", "assets", "battery"))
         pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
         toml = """
         schema_version = 1
@@ -56,7 +56,7 @@ end
 
 @testset "AircraftSpec battery model deprecations" begin
     mktempdir() do dir
-        assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+        assets_root = normpath(joinpath(@__DIR__, "..", "..", "src", "Workflows", "assets", "battery"))
         pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
         toml = """
         schema_version = 1
@@ -250,6 +250,7 @@ end
     csv_path = normpath(
         joinpath(
             @__DIR__,
+            "..",
             "..",
             "src",
             "Workflows",

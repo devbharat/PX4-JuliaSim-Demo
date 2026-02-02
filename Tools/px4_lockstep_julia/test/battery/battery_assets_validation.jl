@@ -6,7 +6,7 @@ const Sim = PX4Lockstep.Sim
     BA = Sim.Aircraft.BatteryAssets
     AC = Sim.Aircraft
     PT = Sim.Powertrain
-    assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+    assets_root = normpath(joinpath(@__DIR__, "..", "..", "src", "Workflows", "assets", "battery"))
     cell_meta = joinpath(assets_root, "cells", "example_3290mah_hv", "meta.toml")
     pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
 
@@ -203,7 +203,7 @@ const Sim = PX4Lockstep.Sim
 end
 
 @testset "Battery assets: TOML overrides asset (warns)" begin
-    assets_root = normpath(joinpath(@__DIR__, "..", "src", "Workflows", "assets", "battery"))
+    assets_root = normpath(joinpath(@__DIR__, "..", "..", "src", "Workflows", "assets", "battery"))
     cell_meta = joinpath(assets_root, "cells", "example_3290mah_hv", "meta.toml")
     pack_meta = joinpath(assets_root, "packs", "example_8s1p_3290mah", "meta.toml")
     mktempdir() do dir

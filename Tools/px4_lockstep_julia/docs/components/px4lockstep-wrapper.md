@@ -2,7 +2,8 @@
 
 ## Role
 
-`src/PX4Lockstep.jl` isolates all C ABI interaction. It is intentionally small so ABI
+`src/PX4Lockstep.jl` isolates all C ABI interaction. The implementation is split across
+`src/lockstep/*.jl` for readability, with `src/PX4Lockstep.jl` as the include/export hub. It is intentionally small so ABI
 compatibility issues are contained and do not leak into the simulation framework.
 
 ## Key Decisions and Rationale

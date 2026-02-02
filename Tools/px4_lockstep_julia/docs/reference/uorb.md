@@ -47,7 +47,7 @@ strict mode) when `period_us % dt_ap_us != 0`.
 
 ## Where the bridge lives
 
-- ABI wrapper: `src/PX4Lockstep.jl`
+- ABI wrapper: `src/PX4Lockstep.jl` (includes `src/lockstep/*.jl`)
 - Topic registry + helpers: `src/sim/Autopilots/UORBBridge.jl`
 - Autopilot integration: `src/sim/Autopilots.jl`
 

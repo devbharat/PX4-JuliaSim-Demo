@@ -8,57 +8,64 @@ const Sim = PX4Lockstep.Sim
 const Workflows = PX4Lockstep.Workflows
 
 # TOML-first Iris helpers for tests.
-include("_iris_helpers.jl")
+include("_helpers/_iris_helpers.jl")
 
 # Verification cases (analytic + invariants). Keep in a separate file so the
 # main test entrypoint stays readable.
-include("verification_cases.jl")
+include("verification/verification_cases.jl")
 
 # Verification: system-level contracts + missing subsystem unit coverage.
 # These start as `@test_skip` shells and will be filled in incrementally.
-include("verification_contracts.jl")
+include("verification/verification_contracts.jl")
 
 # Ground contact regression harness (Phase 0/1).
-include("ground_contact_harness.jl")
+include("contact/ground_contact_harness.jl")
 
 # uORB interface + injection scheduling checks (no PX4 binary required).
-include("uorb_injection.jl")
-include("lockstep_runtime.jl")
+include("uorb/uorb_injection.jl")
+include("uorb/uorb_bridge_allocs.jl")
+include("integration/lockstep_runtime.jl")
+include("integration/lockstep_integration_tier0.jl")
+include("integration/lockstep_integration_tier1.jl")
+include("integration/lockstep_integration_tier2.jl")
+include("integration/lockstep_integration_tier3.jl")
+include("integration/lockstep_integration_tier4.jl")
+include("integration/lockstep_integration_tier5.jl")
 
 # Record/replay engine (Option A) checks.
 
 # Compare-integrators workflow (record/replay + metrics)
-include("compare_integrators.jl")
-include("record_replay_engine.jl")
+include("verification/compare_integrators.jl")
+include("verification/record_replay_engine.jl")
 
 # AircraftSpec scaffolding (Phase 0) checks.
-include("aircraft_spec_iris_parity.jl")
-include("aircraft_spec_toml.jl")
+include("aircraft_spec/aircraft_spec_iris_parity.jl")
+include("aircraft_spec/aircraft_spec_toml.jl")
 
 # Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
-include("multirotor_motor_map.jl")
+include("verification/multirotor_motor_map.jl")
 
 # Vehicle dynamics unit coverage (inertia tensor + rotor gyroscopic coupling).
-include("vehicles_inertia_gyro.jl")
+include("verification/vehicles_inertia_gyro.jl")
 
 # Phase 5: DCIR-driven loaded voltage sag regression (Example pack).
-include("battery_loaded_voltage_dcir.jl")
+include("battery/battery_loaded_voltage_dcir.jl")
 
 # Phase 6: battery asset validation + scaling/sanity checks.
-include("battery_assets_validation.jl")
+include("battery/battery_assets_validation.jl")
 
 # Phase 7: thermal hook regression.
-include("battery_thermal_hook.jl")
-include("battery_r0_overhead.jl")
-include("battery_surface_scaling.jl")
-include("battery_rc_scaling.jl")
-include("battery_min_voltage_scaling.jl")
-include("battery_surface_units.jl")
-include("battery_ocv_csv_cell_scaling.jl")
-include("battery_ocv_resample.jl")
-include("battery_asset_path_validation.jl")
-include("battery_thermal_cooling.jl")
-include("battery_temperature_clamp.jl")
+include("battery/battery_thermal_hook.jl")
+include("battery/battery_r0_overhead.jl")
+include("battery/battery_surface_scaling.jl")
+include("battery/battery_rc_scaling.jl")
+include("battery/battery_min_voltage_scaling.jl")
+include("battery/battery_surface_units.jl")
+include("battery/battery_ocv_csv_cell_scaling.jl")
+include("battery/battery_ocv_resample.jl")
+include("battery/battery_asset_path_validation.jl")
+include("battery/battery_thermal_cooling.jl")
+include("battery/battery_temperature_clamp.jl")
 
 """Return the geodesic rotation error (rad) between two quaternions.
 

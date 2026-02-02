@@ -47,11 +47,11 @@ and optional injection scheduling) lives in:
   (small geographic extent).
 - With `edge_trigger=true`, mission/RTL requests become pulses; callers that want a
   sustained request must reassert it.
-- Commander-in-loop is currently **not supported** (hard error). The bridge injects
-  `vehicle_status.nav_state` directly; a one-tick pulse is unlikely to latch a mode
-  change inside PX4. If you need “send once and it sticks” behavior, keep a latch in
-  the bridge or publish a proper `vehicle_command` and let Commander handle it once
-  Commander is re-enabled.
+- Commander-in-loop is currently **not supported** (hard error). When Commander is
+  disabled, the **lockstep C runtime** publishes a minimal commander‑lite set of
+  topics (`vehicle_status`, `vehicle_control_mode`, `actuator_armed`) based on the
+  high-level command inputs and `mission_result`. The Julia bridge no longer injects
+  those topics directly.
 - uORB injections are currently scheduled **every autopilot tick** (period = 0) and
   the per-topic period is not exposed via TOML. As the boundary grows, consider adding
   per-topic periods or “publish once” semantics for latched topics like

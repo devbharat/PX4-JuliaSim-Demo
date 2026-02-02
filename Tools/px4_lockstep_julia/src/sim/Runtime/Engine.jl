@@ -32,7 +32,8 @@ using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize, validate
 using ..Plant: PlantInput, PlantOutputs, PlantState, battery_temp_c
 using ..Contacts: CONTACT_GROUNDED
-using ..Integrators: AbstractIntegrator, step_integrator, last_stats, reset!
+using ..Integrators:
+    AbstractIntegrator, IntegratorStats, step_integrator, last_stats, reset!
 
 import ..plant_outputs
 import ..plant_project
@@ -159,13 +160,13 @@ Base.@kwdef mutable struct EngineStats
     # Integration interval stats
     n_intervals::Int = 0
     last_interval_us::UInt64 = 0
-    last_integrator_stats::Any = nothing
+    last_integrator_stats::IntegratorStats = IntegratorStats()
 end
 
 """Cached algebraic outputs from the plant model."""
 Base.@kwdef mutable struct EngineOutputs
     # Cached plant_outputs(...) result for the current boundary (if computed).
-    plant_y::Any = nothing
+    plant_y::Union{Nothing,PlantOutputs} = nothing
 
     derived_valid::Bool = false
 end
@@ -634,9 +635,8 @@ function process_events_at!(sim::Engine)
             end
 
             # Physics-derived landed flag for diagnostics/logging.
-            contact_y =
-                (sim.outputs.derived_valid && (sim.outputs.plant_y !== nothing)) ?
-                getproperty(sim.outputs.plant_y, :contact) : nothing
+            y = sim.outputs.plant_y
+            contact_y = (sim.outputs.derived_valid && (y !== nothing)) ? y.contact : nothing
             _update_landed_phys!(sim.bus, _rb_state(sim.plant), contact_y)
 
         elseif stage === :estimator

@@ -36,7 +36,7 @@ const Autopilots = Sim.Autopilots
     dummy_handle = PX4Lockstep.LockstepHandle(Ptr{Cvoid}(0), Ptr{Cvoid}(0), PX4Lockstep.LockstepConfig())
 
     # Single-instance publishers (legacy).
-    pubs = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBPublisher,Int32}}}(
+    pubs = Dict{Symbol,Vector{Tuple{Any,Int32}}}(
         :battery_status => [
             (
                 PX4Lockstep.UORBPublisher{PX4Lockstep.BatteryStatusMsg}(Int32(0), UInt32(sizeof(T))),
@@ -53,13 +53,15 @@ const Autopilots = Sim.Autopilots
             ),
         ],
     )
-    subs = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBSubscriber,Int32}}}()
-    bridge = Autopilots.UORBBridge(dummy_handle, pubs, subs)
+    subs = Dict{Symbol,Vector{Tuple{Any,Int32}}}()
+    backend = Autopilots.RealUORBBackend()
+    slots = Autopilots._build_read_slots(backend, subs)
+    bridge = Autopilots.UORBBridge(backend, dummy_handle, pubs, subs, slots)
     inj2 = Autopilots.build_state_injection_injector(bridge, Autopilots.HomeLocation())
     @test Set(map(Autopilots.uorb_name, inj2.sources)) == Set([:battery_status, :home_position])
 
     # Multi-battery injection: two configured publisher instances -> two battery_status sources.
-    pubs_multi = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBPublisher,Int32}}}(
+    pubs_multi = Dict{Symbol,Vector{Tuple{Any,Int32}}}(
         :battery_status => [
             (
                 PX4Lockstep.UORBPublisher{PX4Lockstep.BatteryStatusMsg}(Int32(0), UInt32(sizeof(T))),
@@ -71,8 +73,9 @@ const Autopilots = Sim.Autopilots
             ),
         ],
     )
-    subs_multi = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBSubscriber,Int32}}}()
-    bridge_multi = Autopilots.UORBBridge(dummy_handle, pubs_multi, subs_multi)
+    subs_multi = Dict{Symbol,Vector{Tuple{Any,Int32}}}()
+    slots_multi = Autopilots._build_read_slots(backend, subs_multi)
+    bridge_multi = Autopilots.UORBBridge(backend, dummy_handle, pubs_multi, subs_multi, slots_multi)
     inj3 = Autopilots.build_state_injection_injector(bridge_multi, Autopilots.HomeLocation())
     @test Set(map(Autopilots.uorb_name, inj3.sources)) == Set([:battery_status_0, :battery_status_1])
 
@@ -96,10 +99,6 @@ const Autopilots = Sim.Autopilots
         ref_lat_deg = 0.0,
         ref_lon_deg = 0.0,
         ref_alt_m = 0.0,
-        auto_mode = false,
-        nav_state = UInt8(0),
-        arming_state = UInt8(0),
-        control_allocator_enabled = false,
     )
 
     bsrc0 = only(filter(s -> Autopilots.uorb_name(s) == :battery_status_0, inj3.sources))
@@ -130,15 +129,11 @@ const Autopilots = Sim.Autopilots
         ref_lat_deg = 0.0,
         ref_lon_deg = 0.0,
         ref_alt_m = 0.0,
-        auto_mode = false,
-        nav_state = UInt8(0),
-        arming_state = UInt8(0),
-        control_allocator_enabled = false,
     )
     @test_throws ErrorException bsrc1.builder(ctx_short)
 
     # Fail fast on duplicate battery indices.
-    pubs_dup = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBPublisher,Int32}}}(
+    pubs_dup = Dict{Symbol,Vector{Tuple{Any,Int32}}}(
         :battery_status => [
             (
                 PX4Lockstep.UORBPublisher{PX4Lockstep.BatteryStatusMsg}(Int32(0), UInt32(sizeof(T))),
@@ -150,7 +145,8 @@ const Autopilots = Sim.Autopilots
             ),
         ],
     )
-    subs_dup = Dict{Symbol,Vector{Tuple{PX4Lockstep.UORBSubscriber,Int32}}}()
-    bridge_dup = Autopilots.UORBBridge(dummy_handle, pubs_dup, subs_dup)
+    subs_dup = Dict{Symbol,Vector{Tuple{Any,Int32}}}()
+    slots_dup = Autopilots._build_read_slots(backend, subs_dup)
+    bridge_dup = Autopilots.UORBBridge(backend, dummy_handle, pubs_dup, subs_dup, slots_dup)
     @test_throws ErrorException Autopilots.build_state_injection_injector(bridge_dup, Autopilots.HomeLocation())
 end

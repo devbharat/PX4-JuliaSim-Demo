@@ -58,10 +58,6 @@ Base.@kwdef struct PX4StepContext
     ref_lon_deg::Float64
     ref_alt_m::Float64
 
-    auto_mode::Bool
-    nav_state::UInt8
-    arming_state::UInt8
-    control_allocator_enabled::Bool
 end
 
 # ----------------------------------------------------------------------------
@@ -398,52 +394,6 @@ function build_state_injection_injector(bridge::UORBBridge, home::HomeLocation)
                 pub = pub,
                 period_us = EVERY_STEP_US,
                 builder = ctx -> _vehicle_land_detected_msg(ctx.time_us, ctx.landed),
-            ),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_status)
-        pub = bridge.pubs[:vehicle_status][1][1]::UORBPublisher{VehicleStatusMsg}
-        add_source!(
-            inj,
-            PeriodicUORBInjection(
-                name = :vehicle_status,
-                pub = pub,
-                period_us = EVERY_STEP_US,
-                builder = ctx ->
-                    _vehicle_status_msg(ctx.time_us, ctx.nav_state, ctx.arming_state),
-            ),
-        )
-    end
-
-    if haskey(bridge.pubs, :vehicle_control_mode)
-        pub = bridge.pubs[:vehicle_control_mode][1][1]::UORBPublisher{VehicleControlModeMsg}
-        add_source!(
-            inj,
-            PeriodicUORBInjection(
-                name = :vehicle_control_mode,
-                pub = pub,
-                period_us = EVERY_STEP_US,
-                builder = ctx -> _vehicle_control_mode_msg(
-                    ctx.time_us,
-                    ctx.cmd,
-                    ctx.auto_mode,
-                    ctx.nav_state,
-                    ctx.control_allocator_enabled,
-                ),
-            ),
-        )
-    end
-
-    if haskey(bridge.pubs, :actuator_armed)
-        pub = bridge.pubs[:actuator_armed][1][1]::UORBPublisher{ActuatorArmedMsg}
-        add_source!(
-            inj,
-            PeriodicUORBInjection(
-                name = :actuator_armed,
-                pub = pub,
-                period_us = EVERY_STEP_US,
-                builder = ctx -> _actuator_armed_msg(ctx.time_us, ctx.cmd),
             ),
         )
     end

@@ -31,6 +31,11 @@ The impact acceleration values are **estimates** (impulses are discontinuous), b
 useful for not missing touchdown spikes when logging at a lower rate than the contact
 substep rate.
 
+Because impacts are applied as **velocity jumps** (impulses) rather than continuous
+forces, the spike will appear in `impact_*` diagnostics but not in the continuous
+`acc_x/y/z` or `spec_bx/by/bz` channels. Those channels reflect the smooth dynamics
+evaluated at the log boundary, not the instantaneous impact impulse.
+
 ## Log sinks
 
 A *log sink* receives log entries and decides how to store them.

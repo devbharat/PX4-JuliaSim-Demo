@@ -242,6 +242,10 @@ The runtime accumulates these into bus-level latched signals and additionally ex
   \vect{a}_{\mathrm{impact\_est}} \approx \frac{\Delta\vect{v}}{\Delta t_{ap}},
 \end{equation}
 where \(\Delta t_{ap}\) is the nominal autopilot tick period (\code{timeline.dt\_autopilot\_s}).
+Because impacts are applied as discrete velocity jumps, the spike appears in
+\code{impact\_accel\_est} (and \code{impact\_dv}) but not in the continuous acceleration or
+specific-force channels (\code{acc\_x/y/z}, \code{spec\_bx/by/bz}), which reflect the smooth
+dynamics evaluated at log boundaries.
 
 \paragraph{Caveats (explicit in the current code).}
 \begin{itemize}[leftmargin=*,itemsep=2pt]

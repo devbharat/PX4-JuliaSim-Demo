@@ -620,13 +620,6 @@ function _update_uorb_outputs!(bridge::UORBBridge, out::UORBOutputs)
         out.trajectory_setpoint_acceleration = traj_msg.acceleration
         out.trajectory_setpoint_yaw = traj_msg.yaw
         out.trajectory_setpoint_yawspeed = traj_msg.yawspeed
-    elseif out.nav_state != Int32(NAV_STATE_AUTO_MISSION) &&
-           out.nav_state != Int32(NAV_STATE_AUTO_RTL)
-        out.trajectory_setpoint_position = ZERO_VEC3_F32
-        out.trajectory_setpoint_velocity = ZERO_VEC3_F32
-        out.trajectory_setpoint_acceleration = ZERO_VEC3_F32
-        out.trajectory_setpoint_yaw = 0.0f0
-        out.trajectory_setpoint_yawspeed = 0.0f0
     end
 
     return out

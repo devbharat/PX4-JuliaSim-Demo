@@ -13,6 +13,9 @@ The loader lives in:
 - `PX4Lockstep.Sim.Aircraft.load_spec(path)`
 - `PX4Lockstep.Sim.Aircraft.run_spec(path; ...)`
 
+Developer note: the TOML parser is split across `src/sim/Aircraft/toml/`
+(section parsers + helpers) with `src/sim/Aircraft/TOMLIO.jl` as the include hub.
+
 Example specs are in `examples/specs/`.
 The loader is strict by default and does **not** apply internal defaults.
 Use `extends` to compose from shared defaults (e.g., the TOMLs under

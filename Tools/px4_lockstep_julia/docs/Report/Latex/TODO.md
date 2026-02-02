@@ -17,7 +17,7 @@ This paper is intended to stay **code-faithful** (no claims that diverge from th
 3. **Configuration/schema reference** **(done)**
    - Document the TOML schema (all fields) and how it maps to `AircraftSpec`.
    - Provide a concise table of defaults that come from code (not from docs).
-   - Anchor to: `src/sim/Aircraft/TOMLIO.jl`, `src/sim/Aircraft/Spec.jl`, `src/sim/Aircraft/Build.jl`, and `src/Workflows/assets/aircraft/*.toml`.
+   - Anchor to: `src/sim/Aircraft/TOMLIO.jl`, `src/sim/Aircraft/toml/*`, `src/sim/Aircraft/Spec.jl`, `src/sim/Aircraft/Build.jl`, and `src/Workflows/assets/aircraft/*.toml`.
 
 4. **Model validation section** **(partially done)**
    - Added a validation/regression section summarizing the existing analytic and contract tests in the codebase.

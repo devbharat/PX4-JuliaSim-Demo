@@ -41,6 +41,7 @@ include("verification/record_replay_engine.jl")
 # AircraftSpec scaffolding (Phase 0) checks.
 include("aircraft_spec/aircraft_spec_iris_parity.jl")
 include("aircraft_spec/aircraft_spec_toml.jl")
+include("aircraft_spec/aircraft_spec_toml_coverage.jl")
 
 # Phase 2: actuator mapping + generic multirotor counts (no PX4 required).
 include("verification/multirotor_motor_map.jl")

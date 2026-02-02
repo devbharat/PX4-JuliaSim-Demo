@@ -287,7 +287,7 @@ k_to_ambient_w_per_k = 1.0
 
 \paragraph{Additional parameter semantics.}
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \code{cell\_asset} / \code{pack\_asset}: path to a \code{meta.toml} describing an asset; paths are resolved relative to the spec file (\code{_resolve\_path} in \code{src/sim/Aircraft/TOMLIO.jl}).
+  \item \code{cell\_asset} / \code{pack\_asset}: path to a \code{meta.toml} describing an asset; paths are resolved relative to the spec file (\code{_resolve\_path} in \code{src/sim/Aircraft/toml/Utils.jl}).
   \item \code{series}, \code{parallel}: \(N_s,N_p\) used for the scaling rules in \cref{sec:battery-assets}.
   \item \code{cell\_capacity\_ah}: per-cell capacity; when \code{capacity\_ah} is not explicitly set, the builder sets \(\texttt{capacity\_ah}=N_p\,\texttt{cell\_capacity\_ah}\).
   \item \code{r0\_surface\_r0\_col}: selects which CSV column becomes \(r_0\) in the surface model (e.g., DCIR vs. ohmic). All other surface metadata (CSV path, SOC units/convention, temp/SOC column names) can be inherited from the asset or overridden explicitly via \code{r0\_surface\_csv\_path}, \code{r0\_surface\_temp\_col}, \code{r0\_surface\_soc\_col}, \code{r0\_surface\_soc\_units}, \code{r0\_surface\_soc\_convention}.

@@ -47,7 +47,7 @@ This parameter derivation keeps PX4-side allocation consistent with the Julia-si
 \subsection{TOML configuration: PX4 bridge, lockstep rates, and uORB interface}
 \label{sec:px4-toml}
 
-The PX4 integration is configured under \code{[px4]} (\code{PX4Spec} parsed in \code{src/sim/Aircraft/TOMLIO.jl}). The same table also contains the lockstep module scheduling rates (\code{[px4.lockstep]}) and the uORB publish/subscribe interface definition (\code{[px4.uorb]}).
+The PX4 integration is configured under \code{[px4]} (\code{PX4Spec} parsed in \code{src/sim/Aircraft/toml/Sections/PX4.jl}, included by \code{src/sim/Aircraft/TOMLIO.jl}). The same table also contains the lockstep module scheduling rates (\code{[px4.lockstep]}) and the uORB publish/subscribe interface definition (\code{[px4.uorb]}).
 
 \paragraph{Example (Iris defaults).}
 \begin{lstlisting}[language=toml]

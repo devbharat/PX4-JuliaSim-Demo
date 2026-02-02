@@ -1,7 +1,7 @@
 \section{Aircraft specification and composition}
 \label{sec:configuration}
 
-Simulation instances are built from an \code{AircraftSpec} (\code{src/sim/Aircraft/Spec.jl}) typically loaded from TOML via \code{Aircraft.load\_spec} (\code{src/sim/Aircraft/TOMLIO.jl}). The spec layer exists to separate:
+Simulation instances are built from an \code{AircraftSpec} (\code{src/sim/Aircraft/Spec.jl}) typically loaded from TOML via \code{Aircraft.load\_spec} (include hub in \code{src/sim/Aircraft/TOMLIO.jl}, with section parsers under \code{src/sim/Aircraft/toml/}). The spec layer exists to separate:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item continuous plant integration choices (integrator, contact model),
   \item environment and timeline definition,

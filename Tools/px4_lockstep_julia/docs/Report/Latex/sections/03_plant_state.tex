@@ -50,7 +50,7 @@ The engine resets integrator internal step-size history at the start of every ev
 \subsection{TOML configuration: integrator selection and tolerances}
 \label{sec:integrator-toml}
 
-The integrator described in \cref{sec:integrators} is selected in the \code{[plant]} block (\code{PlantSpec.integrator}, parsed by \code{_parse\_integrator} in \code{src/sim/Aircraft/TOMLIO.jl}). The parser accepts either a string shorthand:
+The integrator described in \cref{sec:integrators} is selected in the \code{[plant]} block (\code{PlantSpec.integrator}, parsed by \code{_parse\_integrator} in \code{src/sim/Aircraft/toml/Sections/Plant.jl}). The parser accepts either a string shorthand:
 \begin{lstlisting}[language=toml]
 [plant]
 integrator = "RK4"   # "Euler" | "RK4" | "RK23" | "RK45"

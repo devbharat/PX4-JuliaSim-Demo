@@ -41,7 +41,7 @@ The runtime constructs several named time axes, each a sorted vector of microsec
 \subsection{TOML configuration: timeline axes}
 \label{sec:runtime-toml}
 
-The timeline parameters described above are configured in the \code{[timeline]} block of the aircraft spec (\code{TimelineSpec} in \code{src/sim/Aircraft/Spec.jl}, parsed by \code{src/sim/Aircraft/TOMLIO.jl}):
+The timeline parameters described above are configured in the \code{[timeline]} block of the aircraft spec (\code{TimelineSpec} in \code{src/sim/Aircraft/Spec.jl}, parsed by \code{src/sim/Aircraft/toml/Sections/Timeline.jl}):
 
 \begin{lstlisting}[language=toml]
 [timeline]

@@ -461,8 +461,7 @@ function compare_integrators_iris_mission(;
     # Reconstruct replay plant model from spec (NoWind env; wind comes from trace).
     home_rec = get(rec.meta, :home, spec.home)
     spec_replay = home_rec === spec.home ? spec : _with_home(spec, home_rec)
-    inst, _ =
-        Aircraft.build_aircraft_instance(spec_replay; mode = :replay, recording_in = rec)
+    inst = Aircraft.build_aircraft_instance(spec_replay; mode = :replay, recording_in = rec)
     dynfun = inst.dynfun
 
     println("[compare_integrators_iris_mission] REPLAY (plant-only sweep)")

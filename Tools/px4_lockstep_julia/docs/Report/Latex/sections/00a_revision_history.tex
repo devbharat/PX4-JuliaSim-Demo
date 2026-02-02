@@ -1,0 +1,9 @@
+\section*{Revision history}
+\addcontentsline{toc}{section}{Revision history}
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{2026-02-02} --- Added commander-lite in the lockstep C runtime and routed
+  high-level commands via \code{set\_cmd!}. Moved status/control/armed topics out of Julia
+  injection, made uORB bridge reads allocation-free, and reorganized the test suite into
+  domain subfolders with stricter mission-finished integration checks.
+\end{itemize}

@@ -100,11 +100,11 @@ To make determinism claims academically defensible, runs intended for determinis
 
 Even without an ``evaluation'' section with plots, the repository already contains regression tests that operationalize determinism at the trace level:
 \begin{itemize}[leftmargin=*]
-  \item \code{test/record\_replay\_engine.jl} constructs minimal plants and asserts:
+  \item \code{test/verification/record\_replay\_engine.jl} constructs minimal plants and asserts:
     (i) replay integration matches an analytic solution for a piecewise-constant input,
     (ii) record mode captures axis-aligned Tier-0 traces, and
     (iii) record \(\to\) reload \(\to\) replay reproduces the logged plant state at every log tick to tight tolerances (position/velocity/attitude/body-rate/rotor/battery terms on the order of \(10^{-12}\) or smaller). This is the operative determinism contract in the current test suite.
-  \item \code{test/compare\_integrators.jl} runs deterministic integrator sweeps on a fixed recording, validating solver ordering and error metric wiring.
+  \item \code{test/verification/compare\_integrators.jl} runs deterministic integrator sweeps on a fixed recording, validating solver ordering and error metric wiring.
   \item Multiple unit tests validate model components that directly influence determinism (e.g. battery surface interpolation and scaling, motor mapping, and gyro/rotor sign conventions).
 \end{itemize}
 

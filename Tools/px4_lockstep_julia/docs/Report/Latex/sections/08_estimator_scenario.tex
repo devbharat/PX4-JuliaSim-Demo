@@ -90,8 +90,8 @@ dt_est_s = 0.004  # seconds; set to null to publish at autopilot ticks
 
 \paragraph{Scenario parameters.}
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \code{arm\_time\_s}: time at which the scenario requests arming (\(\texttt{vehicle\_control\_mode.armed}=true\)).
-  \item \code{mission\_time\_s}: time at which mission start is requested (mapped to \code{vehicle\_status.nav\_state} transitions in the PX4 bridge).
+  \item \code{arm\_time\_s}: time at which the scenario requests arming (fed into \code{AutopilotCommand} and forwarded via \code{set\_cmd!}).
+  \item \code{mission\_time\_s}: time at which mission start is requested (mapped to commander‑lite mission requests in the C runtime).
 \end{itemize}
 
 \paragraph{Estimator parameter mapping.}

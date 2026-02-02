@@ -77,7 +77,7 @@ The current end-to-end workflow is built around an `AircraftSpec`/builder abstra
 If you are adding a new multirotor layout, start with the mapping and validation helpers:
 
 - `src/sim/Aircraft/Validate.jl`
-- `test/multirotor_motor_map.jl`
+- `test/verification/multirotor_motor_map.jl`
 
 ## Determinism checklist
 

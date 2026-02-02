@@ -10,11 +10,11 @@ The package test entrypoint is \code{test/runtests.jl}. A typical local invocati
 julia --project -e 'using Pkg; Pkg.test()'
 \end{lstlisting}
 
-The test suite is designed to run without a PX4 shared library. Lockstep runtime smoke tests (\code{test/lockstep_runtime.jl}) are conditionally executed only when the lockstep library is available (see the \code{PX4Lockstep.has_lockstep()} gate).
+The test suite is designed to run without a PX4 shared library. Lockstep runtime smoke tests (\code{test/integration/lockstep_runtime.jl}) are conditionally executed only when the lockstep library is available (see the \code{PX4Lockstep.has_lockstep()} gate).
 
 \subsection{Analytic integrator verification}
 
-The module \code{Sim.Verification} defines closed-form or invariant-rich reference problems, used in \code{test/verification_cases.jl}:
+The module \code{Sim.Verification} defines closed-form or invariant-rich reference problems, used in \code{test/verification/verification_cases.jl}:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{Simple harmonic oscillator (SHO).} With \code{dt=0.01} over \code{T=1.0}, RK4 is required to match the analytic position to \(<10^{-6}\). An additional regression checks that adaptive RK45 with \code{quantize_us=true} does not drift the requested timebase.
   \item \textbf{Pendulum.} For a small-angle case, RK4 must match the small-angle analytic solution to \(<10^{-5}\) and conserve energy to relative error \(<10^{-4}\) over one period.
@@ -83,7 +83,7 @@ The same scripts include reference-compare problems that exercise full \code{Pla
 
 \subsection{Plant-level contract tests}
 
-The file \code{test/verification_contracts.jl} contains deterministic ``contract'' tests for the full multirotor plant and power system:
+The file \code{test/verification/verification_contracts.jl} contains deterministic ``contract'' tests for the full multirotor plant and power system:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{Free-fall kinematics.} With motors off and no contact, the logged vertical position/velocity must match the closed-form constant-acceleration solution at \code{atol=1e-7} and maintain quaternion normalization.
   \item \textbf{Hover force-balance (RHS).} A single RHS evaluation is checked by solving for a rotor speed that yields total thrust \(\approx m g\) at sea-level density, then asserting vertical acceleration is \(\approx 0\) at identity attitude.
@@ -93,7 +93,7 @@ The file \code{test/verification_contracts.jl} contains deterministic ``contract
 
 \subsection{Record/replay invariants}
 
-The record/replay machinery is covered by \code{test/record_replay_engine.jl}. These tests exercise:
+The record/replay machinery is covered by \code{test/verification/record_replay_engine.jl}. These tests exercise:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item axis-matching: building traces from a recording throws if recorded timestamps do not match the expected engine axis exactly,
   \item serialization schema enforcement through \code{BUS_SCHEMA_VERSION}, and
@@ -102,7 +102,7 @@ The record/replay machinery is covered by \code{test/record_replay_engine.jl}. T
 
 \subsection{uORB injection tests}
 
-The uORB injection scheduler and default state injector are covered by \code{test/uorb_injection.jl}, including multi-instance battery publishing behavior and the periodic ``due'' logic.
+The uORB injection scheduler and default state injector are covered by \code{test/uorb/uorb_injection.jl}, including multi-instance battery publishing behavior and the periodic ``due'' logic.
 
 \subsection{Gaps and recommended extensions}
 

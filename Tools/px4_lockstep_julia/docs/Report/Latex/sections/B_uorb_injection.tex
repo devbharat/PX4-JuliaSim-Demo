@@ -11,7 +11,7 @@ This appendix documents the concrete uORB messages injected by the simulator int
 
 PX4 is stepped once per autopilot tick through \code{Autopilots.autopilot\_step}. For each tick, the simulator:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item builds a \code{PX4StepContext} snapshot containing time, rigid-body state, estimated yaw, geodetic position, autopilot command, arming/nav state, and battery telemetry,
+  \item builds a \code{PX4StepContext} snapshot containing time, rigid-body state, estimated yaw, geodetic position, autopilot command, and battery telemetry,
   \item calls \code{inject\_due!} to publish any uORB topics that are scheduled for the current time, and
   \item calls \code{step\_uorb!} to advance PX4's internal uORB graph by one lockstep step.
 \end{enumerate}
@@ -36,9 +36,6 @@ The default state injector publishes each configured topic \emph{every PX4 step}
     \code{vehicle\_global\_position} & \code{VehicleGlobalPositionMsg} & Lat/Lon (deg), alt\_msl (m). \\
     \code{vehicle\_angular\_velocity} & \code{VehicleAngularVelocityMsg} & Body rates (rad/s). \\
     \code{vehicle\_land\_detected} & \code{VehicleLandDetectedMsg} & Uses \code{ctx.landed}. \\
-    \code{vehicle\_status} & \code{VehicleStatusMsg} & Sets \code{nav\_state}, \code{arming\_state}. \\
-    \code{vehicle\_control\_mode} & \code{VehicleControlModeMsg} & Enables attitude/rate/allocator booleans. \\
-    \code{actuator\_armed} & \code{ActuatorArmedMsg} & Armed/prearmed based on \code{ctx.cmd.armed}. \\
     \code{home\_position} & \code{HomePositionMsg} & Publishes home LLA; gated on finite home values. \\
     \code{geofence\_status} & \code{GeofenceStatusMsg} & Sets \code{geofence\_violated=false}. \\
     \bottomrule
@@ -53,6 +50,11 @@ After each PX4 step, the bridge reads a fixed set of uORB subscriptions to const
 \code{torque\_sp}, \code{thrust\_sp}, \code{actuator\_motors}, \code{actuator\_servos}, \code{attitude\_sp},\ \\
 \code{rates\_sp}, \code{mission\_result}, \code{vehicle\_status}, \code{battery\_status}, \code{trajectory\_setpoint}.
 \end{quote}
+
+\paragraph{Commander‑lite topics.}
+When Commander is disabled, the lockstep C runtime publishes \code{vehicle\_status},
+\code{vehicle\_control\_mode}, and \code{actuator\_armed} based on the high‑level command
+inputs and \code{mission\_result}. These topics are not part of the Julia injection set.
 
 \paragraph{Actuator output normalization.}
 The simulator interprets \code{actuator\_motors} as normalized ESC duty commands in \([0,1]\) and \code{actuator\_servos} as normalized control-surface deflections in \([-1,1]\). These are the lockstep ABI conventions used by \code{ActuatorCommand}; they are not PWM values. If a different uORB topic or scaling is desired (e.g.\ reversible motors), the mapping should be adjusted in the bridge and documented in the interface config.

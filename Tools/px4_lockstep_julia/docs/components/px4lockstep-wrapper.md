@@ -15,6 +15,10 @@ compatibility issues are contained and do not leak into the simulation framework
 - **Library search fallback:** if `PX4_LOCKSTEP_LIB` is unset, the wrapper checks the
   common PX4 build outputs (`px4_sitl_lockstep`, `px4_sitl_default`).
 - **Symbol caching:** the wrapper caches resolved symbols to avoid repeated lookups.
+- **Allocation‑free uORB checks:** `uorb_check!` accepts a preallocated `Ref` to avoid
+  per‑tick allocations in tight loops.
+- **Commander‑lite command hook:** `set_cmd!` forwards high‑level commands to the C
+  runtime when Commander is disabled.
 
 ## Integration Contracts
 

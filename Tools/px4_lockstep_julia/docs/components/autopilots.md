@@ -50,8 +50,8 @@ and optional injection scheduling) lives in:
 - Commander-in-loop is currently **not supported** (hard error). When Commander is
   disabled, the **lockstep C runtime** publishes a minimal commander‑lite set of
   topics (`vehicle_status`, `vehicle_control_mode`, `actuator_armed`) based on the
-  high-level command inputs and `mission_result`. The Julia bridge no longer injects
-  those topics directly.
+  high-level command inputs and `mission_result`. The Julia bridge forwards
+  `AutopilotCommand` via `set_cmd!` and no longer injects those topics directly.
 - uORB injections are currently scheduled **every autopilot tick** (period = 0) and
   the per-topic period is not exposed via TOML. As the boundary grows, consider adding
   per-topic periods or “publish once” semantics for latched topics like

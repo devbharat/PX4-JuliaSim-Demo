@@ -17,7 +17,7 @@ The canonical interface is \code{Autopilots.autopilot_step} (\code{src/sim/Autop
 PX4 expects global coordinates for some topics. The implementation converts local NED to an approximate latitude/longitude/altitude using a fixed Earth radius and the configured home origin (\code{_ned\_to\_lla}). Altitude is computed as $h_{msl}=h_{home}-p_{ned,z}$. This approximation is intended for local missions (order \(\sim\)\SI{10}{km} from home) and uses a fixed \(\cos(\varphi_0)\) longitude scale; see \cref{sec:design-choices}.
 
 \paragraph{Mode selection.}
-The command packet drives a small internal mode logic that sets \code{nav\_state} and \code{arming\_state} fields for injected topics. A configurable \code{edge\_trigger} mode determines whether mission/RTL requests are treated as edges or levels; additional ``mission rearm'' logic exists for the level-triggered mode to make mission activation robust.
+The Julia bridge forwards the high-level command packet to the C runtime (\code{set\_cmd!}); when Commander is disabled, the lockstep C runtime publishes the minimal commander‑lite topics (\code{vehicle\_status}, \code{vehicle\_control\_mode}, \code{actuator\_armed}) and drives \code{nav\_state}/\code{arming\_state} based on command inputs and \code{mission\_result}. A configurable \code{edge\_trigger} mode determines whether mission/RTL requests are treated as edges or levels.
 
 \subsection{Multi-rate uORB injection}
 

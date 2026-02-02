@@ -83,7 +83,8 @@ ensure_uorb_codegen() {
         --out "${UORB_OUT}"
     regenerated=1
   fi
-  return ${regenerated}
+  # Regeneration is not an error; only the julia call above should fail the script.
+  return 0
 }
 
 ensure_sysimage() {

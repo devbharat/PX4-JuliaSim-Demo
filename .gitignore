@@ -7,6 +7,7 @@
 .context
 .cproject
 .DS_Store
+.venv/*
 
 # LaTeX report build artifacts
 Tools/px4_lockstep_julia/docs/Report/Latex/*.aux

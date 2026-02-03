@@ -278,4 +278,3 @@ function _locate_touchdown_us(
 
     return hi
 end
-

@@ -730,5 +730,3 @@ function _eval_propulsion_and_power_network(
         v_air_body,
     )
 end
-
-

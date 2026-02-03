@@ -77,5 +77,3 @@ function plant_outputs(
         battery_statuses = batt_all,
     )
 end
-
-

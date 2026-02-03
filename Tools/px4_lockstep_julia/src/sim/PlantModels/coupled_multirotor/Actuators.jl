@@ -70,5 +70,3 @@ end
 
     return y_dot, ydd
 end
-
-

@@ -48,6 +48,7 @@ struct CoupledMultirotorModel{M,E,C,AM,AS,P,BAT,NET,MM,SM}
     servo_map::SM
 end
 
+
 """Convenience constructor with default identity motor mapping.
 
 This preserves backwards compatibility with legacy call sites where the
@@ -133,4 +134,3 @@ Do not introduce new dependencies on this name; prefer `CoupledMultirotorModel`.
 const PlantDynamicsWithContact = CoupledMultirotorModel
 
 export CoupledMultirotorModel, PlantDynamicsWithContact
-

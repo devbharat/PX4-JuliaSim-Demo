@@ -204,15 +204,6 @@ function create_subscriber(
     return _create_uorb_subscriber_checked(handle, topic, T; instance = instance)
 end
 
-"""Return whether a subscription has new data."""
-function uorb_check(handle::LockstepHandle, sub::UORBSubscriber)::Bool
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_check)
-    updated = Ref{Int32}(0)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{Int32}), handle.ptr, sub.id, updated)
-    ret == 0 || error("px4_lockstep_orb_check failed with code $ret")
-    return updated[] != 0
-end
-
 """Return whether a subscription has new data (non-allocating).
 
 Pass a preallocated `updated` Ref to avoid per-call allocations.
@@ -244,22 +235,6 @@ function uorb_copy!(
     ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, sub.id, out, n)
     ret == 0 || error("px4_lockstep_orb_copy failed with code $ret")
     return nothing
-end
-
-"""Copy the latest topic data and return it (allocates one `Ref`).
-
-This method infers the uORB message type from the subscriber handle.
-"""
-function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber{T}) where {T<:UORBMsg}
-    out = Ref{T}()
-    uorb_copy!(handle, sub, out)
-    return out[]
-end
-
-function uorb_copy(handle::LockstepHandle, sub::UORBSubscriber{UORBMsg})
-    error(
-        "uorb_copy requires a typed UORBSubscriber{T}. Use create_subscriber to construct one.",
-    )
 end
 
 """Unsubscribe and free the underlying uORB handle."""

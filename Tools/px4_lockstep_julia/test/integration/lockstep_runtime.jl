@@ -54,8 +54,11 @@ end
             PX4Lockstep.publish!(handle, pub, msg)
             PX4Lockstep.step_uorb!(handle, t)
 
-            @test PX4Lockstep.uorb_check(handle, sub)
-            got = PX4Lockstep.uorb_copy(handle, sub)
+            updated = Ref{Int32}(0)
+            buf = Ref{PX4Lockstep.VehicleAttitudeMsg}()
+            @test PX4Lockstep.uorb_check!(handle, sub, updated)
+            PX4Lockstep.uorb_copy!(handle, sub, buf)
+            got = buf[]
             @test got.timestamp == t
             @test got.timestamp_sample == t
             PX4Lockstep.uorb_unsubscribe!(handle, sub)

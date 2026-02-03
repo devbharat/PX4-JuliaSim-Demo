@@ -31,7 +31,7 @@ using ..Types: Vec3, vec3, quat_rotate_inv
 using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand, sanitize, validate
 using ..Plant: PlantInput, PlantOutputs, PlantState, battery_temp_c
-using ..Contacts: CONTACT_GROUNDED
+using ..Contacts: CONTACT_GROUNDED, ContactInfo
 using ..Integrators:
     AbstractIntegrator, IntegratorStats, step_integrator, last_stats, reset!
 
@@ -167,6 +167,7 @@ end
 Base.@kwdef mutable struct EngineOutputs
     # Cached plant_outputs(...) result for the current boundary (if computed).
     plant_y::Union{Nothing,PlantOutputs} = nothing
+    contact_y::Union{Nothing,ContactInfo} = nothing
 
     derived_valid::Bool = false
 end
@@ -370,11 +371,10 @@ const G_MPS2 = 9.80665
 
 @inline _norm2(v::Vec3) = v[1] * v[1] + v[2] * v[2] + v[3] * v[3]
 
-@inline function _contact_grounded(contact)::Bool
-    contact === nothing && return false
-    # ContactInfo has `active::Bool` and `mode::ContactMode`.
-    return getproperty(contact, :active) &&
-           (getproperty(contact, :mode) == CONTACT_GROUNDED)
+@inline _contact_grounded(::Nothing)::Bool = false
+
+@inline function _contact_grounded(contact::ContactInfo)::Bool
+    return contact.active && (contact.mode == CONTACT_GROUNDED)
 end
 
 """Update `bus.landed_phy` from contact + kinematics with hysteresis."""
@@ -588,6 +588,7 @@ function process_events_at!(sim::Engine)
 
         elseif stage === :derived_outputs
             # Derived outputs (battery telemetry) *after* faults/wind and before autopilot.
+            contact_y = nothing
             if sim.has_outputs
                 u = PlantInput(
                     cmd = sim.bus.cmd,
@@ -602,6 +603,8 @@ function process_events_at!(sim::Engine)
                 )
 
                 sim.outputs.plant_y = y
+                contact_y = y.contact
+                sim.outputs.contact_y = contact_y
                 sim.outputs.derived_valid = true
 
                 # Battery telemetry is the most important derived output: PX4 consumes it.
@@ -631,12 +634,11 @@ function process_events_at!(sim::Engine)
                 end
             else
                 sim.outputs.plant_y = nothing
+                sim.outputs.contact_y = nothing
                 sim.outputs.derived_valid = false
             end
 
             # Physics-derived landed flag for diagnostics/logging.
-            y = sim.outputs.plant_y
-            contact_y = (sim.outputs.derived_valid && (y !== nothing)) ? y.contact : nothing
             _update_landed_phys!(sim.bus, _rb_state(sim.plant), contact_y)
 
         elseif stage === :estimator
@@ -746,13 +748,13 @@ end
 @inline _rb_state(x::RigidBodyState) = x
 @inline _rb_state(x::PlantState) = x.rb
 
-@inline function _rb_state(x)
-    if hasproperty(x, :rb)
-        return getproperty(x, :rb)
-    end
+@inline _rb_state(x::T) where {T} = _rb_state_from_field(x, Val(hasfield(T, :rb)))
+
+@inline _rb_state_from_field(x::T, ::Val{true}) where {T} = getfield(x, :rb)
+
+@inline function _rb_state_from_field(x::T, ::Val{false}) where {T}
     error(
-        "Plant state must expose an `rb` field to emit rigid-body logs. Got: " *
-        string(typeof(x)),
+        "Plant state must expose an `rb` field to emit rigid-body logs. Got: " * string(T),
     )
 end
 

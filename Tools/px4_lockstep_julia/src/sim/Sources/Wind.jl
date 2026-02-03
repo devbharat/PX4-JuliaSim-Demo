@@ -38,7 +38,7 @@ mutable struct LiveWindSource{W,R} <: AbstractWindSource
 end
 
 function update!(src::LiveWindSource, bus::SimBus, plant_state, t_us::UInt64)
-    rb = _rb_state(plant_state)
+    rb = rb_state(plant_state)
     pos = rb.pos_ned
 
     step_wind!(src.wind, pos, t_us, src.dt_wind_us, src.rng)

@@ -1,4 +1,10 @@
+module BuildTimeline
+
 """Timeline assembly helpers."""
+
+using ...Runtime
+
+export _build_default_timeline
 
 function _build_default_timeline(;
     t_end_s::Float64,
@@ -25,3 +31,5 @@ function _build_default_timeline(;
         scenario = scenario_source,
     )
 end
+
+end # module BuildTimeline

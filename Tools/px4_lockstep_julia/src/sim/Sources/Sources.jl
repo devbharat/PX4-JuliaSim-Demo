@@ -16,28 +16,16 @@ This module is the canonical home for source implementations.
 module Sources
 
 using ..Types: Vec3
-using ..RigidBody: RigidBodyState
 using ..Vehicles: ActuatorCommand
 using ..Estimators: EstimatedState
 using ..Faults: FaultState
 
 using ..Recording: SampledTrace, ZOHTrace, SampleHoldTrace, sample
 import ..Runtime: SimBus, update!, event_times_us
+import ..rb_state
 
 """Base marker for any discrete-time source."""
 abstract type AbstractSource end
-
-"""Extract a rigid-body state from either `RigidBodyState` or `PlantState`."""
-function _rb_state(plant_state)
-    if plant_state isa RigidBodyState
-        return plant_state
-    elseif hasproperty(plant_state, :rb)
-        return getproperty(plant_state, :rb)
-    end
-    error(
-        "Sources: cannot extract rigid-body state from plant_state of type $(typeof(plant_state))",
-    )
-end
 
 @inline function _sanitize_bool(x)
     return x ? true : false

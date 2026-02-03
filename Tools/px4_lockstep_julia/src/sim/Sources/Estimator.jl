@@ -24,7 +24,7 @@ Publishes truth-as-estimate into the bus so the autopilot always consumes `bus.e
 struct NullEstimatorSource <: AbstractEstimatorSource end
 
 function update!(::NullEstimatorSource, bus::SimBus, plant_state, t_us::UInt64)
-    rb = _rb_state(plant_state)
+    rb = rb_state(plant_state)
     bus.est = EstimatedState(
         pos_ned = rb.pos_ned,
         vel_ned = rb.vel_ned,
@@ -81,7 +81,7 @@ function update!(src::LiveEstimatorSource, bus::SimBus, plant_state, t_us::UInt6
     if (bus.faults.sensor_fault_mask & SENSOR_FAULT_EST_FREEZE) != 0
         return nothing
     end
-    rb = _rb_state(plant_state)
+    rb = rb_state(plant_state)
     t_s = Float64(t_us) * 1e-6
     bus.est = estimate!(src.est, src.rng, t_s, rb, src.dt_est_s)
     return nothing

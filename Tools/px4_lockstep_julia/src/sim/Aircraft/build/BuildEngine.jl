@@ -1,5 +1,7 @@
 """Public engine build entrypoint."""
 
+using ..Autopilots
+
 """Build and run an engine from an `AircraftSpec`.
 
 This is the stable build entrypoint used by `Workflows.simulate_iris_mission`.

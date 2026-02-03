@@ -28,13 +28,14 @@ Concrete implementations live under `Sim.Sources` and `Sim.Recording`.
 """
 
 using ..Types: Vec3, vec3, quat_rotate_inv
-using ..RigidBody: RigidBodyState
+using ..RigidBody: RigidBodyState, RigidBodyDeriv
 using ..Vehicles: ActuatorCommand, sanitize, validate
-using ..Plant: PlantInput, PlantOutputs, PlantState, battery_temp_c
+using ..Plant: PlantInput, PlantOutputs, PlantState, PlantDeriv, battery_temp_c
 using ..Contacts: CONTACT_GROUNDED, ContactInfo
 using ..Integrators:
     AbstractIntegrator, IntegratorStats, step_integrator, last_stats, reset!
 
+import ..rb_state
 import ..plant_outputs
 import ..plant_project
 import ..plant_on_autopilot_tick
@@ -409,11 +410,9 @@ function _update_bus_accel!(sim::Engine)
     a_ned = vec3(NaN, NaN, NaN)
     try
         d = sim.dynfun(sim.t_s, sim.plant, u)
-        if hasproperty(d, :rb)
-            rb_d = getproperty(d, :rb)
-            if hasproperty(rb_d, :vel_dot)
-                a_ned = getproperty(rb_d, :vel_dot)
-            end
+        vel_dot = _rb_vel_dot(d)
+        if vel_dot !== nothing
+            a_ned = vel_dot
         end
     catch
         # Leave NaNs if the RHS evaluation fails for any reason.
@@ -423,7 +422,7 @@ function _update_bus_accel!(sim::Engine)
 
     # Specific force (accelerometer-like): f = a - g, expressed in body.
     g_ned = vec3(0.0, 0.0, G_MPS2)
-    sim.bus.spec_force_body = quat_rotate_inv(_rb_state(sim.plant).q_bn, a_ned - g_ned)
+    sim.bus.spec_force_body = quat_rotate_inv(rb_state(sim.plant).q_bn, a_ned - g_ned)
     return nothing
 end
 
@@ -479,37 +478,37 @@ Semantics
 - `bus.impact_dv_ned` / `bus.impact_time_us` track the *maximum* |Δv| impact since
   the last log sample (so spikes are not missed even when logging is downsampled).
 """
-function _accumulate_interval_impacts!(bus::SimBus, info)
+@inline _impact_fields_present(::Type{T}) where {T} =
+    hasfield(T, :impact_count) &&
+    hasfield(T, :impact_dv_ned) &&
+    hasfield(T, :impact_time_us)
+
+@inline function _accumulate_interval_impacts!(bus::SimBus, info)
     info === nothing && return nothing
-
-    if !(
-        hasproperty(info, :impact_count) &&
-        hasproperty(info, :impact_dv_ned) &&
-        hasproperty(info, :impact_time_us)
+    return _accumulate_interval_impacts!(
+        bus,
+        info,
+        Val(_impact_fields_present(typeof(info))),
     )
-        return nothing
-    end
+end
 
-    n = getproperty(info, :impact_count)
-    dv = getproperty(info, :impact_dv_ned)
-    t_imp = getproperty(info, :impact_time_us)
+@inline _accumulate_interval_impacts!(::SimBus, _info, ::Val{false}) = nothing
+
+@inline function _accumulate_interval_impacts!(bus::SimBus, info, ::Val{true})
+    n = getfield(info, :impact_count)
+    dv = getfield(info, :impact_dv_ned)
+    t_imp = getfield(info, :impact_time_us)
 
     # Count (saturating to UInt32 range).
-    if n isa Integer
-        if n > 0
-            bus.impact_count =
-                UInt32(min(UInt64(typemax(UInt32)), UInt64(bus.impact_count) + UInt64(n)))
-        end
+    if n > 0
+        bus.impact_count =
+            UInt32(min(UInt64(typemax(UInt32)), UInt64(bus.impact_count) + UInt64(n)))
     end
 
     # Max |Δv| latch.
-    try
-        if _norm2(dv) > _norm2(bus.impact_dv_ned)
-            bus.impact_dv_ned = dv
-            bus.impact_time_us = t_imp
-        end
-    catch
-        # Ignore malformed payloads.
+    if _norm2(dv) > _norm2(bus.impact_dv_ned)
+        bus.impact_dv_ned = dv
+        bus.impact_time_us = t_imp
     end
 
     return nothing
@@ -639,7 +638,7 @@ function process_events_at!(sim::Engine)
             end
 
             # Physics-derived landed flag for diagnostics/logging.
-            _update_landed_phys!(sim.bus, _rb_state(sim.plant), contact_y)
+            _update_landed_phys!(sim.bus, rb_state(sim.plant), contact_y)
 
         elseif stage === :estimator
             if ev.due_ap
@@ -745,19 +744,6 @@ end
 # Logging sinks
 ############################
 
-@inline _rb_state(x::RigidBodyState) = x
-@inline _rb_state(x::PlantState) = x.rb
-
-@inline _rb_state(x::T) where {T} = _rb_state_from_field(x, Val(hasfield(T, :rb)))
-
-@inline _rb_state_from_field(x::T, ::Val{true}) where {T} = getfield(x, :rb)
-
-@inline function _rb_state_from_field(x::T, ::Val{false}) where {T}
-    error(
-        "Plant state must expose an `rb` field to emit rigid-body logs. Got: " * string(T),
-    )
-end
-
 @inline function _rotor_omega_tuple(plant::PlantState)::NTuple{12,Float64}
     ω = plant.rotor_ω
     n = length(ω)
@@ -777,6 +763,10 @@ end
 end
 
 @inline _rotor_thrust_tuple(::Any)::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
+
+@inline _rb_vel_dot(::Any) = nothing
+@inline _rb_vel_dot(d::RigidBodyDeriv) = d.vel_dot
+@inline _rb_vel_dot(d::PlantDeriv) = d.rb.vel_dot
 
 @inline function _to_ntuple3_float(v)
     return (Float64(v[1]), Float64(v[2]), Float64(v[3]))
@@ -813,7 +803,7 @@ This is explicitly treated as a *side-effect only* hook: it must not mutate simu
 function _emit_logs_to_sinks!(sim::Engine)
     isempty(sim.log_sinks) && return
 
-    rb = _rb_state(sim.plant)
+    rb = rb_state(sim.plant)
 
     wind_ned = sim.bus.wind_ned
     v_air_ned = wind_ned - rb.vel_ned

@@ -3,7 +3,7 @@
 
 This appendix documents the concrete uORB messages injected by the simulator into PX4 in lockstep mode. The implementation lives in:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \code{src/sim/Autopilots/UORBBridge.jl} (message packing and uORB bridge), and
+  \item \code{src/sim/Autopilots/UORBBridge.jl} + \code{src/sim/Autopilots/uorb\_bridge/*} (message packing and uORB bridge), and
   \item \code{src/sim/Autopilots/UORBInjection.jl} (publish scheduling and state-to-message mapping).
 \end{itemize}
 

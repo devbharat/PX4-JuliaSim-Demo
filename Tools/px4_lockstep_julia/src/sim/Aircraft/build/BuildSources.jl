@@ -1,4 +1,15 @@
+module BuildSources
+
 """Scenario, estimator, and source wiring helpers."""
+
+using Random
+
+using ..Aircraft: AircraftSpec
+using ...Scenario
+using ...Sources
+using ...Estimators
+
+export _build_live_scenario_source, _build_live_sources, _build_replay_sources
 
 function _build_scenario(spec::AircraftSpec)
     s = Scenario.EventScenario()
@@ -81,3 +92,5 @@ function _build_replay_sources(traces, scn_tr)
         estimator = Sources.NullEstimatorSource(),
     )
 end
+
+end # module BuildSources

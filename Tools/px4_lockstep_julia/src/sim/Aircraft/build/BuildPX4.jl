@@ -1,4 +1,16 @@
+module BuildPX4
+
 """PX4 lockstep initialization and parameter wiring helpers."""
+
+using ..Aircraft: AircraftSpec, PX4ParamSpec
+using ...Vehicles
+using ...Autopilots
+using ...Powertrain
+
+using PX4Lockstep:
+    param_set!, param_notify!, param_get, param_preinit_set!, control_alloc_update_params!
+
+export _build_px4_autopilot
 
 """Derive PX4 control allocator (CA_*) parameters from the aircraft spec.
 
@@ -172,3 +184,5 @@ function _build_px4_autopilot(spec::AircraftSpec, vehicle::Vehicles.VehicleInsta
 
     return ap
 end
+
+end # module BuildPX4

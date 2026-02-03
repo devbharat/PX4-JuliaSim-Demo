@@ -28,6 +28,26 @@ To shard unit + integration tests across multiple Julia processes:
 Tools/px4_lockstep_julia/test/run_tests.sh --parallel
 ```
 
+You can also filter which tests run with environment variables:
+
+- `PX4_LOCKSTEP_TEST_GROUP=all|unit|integration`
+- `PX4_LOCKSTEP_UNIT_GROUP=verification,runtime,aircraft,battery` (comma-separated or `all`)
+- `PX4_LOCKSTEP_INTEGRATION_FILTER=tier0,tier1,...,tier5` (comma-separated or `all`)
+
+Examples:
+
+```bash
+PX4_LOCKSTEP_TEST_GROUP=unit \
+PX4_LOCKSTEP_UNIT_GROUP=runtime \
+Tools/px4_lockstep_julia/test/run_tests.sh
+```
+
+```bash
+PX4_LOCKSTEP_TEST_GROUP=integration \
+PX4_LOCKSTEP_INTEGRATION_FILTER=tier3 \
+Tools/px4_lockstep_julia/test/run_tests.sh
+```
+
 ### Parallel integration tiers
 
 If you want to run PX4 lockstep integration tiers in parallel (multiple Julia

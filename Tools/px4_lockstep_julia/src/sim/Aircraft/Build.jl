@@ -14,38 +14,35 @@ The builder applies spec-driven PX4 parameters for allocator geometry (CA_*),
 enabling multi-rotor layouts to drive PX4 directly.
 """
 
-using Random
 using StaticArrays
 
-using ..Runtime
 using ..Recording
-using ..Sources
 
 using ..Plant
-using ..Types
-using ..RigidBody: RigidBodyState
 using ..Vehicles
-using ..Propulsion
-using ..Powertrain
 using ..PlantModels
-using ..Environment
-using ..Scenario
-using ..Estimators
-
-using ..Autopilots
-using ..Integrators
-using ..Contacts
-
-using PX4Lockstep:
-    param_set!, param_notify!, param_get, param_preinit_set!, control_alloc_update_params!
 
 const _SIM = parentmodule(@__MODULE__)
 
 include("build/Types.jl")
 include("build/BuildTimeline.jl")
+using .BuildTimeline: _build_default_timeline
+
 include("build/BuildPlant.jl")
+using .BuildPlant:
+    _build_env_live,
+    _build_env_replay,
+    _build_vehicle,
+    _build_batteries,
+    _build_power_network,
+    _resolve_integrator,
+    build_battery
+
 include("build/BuildSources.jl")
+using .BuildSources: _build_live_scenario_source, _build_live_sources, _build_replay_sources
+
 include("build/BuildPX4.jl")
+using .BuildPX4: _build_px4_autopilot, _derive_ca_params
 
 function _spec_summary(spec::AircraftSpec)::String
     nm = spec.name

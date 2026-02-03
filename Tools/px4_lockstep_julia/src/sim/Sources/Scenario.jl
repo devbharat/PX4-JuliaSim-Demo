@@ -99,7 +99,7 @@ end
 LiveScenarioSource(scenario) = LiveScenarioSource{typeof(scenario)}(scenario, 0)
 
 function update!(src::LiveScenarioSource, bus::SimBus, plant_state, t_us::UInt64)
-    rb = _rb_state(plant_state)
+    rb = rb_state(plant_state)
     t_s = Float64(t_us) * 1e-6
 
     ctx = Scenario.ScenarioContext(

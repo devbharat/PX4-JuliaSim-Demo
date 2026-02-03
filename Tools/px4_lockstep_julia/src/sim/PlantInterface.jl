@@ -31,6 +31,8 @@ Notes
   outputs struct.
 """
 
+using .RigidBody: RigidBodyState
+
 """Protocol: evaluate algebraic plant outputs at a boundary time.
 
 See the module docstring above.
@@ -109,3 +111,19 @@ Notes
   protocol is implemented.
 """
 function plant_integrate_interval end
+
+"""Protocol: extract a rigid-body state from a plant state.
+
+Concrete plant states should either be `RigidBodyState` or expose an `rb` field.
+"""
+@inline rb_state(x::RigidBodyState) = x
+
+@inline rb_state(x::T) where {T} = _rb_state_from_field(x, Val(hasfield(T, :rb)))
+
+@inline _rb_state_from_field(x::T, ::Val{true}) where {T} = getfield(x, :rb)
+
+@inline function _rb_state_from_field(x::T, ::Val{false}) where {T}
+    error(
+        "Plant state must expose an `rb` field to emit rigid-body logs. Got: " * string(T),
+    )
+end

@@ -118,8 +118,10 @@ without expanding a fixed input struct.
 
 ### Julia implementation
 
-- **Bridge helpers:** `src/sim/Autopilots/UORBBridge.jl` defines the topic registry,
-  message builders, and the `UORBBridge` helper used by `PX4LockstepAutopilot`.
+- **Bridge helpers:** `src/sim/Autopilots/UORBBridge.jl` includes the uORB bridge
+  implementation split across `src/sim/Autopilots/uorb_bridge/*` (registry, builders,
+  publish/read loops, slot buffers, conversions) and the `UORBBridge` helper used by
+  `PX4LockstepAutopilot`.
 - **Autopilot integration:** `src/sim/Autopilots.jl` uses `UORBBridge` to publish inputs
   and sample outputs on every `autopilot_step`.
 - **Size validation:** `create_publisher` / `create_subscriber` validate Julia struct

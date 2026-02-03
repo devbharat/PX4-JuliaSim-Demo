@@ -10,6 +10,7 @@ const Workflows = PX4Lockstep.Workflows
 # TOML-first Iris helpers for tests.
 include("_helpers/_iris_helpers.jl")
 include("_helpers/_test_helpers.jl")
+include("smoke/load.jl")
 
 # Optional test sharding to reduce wall time in CI / local iteration.
 #
@@ -85,10 +86,12 @@ if RUN_UNIT_RUNTIME
     # uORB interface + injection scheduling checks (no PX4 binary required).
     include("uorb/uorb_injection.jl")
     include("uorb/uorb_bridge_allocs.jl")
+    include("uorb/uorb_bridge_conversions.jl")
 
     # Compare-integrators workflow (record/replay + metrics)
     include("verification/compare_integrators.jl")
     include("verification/record_replay_engine.jl")
+    include("verification/record_replay_bus_diagnostics.jl")
 
     include("runtime/environment.jl")
     include("runtime/scheduler.jl")

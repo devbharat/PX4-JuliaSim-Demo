@@ -15,7 +15,7 @@ In a live run it:
 The uORB plumbing (topic specifications, publisher/subscriber wiring, message builders,
 and optional injection scheduling) lives in:
 
-- `src/sim/Autopilots/UORBBridge.jl`
+- `src/sim/Autopilots/UORBBridge.jl` (includes `src/sim/Autopilots/uorb_bridge/{Backend,Slots,Build,Read,Publish,Conversions}.jl`)
 - `src/sim/Autopilots/UORBInjection.jl`
 
 ## Key decisions and rationale

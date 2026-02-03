@@ -20,7 +20,7 @@ const Sim = PX4Lockstep.Sim
         ],
     )
 
-    handle = PX4Lockstep.LockstepHandle(Ptr{Cvoid}(0), Ptr{Cvoid}(0), PX4Lockstep.LockstepConfig())
+    handle = PX4Lockstep._dummy_handle()
     bridge = Sim.Autopilots._init_uorb_bridge(handle, cfg; backend = backend)
     out = Sim.Autopilots.UORBOutputs()
 

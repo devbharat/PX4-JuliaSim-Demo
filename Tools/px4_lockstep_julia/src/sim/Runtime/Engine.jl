@@ -166,8 +166,8 @@ end
 
 """Cached algebraic outputs from the plant model."""
 Base.@kwdef mutable struct EngineOutputs
-    # Cached plant_outputs(...) result for the current boundary (if computed).
-    plant_y::Union{Nothing,PlantOutputs} = nothing
+    # Cached rotor thrusts for logging (NaN when not available).
+    rotor_thrust::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
     contact_y::Union{Nothing,ContactInfo} = nothing
 
     derived_valid::Bool = false
@@ -405,18 +405,7 @@ This publishes:
 These are intended for logging and future sensor emulation.
 """
 function _update_bus_accel!(sim::Engine)
-    u = PlantInput(cmd = sim.bus.cmd, wind_ned = sim.bus.wind_ned, faults = sim.bus.faults)
-
-    a_ned = vec3(NaN, NaN, NaN)
-    try
-        d = sim.dynfun(sim.t_s, sim.plant, u)
-        vel_dot = _rb_vel_dot(d)
-        if vel_dot !== nothing
-            a_ned = vel_dot
-        end
-    catch
-        # Leave NaNs if the RHS evaluation fails for any reason.
-    end
+    a_ned = _rhs_accel_ned(sim)
 
     sim.bus.accel_ned = a_ned
 
@@ -425,6 +414,25 @@ function _update_bus_accel!(sim::Engine)
     sim.bus.spec_force_body = quat_rotate_inv(rb_state(sim.plant).q_bn, a_ned - g_ned)
     return nothing
 end
+
+@inline function _rhs_accel_ned_fast(sim::Engine)
+    u = PlantInput(cmd = sim.bus.cmd, wind_ned = sim.bus.wind_ned, faults = sim.bus.faults)
+    d = sim.dynfun(sim.t_s, sim.plant, u)
+    rb_d = _rb_deriv(d)
+    vel_dot = _vel_dot(rb_d)
+    return vel_dot === nothing ? vec3(NaN, NaN, NaN) : vel_dot
+end
+
+@noinline function _rhs_accel_ned_safe(sim::Engine)
+    try
+        return _rhs_accel_ned_fast(sim)
+    catch
+        # Leave NaNs if the RHS evaluation fails for any reason.
+        return vec3(NaN, NaN, NaN)
+    end
+end
+
+@inline _rhs_accel_ned(sim::Engine) = _rhs_accel_ned_safe(sim)
 
 """Return the nominal autopilot tick period in seconds.
 
@@ -601,7 +609,7 @@ function process_events_at!(sim::Engine)
                     string(typeof(y)),
                 )
 
-                sim.outputs.plant_y = y
+                sim.outputs.rotor_thrust = _rotor_thrust_tuple(y)
                 contact_y = y.contact
                 sim.outputs.contact_y = contact_y
                 sim.outputs.derived_valid = true
@@ -632,7 +640,7 @@ function process_events_at!(sim::Engine)
                     sim.bus.env = EnvSample(rho_kgm3 = sim.bus.env.rho_kgm3, temp_k = temp)
                 end
             else
-                sim.outputs.plant_y = nothing
+                sim.outputs.rotor_thrust = Logging.NAN_ROTOR_TUPLE
                 sim.outputs.contact_y = nothing
                 sim.outputs.derived_valid = false
             end
@@ -764,9 +772,13 @@ end
 
 @inline _rotor_thrust_tuple(::Any)::NTuple{12,Float64} = Logging.NAN_ROTOR_TUPLE
 
-@inline _rb_vel_dot(::Any) = nothing
-@inline _rb_vel_dot(d::RigidBodyDeriv) = d.vel_dot
-@inline _rb_vel_dot(d::PlantDeriv) = d.rb.vel_dot
+@inline _rb_deriv(d) = _rb_deriv(d, Val(hasfield(typeof(d), :rb)))
+@inline _rb_deriv(d, ::Val{true}) = getfield(d, :rb)
+@inline _rb_deriv(d, ::Val{false}) = d
+
+@inline _vel_dot(d) = _vel_dot(d, Val(hasfield(typeof(d), :vel_dot)))
+@inline _vel_dot(d, ::Val{true}) = getfield(d, :vel_dot)
+@inline _vel_dot(_d, ::Val{false}) = nothing
 
 @inline function _to_ntuple3_float(v)
     return (Float64(v[1]), Float64(v[2]), Float64(v[3]))
@@ -810,7 +822,7 @@ function _emit_logs_to_sinks!(sim::Engine)
     air_vel_body = _to_ntuple3_float(quat_rotate_inv(rb.q_bn, v_air_ned))
 
     rotor_omega = _rotor_omega_tuple(sim.plant)
-    rotor_thrust = _rotor_thrust_tuple(sim.outputs.plant_y)
+    rotor_thrust = sim.outputs.rotor_thrust
 
     ap_tel = autopilot_telemetry(sim.autopilot)
 

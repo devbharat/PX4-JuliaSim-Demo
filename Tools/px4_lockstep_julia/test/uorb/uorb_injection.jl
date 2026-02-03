@@ -33,7 +33,7 @@ const Autopilots = Sim.Autopilots
     @test sort(Autopilots.injection_periods_us(inj)) == UInt64[50, 100]
     @test Autopilots.recommended_step_dt_us(inj) == UInt64(50)
 
-    dummy_handle = PX4Lockstep.LockstepHandle(Ptr{Cvoid}(0), Ptr{Cvoid}(0), PX4Lockstep.LockstepConfig())
+    dummy_handle = PX4Lockstep._dummy_handle()
 
     # Single-instance publishers (legacy).
     pubs = Dict{Symbol,Vector{Tuple{Any,Int32}}}(

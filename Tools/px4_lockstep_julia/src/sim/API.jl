@@ -94,6 +94,14 @@ function simulate(;
     if emode == Runtime.MODE_RECORD && recorder === nothing
         error("simulate(mode=:record) requires a recorder")
     end
+    if emode == Runtime.MODE_RECORD && recorder isa Recording.InMemoryRecorder
+        Recording.prepare!(
+            recorder,
+            timeline;
+            record_estimator = record_estimator,
+            record_faults_evt = record_faults_evt,
+        )
+    end
 
     _validate_lockstep_rates(autopilot, timeline; strict = strict_lockstep_rates)
 

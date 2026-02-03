@@ -213,9 +213,15 @@ function uorb_check!(
     sub::UORBSubscriber,
     updated::Base.RefValue{Int32},
 )::Bool
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_check)
     updated[] = 0
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{Int32}), handle.ptr, sub.id, updated)
+    ret = ccall(
+        handle.fns.orb_check,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{Int32}),
+        handle.ptr,
+        sub.id,
+        updated,
+    )
     ret == 0 || error("px4_lockstep_orb_check failed with code $ret")
     return updated[] != 0
 end
@@ -231,16 +237,23 @@ function uorb_copy!(
     n == sub.msg_size || error(
         "uORB msg size mismatch for sub $(sub.id): got $n bytes, expected $(sub.msg_size)",
     )
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_copy)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32, Ref{T}, UInt32), handle.ptr, sub.id, out, n)
+    ret = ccall(
+        handle.fns.orb_copy,
+        Cint,
+        (Ptr{Cvoid}, Int32, Ref{T}, UInt32),
+        handle.ptr,
+        sub.id,
+        out,
+        n,
+    )
     ret == 0 || error("px4_lockstep_orb_copy failed with code $ret")
     return nothing
 end
 
 """Unsubscribe and free the underlying uORB handle."""
 function uorb_unsubscribe!(handle::LockstepHandle, sub::UORBSubscriber)
-    fn = _resolve_symbol(handle.lib, :px4_lockstep_orb_unsubscribe)
-    ret = ccall(fn, Cint, (Ptr{Cvoid}, Int32), handle.ptr, sub.id)
+    ret =
+        ccall(handle.fns.orb_unsubscribe, Cint, (Ptr{Cvoid}, Int32), handle.ptr, sub.id)
     ret == 0 || error("px4_lockstep_orb_unsubscribe failed with code $ret")
     return nothing
 end

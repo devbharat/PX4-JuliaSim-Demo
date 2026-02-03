@@ -50,18 +50,87 @@ TODO
 mutable struct InMemoryRecorder <: AbstractRecorder
     times::Dict{Symbol,Vector{UInt64}}
     values::Dict{Symbol,Any}
+    sizehints::Dict{Symbol,Int}
 end
 
 function InMemoryRecorder()
-    return InMemoryRecorder(Dict{Symbol,Vector{UInt64}}(), Dict{Symbol,Any}())
+    return InMemoryRecorder(
+        Dict{Symbol,Vector{UInt64}}(),
+        Dict{Symbol,Any}(),
+        Dict{Symbol,Int}(),
+    )
+end
+
+"""Provide size hints for a stream name (used on first record)."""
+function prepare!(rec::InMemoryRecorder, name::Symbol, n::Integer)
+    n_int = Int(n)
+    n_int > 0 || return nothing
+    cur = get(rec.sizehints, name, 0)
+    if n_int > cur
+        rec.sizehints[name] = n_int
+    end
+    return nothing
+end
+
+"""Seed size hints for standard record streams based on the timeline axes."""
+function prepare!(
+    rec::InMemoryRecorder,
+    timeline::Timeline;
+    record_estimator::Bool = false,
+    record_faults_evt::Bool = true,
+)
+    n_ap = length(timeline.ap.t_us)
+    n_wind = length(timeline.wind.t_us)
+    n_log = length(timeline.log.t_us)
+    n_scn = length(timeline.scn.t_us)
+    n_evt = length(timeline.evt.t_us)
+
+    prepare!(rec, :cmd, n_ap)
+    record_estimator && prepare!(rec, :est, n_ap)
+
+    prepare!(rec, :wind_base_ned, n_wind)
+    prepare!(rec, :wind_ned, n_wind)
+
+    for name in (
+        :plant,
+        :battery,
+        :batteries,
+        :accel_ned,
+        :spec_force_body,
+        :impact_dv_ned,
+        :impact_accel_est_ned,
+        :impact_time_us,
+        :impact_count,
+        :landed_phy,
+    )
+        prepare!(rec, name, n_log)
+    end
+
+    for name in (:faults, :ap_cmd, :landed, :wind_dist)
+        prepare!(rec, name, n_scn)
+    end
+
+    if record_faults_evt
+        for name in (:faults_evt, :ap_cmd_evt, :landed_evt, :wind_dist_evt)
+            prepare!(rec, name, n_evt)
+        end
+    end
+
+    return nothing
 end
 
 function record!(rec::InMemoryRecorder, name::Symbol, t_us::UInt64, value)
     ts = get!(rec.times, name) do
-        UInt64[]
+        v = UInt64[]
+        hint = get(rec.sizehints, name, 0)
+        hint > 0 && sizehint!(v, hint)
+        v
     end
     vs = get!(rec.values, name) do
-        Vector{typeof(value)}()
+        v = Vector{typeof(value)}()
+        hint = get(rec.sizehints, name, 0)
+        hint > 0 && sizehint!(v, hint)
+        v
     end
 
     # Determinism guard: times must be non-decreasing. Exact axis membership is validated later.
@@ -180,7 +249,7 @@ function estimator_traces(rec::InMemoryRecorder, timeline::Timeline)
 end
 
 
-export AbstractRecorder, NullRecorder, InMemoryRecorder
+export AbstractRecorder, NullRecorder, InMemoryRecorder, prepare!
 export stream_times, stream_values
 export zoh_trace, samplehold_trace, sampled_trace
 export tier0_traces, scenario_traces, estimator_traces

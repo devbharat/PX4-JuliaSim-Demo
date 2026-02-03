@@ -17,10 +17,17 @@ Base.@kwdef struct LockstepCmd
 end
 
 """Handle for a loaded `libpx4_lockstep` instance."""
+struct LockstepFns
+    orb_check::Ptr{Cvoid}
+    orb_copy::Ptr{Cvoid}
+    orb_unsubscribe::Ptr{Cvoid}
+end
+
 mutable struct LockstepHandle
     ptr::Ptr{Cvoid}
     lib::Ptr{Cvoid}
     config::LockstepConfig
+    fns::LockstepFns
 end
 
 """Validate Julia <-> C ABI compatibility.
@@ -62,6 +69,23 @@ function _abi_handshake!(lib::Ptr{Cvoid})
     return nothing
 end
 
+function _load_uorb_fns(lib::Ptr{Cvoid})::LockstepFns
+    return LockstepFns(
+        _resolve_symbol(lib, :px4_lockstep_orb_check),
+        _resolve_symbol(lib, :px4_lockstep_orb_copy),
+        _resolve_symbol(lib, :px4_lockstep_orb_unsubscribe),
+    )
+end
+
+function _dummy_handle()::LockstepHandle
+    return LockstepHandle(
+        Ptr{Cvoid}(0),
+        Ptr{Cvoid}(0),
+        LockstepConfig(),
+        LockstepFns(C_NULL, C_NULL, C_NULL),
+    )
+end
+
 function create(
     config::LockstepConfig = LockstepConfig();
     libpath::Union{Nothing,AbstractString} = nothing,
@@ -78,7 +102,7 @@ function create(
         fn = _resolve_symbol(lib, :px4_lockstep_create)
         handle = ccall(fn, Ptr{Cvoid}, (Ref{LockstepConfig},), config)
         handle == C_NULL && error("px4_lockstep_create returned NULL")
-        lockstep = LockstepHandle(handle, lib, config)
+        lockstep = LockstepHandle(handle, lib, config, _load_uorb_fns(lib))
         finalizer(lockstep) do instance
             try
                 destroy(instance)

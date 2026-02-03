@@ -83,8 +83,8 @@ end
 """Compute the uORB contract hash from a PX4 `orb_metadata.o_fields` string."""
 uorb_fields_hash_runtime(fields::AbstractString) = fnv1a64(canonicalize_uorb_fields(fields))
 
-# Cache of verified (topic,type) pairs.
-const _UORB_CONTRACT_CACHE = Dict{Tuple{String,DataType},Bool}()
+# Cache of verified (lib,topic,type) pairs.
+const _UORB_CONTRACT_CACHE = Dict{Tuple{Ptr{Cvoid},String,DataType},Bool}()
 
 """Verify that a Julia uORB message type matches the loaded PX4 binary.
 
@@ -103,7 +103,7 @@ function verify_uorb_type!(
     topic::AbstractString,
     ::Type{T},
 ) where {T}
-    key = (String(topic), T)
+    key = (handle.lib, String(topic), T)
     get(_UORB_CONTRACT_CACHE, key, false) && return nothing
 
     # If the generator emitted a topic mapping, ensure the caller is not

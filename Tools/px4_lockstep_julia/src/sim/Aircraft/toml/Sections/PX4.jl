@@ -166,6 +166,7 @@ function _parse_px4(
             _as_string(p["libpath"], "$ctx.libpath");
             must_exist = false,
         ) : base.libpath
+    libpath = _resolve_libpath_alt_ext(libpath)
 
     lockstep_cfg = base.lockstep_config
     if haskey(p, "lockstep")
@@ -201,4 +202,18 @@ function _parse_px4(
         derive_ca_params = derive_ca,
         edge_trigger = edge_trigger,
     )
+end
+
+function _resolve_libpath_alt_ext(libpath::Union{Nothing,AbstractString})
+    libpath === nothing && return nothing
+    path = String(libpath)
+    isfile(path) && return path
+    root, ext = splitext(path)
+    ext_lc = lowercase(ext)
+    if ext_lc == ".dylib" || ext_lc == ".so"
+        alt = ext_lc == ".dylib" ? ".so" : ".dylib"
+        alt_path = root * alt
+        isfile(alt_path) && return alt_path
+    end
+    return path
 end

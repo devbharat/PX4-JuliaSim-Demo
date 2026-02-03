@@ -111,12 +111,15 @@ julia --project=Tools/px4_lockstep_julia \
   -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="path/to/spec.toml", mode=:live)'
 ```
 
-To use the built-in Iris default, pass `spec_name` explicitly:
+To use the built-in Iris default for replay-only runs, pass `spec_name` explicitly:
 
 ```bash
 julia --project=Tools/px4_lockstep_julia \
-  -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_name=:iris_default, mode=:live)'
+  -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_name=:iris_default, mode=:replay)'
 ```
+
+For live/record runs, use a spec that sets `px4.libpath` (for example
+`examples/specs/iris_lockstep.toml` which extends `iris_default`).
 ```
 
 If you’re using this repo standalone (not inside a PX4 tree), use `--project=.` and set `px4.libpath` in your spec.

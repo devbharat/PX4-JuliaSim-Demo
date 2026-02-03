@@ -5,6 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=Tools/px4_lockstep_julia/scripts/_lockstep_common.sh
 source "${SCRIPT_DIR}/_lockstep_common.sh"
 
+ensure_julia_deps
 ensure_uorb_codegen
 ensure_sysimage
 

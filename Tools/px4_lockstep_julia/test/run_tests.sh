@@ -7,6 +7,7 @@ LOCKSTEP_SCRIPTS_DIR=$(cd "${SCRIPT_DIR}/../scripts" && pwd)
 source "${LOCKSTEP_SCRIPTS_DIR}/_lockstep_common.sh"
 
 # Optional: regen uORBGenerated.jl if PX4 headers exist.
+ensure_julia_deps
 ensure_uorb_codegen
 
 # Prepare sysimage: rebuild if PX4_LOCKSTEP_SYSIMAGE=1, otherwise auto-use if current.

@@ -14,6 +14,7 @@ if [[ $# -eq 1 ]]; then
   SPEC_PATH="$1"
 fi
 
+ensure_julia_deps
 ensure_uorb_codegen
 ensure_sysimage
 

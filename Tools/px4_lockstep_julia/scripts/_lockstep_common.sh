@@ -29,6 +29,20 @@ PROJECT_TOML="${REPO_ROOT}/Tools/px4_lockstep_julia/Project.toml"
 MANIFEST_TOML="${REPO_ROOT}/Tools/px4_lockstep_julia/Manifest.toml"
 SYSIMAGE_HASH=""
 
+ensure_julia_deps() {
+  mkdir -p "${JULIA_DEPOT_PATH}"
+
+  if [[ -d "${JULIA_DEPOT_PATH}/registries/General" ]] &&
+     [[ -d "${JULIA_DEPOT_PATH}/packages/StaticArrays" ]]; then
+    return 0
+  fi
+
+  echo "Installing Julia dependencies (Pkg.instantiate)..." >&2
+  JULIA_DEPOT_PATH=${JULIA_DEPOT_PATH} \
+    julia --project="${REPO_ROOT}/Tools/px4_lockstep_julia" \
+      -e 'import Pkg; Pkg.instantiate()'
+}
+
 hash_command() {
   if command -v sha256sum >/dev/null 2>&1; then
     echo "sha256sum"

@@ -14,6 +14,7 @@ SUMMARY_CSV="${OUT_DIR}/${RUN_NAME}_summary.csv"
 RTF_CSV="${OUT_DIR}/${RUN_NAME}_rtf.csv"
 LOG_DIR="${OUT_DIR}/logs"
 
+ensure_julia_deps
 ensure_uorb_codegen
 ensure_sysimage
 

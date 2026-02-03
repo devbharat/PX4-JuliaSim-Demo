@@ -56,7 +56,8 @@ strict mode) when `period_us % dt_ap_us != 0`.
 Julia structs are generated from PX4’s generated uORB headers:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/scripts/uorb_codegen.jl \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/scripts/uorb_codegen.jl \
   --headers build/px4_sitl_lockstep/uORB/topics \
   --topics "battery_status,vehicle_attitude" \
   --out Tools/px4_lockstep_julia/src/UORBGenerated.jl

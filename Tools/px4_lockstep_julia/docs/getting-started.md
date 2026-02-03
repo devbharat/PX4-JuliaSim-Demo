@@ -36,8 +36,13 @@ If your build output is elsewhere, edit the example specs and update `px4.libpat
 From the PX4 root:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 ```
+
+Note: the helper scripts set `JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot`
+to keep dependencies isolated from your global depot. For manual Julia commands,
+you can omit it (uses your default depot) or set it explicitly for consistency.
 
 ## Run an end-to-end Iris mission
 
@@ -135,7 +140,8 @@ not for rapid edit‑run iteration during development.
 If the sysimage build is skipped, install `PackageCompiler` in this environment:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.add("PackageCompiler")'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.add("PackageCompiler")'
 ```
 
 ## Configuration notes

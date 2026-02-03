@@ -7,7 +7,8 @@ The simulator is intended to be reviewable and falsifiable: core claims are back
 
 The package test entrypoint is \code{test/runtests.jl}. A typical local invocation is:
 \begin{lstlisting}
-julia --project -e 'using Pkg; Pkg.test()'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project -e 'using Pkg; Pkg.test()'
 \end{lstlisting}
 
 The test suite is designed to run without a PX4 shared library. Lockstep runtime smoke tests (\code{test/integration/lockstep_runtime.jl}) are conditionally executed only when the lockstep library is available (see the \code{PX4Lockstep.has_lockstep()} gate).

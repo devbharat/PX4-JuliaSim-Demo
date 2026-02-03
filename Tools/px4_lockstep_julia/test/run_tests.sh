@@ -38,6 +38,32 @@ done
 
 fail=0
 
+color_enabled() {
+  [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]
+}
+
+if color_enabled; then
+  COLOR_RED=$'\033[0;31m'
+  COLOR_GREEN=$'\033[0;32m'
+  COLOR_YELLOW=$'\033[0;33m'
+  COLOR_RESET=$'\033[0m'
+else
+  COLOR_RED=""
+  COLOR_GREEN=""
+  COLOR_YELLOW=""
+  COLOR_RESET=""
+fi
+
+print_status() {
+  local name="$1"
+  local status="$2"
+  if [[ "${status}" -eq 0 ]]; then
+    echo "${COLOR_GREEN}PASS${COLOR_RESET} ${name}"
+  else
+    echo "${COLOR_RED}FAIL${COLOR_RESET} ${name}"
+  fi
+}
+
 REQUEST_GROUP="${PX4_LOCKSTEP_TEST_GROUP:-all}"
 case "${REQUEST_GROUP}" in
   all)
@@ -107,18 +133,18 @@ run_julia_test() {
 
 if [[ "${PARALLEL}" -eq 1 ]]; then
   LOG_DIR=$(mktemp -d)
-  UNIT_LOGS=()
-  TIER_LOGS=()
-  UNIT_PIDS=()
-  TIER_PIDS=()
+  JOB_NAMES=()
+  JOB_LOGS=()
+  JOB_PIDS=()
 
   # Unit shards in parallel.
   if [[ "${RUN_UNIT}" -eq 1 ]]; then
     for group in "${UNIT_GROUPS[@]}"; do
       log="${LOG_DIR}/unit_${group}.log"
-      UNIT_LOGS+=("${log}")
+      JOB_NAMES+=("unit:${group}")
+      JOB_LOGS+=("${log}")
       run_julia_test "unit" "" "${group}" >"${log}" 2>&1 &
-      UNIT_PIDS+=("$!")
+      JOB_PIDS+=("$!")
     done
   fi
 
@@ -126,29 +152,28 @@ if [[ "${PARALLEL}" -eq 1 ]]; then
   if [[ "${RUN_INTEGRATION}" -eq 1 ]]; then
     for tier in "${TIER_LIST[@]}"; do
       log="${LOG_DIR}/integration_${tier}.log"
-      TIER_LOGS+=("${log}")
+      JOB_NAMES+=("integration:${tier}")
+      JOB_LOGS+=("${log}")
       run_julia_test "integration" "${tier}" "" >"${log}" 2>&1 &
-      TIER_PIDS+=("$!")
+      JOB_PIDS+=("$!")
     done
   fi
 
-  for pid in "${UNIT_PIDS[@]}"; do
-    if ! wait "${pid}"; then
-      fail=1
-    fi
-  done
-  for pid in "${TIER_PIDS[@]}"; do
-    if ! wait "${pid}"; then
-      fail=1
-    fi
-  done
-
   # Dump logs after completion so output is readable (no interleaving).
-  for log in "${UNIT_LOGS[@]}"; do
+  JOB_STATUS=()
+  for i in "${!JOB_PIDS[@]}"; do
+    if wait "${JOB_PIDS[$i]}"; then
+      JOB_STATUS[$i]=0
+    else
+      JOB_STATUS[$i]=1
+      fail=1
+    fi
+  done
+  for log in "${JOB_LOGS[@]}"; do
     cat "${log}"
   done
-  for log in "${TIER_LOGS[@]}"; do
-    cat "${log}"
+  for i in "${!JOB_NAMES[@]}"; do
+    print_status "${JOB_NAMES[$i]}" "${JOB_STATUS[$i]}"
   done
 
   rm -rf "${LOG_DIR}"
@@ -157,6 +182,9 @@ else
   if [[ "${RUN_UNIT}" -eq 1 ]]; then
     if ! run_julia_test "unit" "" ""; then
       fail=1
+      print_status "unit" 1
+    else
+      print_status "unit" 0
     fi
   fi
 
@@ -164,9 +192,18 @@ else
     for tier in "${TIER_LIST[@]}"; do
       if ! run_julia_test "integration" "${tier}" ""; then
         fail=1
+        print_status "integration:${tier}" 1
+      else
+        print_status "integration:${tier}" 0
       fi
     done
   fi
+fi
+
+if [[ "${fail}" -eq 0 ]]; then
+  echo "${COLOR_GREEN}ALL TESTS PASSED${COLOR_RESET}"
+else
+  echo "${COLOR_RED}TESTS FAILED${COLOR_RESET}"
 fi
 
 exit ${fail}

@@ -199,7 +199,7 @@ function mock_publish!(
     pub = MockPublisher(key, instance)
     _backend_publish!(
         backend,
-        PX4Lockstep._dummy_handle(),
+        _dummy_handle(),
         pub,
         msg,
     )

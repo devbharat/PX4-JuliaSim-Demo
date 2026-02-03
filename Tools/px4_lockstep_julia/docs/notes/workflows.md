@@ -57,7 +57,8 @@ See also: `Tools/px4_lockstep_julia/examples/replay/README.md`.
 ## Determinism check (replay same integrator repeatedly)
 
 ```bash
-julia --project=Tools/px4_lockstep_julia \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia \
   Tools/px4_lockstep_julia/examples/replay/iris_integrator_determinism.jl \
   RK4 3 /path/to/spec.toml
 ```
@@ -67,8 +68,10 @@ julia --project=Tools/px4_lockstep_julia \
 These are deterministic reference problems (analytic solutions and/or invariants) intended to catch numerical regressions and validate integrator behavior.
 
 ```bash
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/sho.jl
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/pendulum.jl
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/sho.jl
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/examples/verification/pendulum.jl
 ```
 
 More scripts and details: `Tools/px4_lockstep_julia/examples/verification/README.md`.
@@ -98,7 +101,8 @@ Setup instructions: `Tools/px4_lockstep_julia/scripts/README.md`.
 You can call the workflow directly from Julia (useful for debugging):
 
 ```bash
-julia --project=Tools/px4_lockstep_julia \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia \
   -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="/path/to/spec.toml", mode=:live)'
 ```
 
@@ -107,14 +111,16 @@ Your spec must set `px4.libpath` for live/record runs (and `px4.mission_path` fo
 To run a custom spec, pass `spec_path`:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia \
   -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_path="path/to/spec.toml", mode=:live)'
 ```
 
 To use the built-in Iris default for replay-only runs, pass `spec_name` explicitly:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia \
   -e 'using PX4Lockstep.Workflows; Workflows.simulate_iris_mission(spec_name=:iris_default, mode=:replay)'
 ```
 

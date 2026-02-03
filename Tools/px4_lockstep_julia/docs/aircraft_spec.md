@@ -26,7 +26,8 @@ multirotor defaults, call `default_multirotor_spec()` or pass
 ## Quick start
 
 ```bash
-julia --project=. examples/run_spec.jl examples/specs/iris.toml
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=. examples/run_spec.jl examples/specs/iris.toml
 ```
 
 Note: `--project=.` assumes you run from `Tools/px4_lockstep_julia`.

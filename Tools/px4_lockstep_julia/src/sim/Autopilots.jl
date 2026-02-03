@@ -24,6 +24,7 @@ using PX4Lockstep: create, destroy, load_mission, step_uorb!, set_cmd!
 using PX4Lockstep: UORBPublisher, UORBSubscriber, UORBMsg
 using PX4Lockstep: create_publisher, create_subscriber, publish!
 using PX4Lockstep: uorb_check!, uorb_copy!, uorb_unsubscribe!
+using PX4Lockstep: _dummy_handle
 
 export HomeLocation,
     WorldOrigin,

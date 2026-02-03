@@ -5,15 +5,21 @@
 From the PX4 root:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.instantiate()'
 ```
+
+The helper scripts use an isolated depot at `Tools/px4_lockstep_julia/.julia_depot`.
+For consistency, you can prefix manual Julia commands with `JULIA_DEPOT_PATH=...`
+as shown above, or omit it to use your default depot.
 
 ## Run tests
 
 The unit tests do not require a PX4 build (they focus on integrators, scheduling, record/replay machinery, and contract checks):
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.test()'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.test()'
 ```
 
 Alternatively, use the helper runner (sequential by default):
@@ -60,7 +66,8 @@ processes), see:
 Format the Julia sources:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools/px4_lockstep_julia/src")'
 ```
 
 ## Static analysis
@@ -68,13 +75,15 @@ julia --project=Tools/px4_lockstep_julia -e 'using JuliaFormatter; format("Tools
 Project hygiene checks (Aqua):
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep; stale_deps=false)'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using Aqua, PX4Lockstep; Aqua.test_all(PX4Lockstep; stale_deps=false)'
 ```
 
 Static analysis (JET):
 
 ```bash
-julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep"; analyze_from_definitions=false)'
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4Lockstep"; analyze_from_definitions=false)'
 ```
 
 ## uORB code generation
@@ -84,7 +93,8 @@ julia --project=Tools/px4_lockstep_julia -e 'using JET; JET.report_package("PX4L
 The Julia uORB `struct` definitions are generated from PX4’s generated uORB headers:
 
 ```bash
-julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/scripts/uorb_codegen.jl \
+JULIA_DEPOT_PATH=Tools/px4_lockstep_julia/.julia_depot \
+  julia --project=Tools/px4_lockstep_julia Tools/px4_lockstep_julia/scripts/uorb_codegen.jl \
   --headers build/px4_sitl_lockstep/uORB/topics \
   --topics "battery_status,vehicle_attitude" \
   --out Tools/px4_lockstep_julia/src/UORBGenerated.jl

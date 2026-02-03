@@ -9,6 +9,8 @@ mission_path = "../../src/Workflows/assets/missions/iris_long_mission.waypoints"
 
 [timeline]
 t_end_s = 700.0
+dt_wind_s = 0.01
+dt_log_s = 0.02
 
 [[power.batteries]]
 id = "bat1"

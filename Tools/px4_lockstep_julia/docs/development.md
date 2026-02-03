@@ -16,6 +16,25 @@ The unit tests do not require a PX4 build (they focus on integrators, scheduling
 julia --project=Tools/px4_lockstep_julia -e 'using Pkg; Pkg.test()'
 ```
 
+Alternatively, use the helper runner (sequential by default):
+
+```bash
+Tools/px4_lockstep_julia/test/run_tests.sh
+```
+
+To shard unit + integration tests across multiple Julia processes:
+
+```bash
+Tools/px4_lockstep_julia/test/run_tests.sh --parallel
+```
+
+### Parallel integration tiers
+
+If you want to run PX4 lockstep integration tiers in parallel (multiple Julia
+processes), see:
+
+- `docs/multiprocess.md`
+
 ## Formatting
 
 Format the Julia sources:
@@ -78,6 +97,12 @@ If you are adding a new multirotor layout, start with the mapping and validation
 
 - `src/sim/Aircraft/Validate.jl`
 - `test/verification/multirotor_motor_map.jl`
+
+## Performance guidelines
+
+Hot paths are expected to be **allocation-free and type-stable**. See:
+
+- `docs/performance_guidelines.md`
 
 ## Determinism checklist
 

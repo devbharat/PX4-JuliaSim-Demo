@@ -24,4 +24,5 @@ Technical report (PDF): [`Report/Latex/main.pdf`](Report/Latex/main.pdf).
 - Longer-lived design rationale is captured in:
   - [`notes/runtime_engine.md`](notes/runtime_engine.md)
   - [`notes/verification_coverage.md`](notes/verification_coverage.md)
-  - [`notes/performance_design_guidelines.md`](notes/performance_design_guidelines.md)
+  - [`performance_guidelines.md`](performance_guidelines.md)
+- Multiprocess testing guidance: [`multiprocess.md`](multiprocess.md)

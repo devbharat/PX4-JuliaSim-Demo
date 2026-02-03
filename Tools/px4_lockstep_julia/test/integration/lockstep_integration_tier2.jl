@@ -14,7 +14,7 @@ function _have_lockstep_lib()
 end
 
 function _quiet_create()
-    cfg = PX4Lockstep.LockstepConfig(enable_control_allocator = 0)
+    cfg = PX4Lockstep.LockstepConfig()
     return redirect_stdout(devnull) do
         redirect_stderr(devnull) do
             PX4Lockstep.create(cfg)
@@ -57,7 +57,7 @@ end
 
     cfg = _minimal_uorb_cfg()
     ap = Autopilots.init!(
-        config = PX4Lockstep.LockstepConfig(enable_control_allocator = 0),
+        config = PX4Lockstep.LockstepConfig(),
         uorb_cfg = cfg,
         edge_trigger = false,
     )

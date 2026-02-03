@@ -11,7 +11,7 @@ function _have_lockstep_lib()
 end
 
 function _quiet_create()
-    cfg = PX4Lockstep.LockstepConfig(enable_control_allocator = 0)
+    cfg = PX4Lockstep.LockstepConfig()
     return redirect_stdout(devnull) do
         redirect_stderr(devnull) do
             PX4Lockstep.create(cfg)

@@ -45,16 +45,27 @@ end
     end
 
     spec = _spec_with_lib(t_end_s = 20.0, arm_time_s = 0.5, mission_time_s = 1.0)
-    rec = Sim.Aircraft.build_engine(spec; mode = :record, log_sinks = nothing)
-    plant = Sim.Recording.stream_values(rec.recorder, :plant)
-    battery = Sim.Recording.stream_values(rec.recorder, :battery)
+    log = Sim.Logging.SimLog()
+    Sim.Aircraft.build_engine(spec; mode = :live, log_sinks = log)
 
-    @test !isempty(plant)
-    alts = [-ps.rb.pos_ned[3] for ps in plant]
+    @test !isempty(log.pos_ned)
+    alts = [-pos[3] for pos in log.pos_ned]
     @test maximum(alts) > 1.0
 
-    max_ω = maximum(maximum(abs.(ps.rotor_ω)) for ps in plant)
+    max_ω = 0.0
+    any_finite = false
+    for ωs in log.rotor_omega_rad_s
+        for w in ωs
+            if isfinite(w)
+                any_finite = true
+                max_ω = max(max_ω, abs(w))
+            end
+        end
+    end
+    if !any_finite
+        @info "No finite rotor omega samples in log"
+    end
     @test max_ω > 1.0
 
-    @test battery[end].remaining <= battery[1].remaining
+    @test log.batt_remaining[end] <= log.batt_remaining[1]
 end

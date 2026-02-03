@@ -46,15 +46,13 @@ end
 
     spec = _spec_with_lib(t_end_s = 120.0, arm_time_s = 0.5, mission_time_s = 1.0)
     log = Sim.Logging.SimLog()
-    rec = Sim.Aircraft.build_engine(spec; mode = :record, log_sinks = log)
-    plant = Sim.Recording.stream_values(rec.recorder, :plant)
-    battery = Sim.Recording.stream_values(rec.recorder, :battery)
+    Sim.Aircraft.build_engine(spec; mode = :live, log_sinks = log)
 
-    @test !isempty(plant)
-    alts = [-ps.rb.pos_ned[3] for ps in plant]
+    @test !isempty(log.pos_ned)
+    alts = [-pos[3] for pos in log.pos_ned]
     @test maximum(alts) > 5.0
 
-    @test battery[end].remaining < battery[1].remaining
+    @test log.batt_remaining[end] < log.batt_remaining[1]
 
     finished_idx = findfirst(i -> (log.mission_finished[i] == 1 &&
                                    log.mission_count[i] > 0 &&
@@ -85,8 +83,21 @@ end
     @test max_count > 0
     @test max_seq >= max_count - 1
 
-    for ps in plant
-        @test all(isfinite, ps.rb.pos_ned)
-        @test all(isfinite, ps.rb.vel_ned)
+    # Keep this cheap: check finiteness across the full trace without emitting
+    # thousands of individual `@test` records.
+    all_finite = true
+    first_bad = 0
+    for i in eachindex(log.pos_ned)
+        pos = log.pos_ned[i]
+        vel = log.vel_ned[i]
+        if !(all(isfinite, pos) && all(isfinite, vel))
+            all_finite = false
+            first_bad = i
+            break
+        end
     end
+    if !all_finite
+        @info "Non-finite plant state detected" first_bad pos_ned = log.pos_ned[first_bad] vel_ned = log.vel_ned[first_bad]
+    end
+    @test all_finite
 end

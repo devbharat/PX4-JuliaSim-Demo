@@ -27,6 +27,7 @@ SYSIMAGE="${SYSIMAGE_DIR}/PX4Lockstep.${SYS_EXT}"
 SYSIMAGE_STAMP="${SYSIMAGE}.stamp"
 PROJECT_TOML="${REPO_ROOT}/Tools/px4_lockstep_julia/Project.toml"
 MANIFEST_TOML="${REPO_ROOT}/Tools/px4_lockstep_julia/Manifest.toml"
+SYSIMAGE_HASH=""
 
 hash_command() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -61,6 +62,20 @@ hash_sysimage_inputs() {
   fi
 
   ${hash_cmd} "${files[@]}" | ${hash_cmd} | awk '{print $1}'
+}
+
+sysimage_is_current() {
+  if [[ ! -f "${SYSIMAGE}" ]] || [[ ! -f "${SYSIMAGE_STAMP}" ]]; then
+    return 1
+  fi
+
+  if [[ -z "${SYSIMAGE_HASH}" ]]; then
+    if ! SYSIMAGE_HASH=$(hash_sysimage_inputs); then
+      return 1
+    fi
+  fi
+
+  [[ "$(cat "${SYSIMAGE_STAMP}")" == "${SYSIMAGE_HASH}" ]]
 }
 
 ensure_uorb_codegen() {
@@ -109,8 +124,24 @@ ensure_sysimage() {
   fi
 }
 
+prepare_sysimage() {
+  if [[ "${PX4_LOCKSTEP_SYSIMAGE:-}" == "1" ]]; then
+    ensure_sysimage
+    return 0
+  fi
+
+  if [[ "${PX4_LOCKSTEP_SYSIMAGE:-}" == "auto" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${PX4_LOCKSTEP_SYSIMAGE:-}" ]] && sysimage_is_current; then
+    export PX4_LOCKSTEP_SYSIMAGE="auto"
+  fi
+}
+
 run_julia() {
-  if [[ "${PX4_LOCKSTEP_SYSIMAGE:-0}" == "1" ]] && [[ -f "${SYSIMAGE}" ]]; then
+  if [[ "${PX4_LOCKSTEP_SYSIMAGE:-0}" == "1" || "${PX4_LOCKSTEP_SYSIMAGE:-0}" == "auto" ]] &&
+     sysimage_is_current; then
     julia -J "${SYSIMAGE}" "$@"
   else
     julia "$@"

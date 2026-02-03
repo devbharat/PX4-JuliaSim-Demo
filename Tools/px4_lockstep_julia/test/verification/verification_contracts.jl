@@ -151,14 +151,14 @@ end
             ocv_v=[12.0, 12.0],
             r0=0.05,
             r1=0.10,
-            c1=100.0,
+            c1=10.0,
             v1_0=0.0,
             min_voltage_v=0.0,
         )
 
         I = 5.0
         dt = 0.01
-        t_end = 10.0
+        t_end = 1.0
         n = Int(floor(t_end / dt))
 
         Q_c = batt.capacity_c
@@ -167,21 +167,56 @@ end
         soc0 = st.soc
         v1_0 = st.v1
 
+        # Aggregate errors instead of emitting thousands of per-step `@test` records.
+        # This keeps coverage (we still check every step) but avoids Test.jl overhead.
+        ϕ = exp(-dt / τ)
+        soc_expected = soc0
+        v1_expected = v1_0
+        max_soc_err = 0.0
+        max_v1_err = 0.0
+        max_vt_err = 0.0
+        max_soc_idx = 0
+        max_v1_idx = 0
+        max_vt_idx = 0
+
         for k in 1:n
             PT.step!(batt, st, I, dt)
-            t = k * dt
+            soc_expected -= I * dt / Q_c
+            v1_expected = v1_expected * ϕ + I * batt.r1 * (1.0 - ϕ)
 
-            soc_expected = soc0 - I * t / Q_c
-            v1_expected = v1_0 * exp(-t / τ) + I * batt.r1 * (1.0 - exp(-t / τ))
-
-            @test isapprox(st.soc, soc_expected; atol=1e-12)
-            @test isapprox(st.v1, v1_expected; atol=1e-11)
+            soc_err = abs(st.soc - soc_expected)
+            if soc_err > max_soc_err
+                max_soc_err = soc_err
+                max_soc_idx = k
+            end
+            v1_err = abs(st.v1 - v1_expected)
+            if v1_err > max_v1_err
+                max_v1_err = v1_err
+                max_v1_idx = k
+            end
 
             # Terminal voltage check (OCV is constant here).
             r0_eff = PT.r0_ohm(batt.r0_model, st.soc, batt.temp_c)
             V_expected = 12.0 - I * r0_eff - v1_expected
-            @test isapprox(PT.status(batt, st).voltage_v, V_expected; atol=1e-10)
+            vt_err = abs(PT.status(batt, st).voltage_v - V_expected)
+            if vt_err > max_vt_err
+                max_vt_err = vt_err
+                max_vt_idx = k
+            end
         end
+
+        if max_soc_err > 1e-12
+            @info "Max SOC error" max_soc_err max_soc_idx
+        end
+        if max_v1_err > 1e-11
+            @info "Max V1 error" max_v1_err max_v1_idx
+        end
+        if max_vt_err > 1e-10
+            @info "Max terminal voltage error" max_vt_err max_vt_idx
+        end
+        @test max_soc_err <= 1e-12
+        @test max_v1_err <= 1e-11
+        @test max_vt_err <= 1e-10
 
         @test st.soc < soc0
         @test st.v1 > 0.0

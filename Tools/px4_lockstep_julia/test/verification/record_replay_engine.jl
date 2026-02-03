@@ -6,64 +6,6 @@ const Sim = PX4Lockstep.Sim
 const RT = Sim.Runtime
 const REC = Sim.Recording
 
-"""A minimal deterministic dynamics: x-acceleration from cmd.motors[1].
-
-`RigidBodyState` is used exclusively (attitude/body rates are held constant), so this exercises:
-- event-boundary traversal on `Timeline.evt`
-- ZOH command sampling between autopilot ticks
-- deterministic timeline traversal
-"""
-struct CmdAccelX end
-
-function (f::CmdAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plant.PlantInput)
-    a = u.cmd.motors[1]
-    return Sim.RigidBody.RigidBodyDeriv(
-        pos_dot = x.vel_ned,
-        vel_dot = Sim.Types.vec3(a, 0.0, 0.0),
-        q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
-        ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
-    )
-end
-
-"""Deterministic dynamics driven by wind samples (for record/replay tests)."""
-struct WindAccelX end
-
-function (f::WindAccelX)(t::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plant.PlantInput)
-    a = u.wind_ned[1]
-    return Sim.RigidBody.RigidBodyDeriv(
-        pos_dot = x.vel_ned,
-        vel_dot = Sim.Types.vec3(a, 0.0, 0.0),
-        q_dot = Sim.RigidBody.quat_deriv(x.q_bn, x.ω_body),
-        ω_dot = Sim.Types.vec3(0.0, 0.0, 0.0),
-    )
-end
-
-"""A trivial open-loop autopilot source used to record commands."""
-mutable struct ConstantMotorAutopilotSource
-    cmd::Sim.Vehicles.ActuatorCommand
-end
-
-function RT.update!(src::ConstantMotorAutopilotSource, bus::RT.SimBus, plant, t_us::UInt64)
-    bus.cmd = src.cmd
-    return nothing
-end
-
-"""Scenario source that steps wind disturbance at a specified boundary."""
-struct WindDistScenario
-    t_step_us::UInt64
-    dist_ned::Sim.Types.Vec3
-end
-
-function RT.update!(src::WindDistScenario, bus::RT.SimBus, plant, t_us::UInt64)
-    bus.ap_cmd = Sim.Autopilots.AutopilotCommand()
-    bus.landed = false
-    bus.faults = Sim.Faults.FaultState()
-    bus.wind_dist_ned =
-        t_us >= src.t_step_us ? src.dist_ned : Sim.Types.vec3(0.0, 0.0, 0.0)
-    return nothing
-end
-
-
 
 @testset "Runtime.Engine: replay integration matches analytic" begin
     # 0.1s run, autopilot is the densest axis so evt == ap (piecewise-constant inputs).
@@ -102,7 +44,7 @@ end
     sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = integ,
         autopilot = ap_src,
         wind = wind_src,
@@ -154,7 +96,7 @@ end
     sim = RT.plant_record_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = integ,
         autopilot = ap_src,
         wind = wind_src,
@@ -202,7 +144,7 @@ end
         mode = :record,
         timeline = timeline,
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = Sim.Integrators.EulerIntegrator(),
         autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
         wind = Sim.Sources.ReplayWindSource(wind_tr),
@@ -235,7 +177,7 @@ end
     servos = SVector{8,Float64}(ntuple(_ -> 0.0, 8))
     cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
 
-    ap_src = ConstantMotorAutopilotSource(cmd)
+    ap_src = PX4Lockstep.Tests.Fixtures.ConstantMotorAutopilotSource(cmd)
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
     wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
     wind_src = Sim.Sources.ReplayWindSource(wind_tr)
@@ -249,7 +191,7 @@ end
         timeline = timeline,
         bus = RT.SimBus(time_us = UInt64(0)),
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = Sim.Integrators.RK4Integrator(),
         autopilot = ap_src,
         wind = wind_src,
@@ -276,7 +218,7 @@ end
     servos = SVector{8,Float64}(ntuple(_ -> 0.0, 8))
     cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
 
-    ap_src = ConstantMotorAutopilotSource(cmd)
+    ap_src = PX4Lockstep.Tests.Fixtures.ConstantMotorAutopilotSource(cmd)
     wind_data = [Sim.Types.vec3(0.0, 0.0, 0.0) for _ in timeline.wind.t_us]
     wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
     wind_src = Sim.Sources.ReplayWindSource(wind_tr)
@@ -291,7 +233,7 @@ end
         timeline = timeline,
         bus = RT.SimBus(time_us = UInt64(0)),
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = Sim.Integrators.RK4Integrator(),
         autopilot = ap_src,
         wind = wind_src,
@@ -327,7 +269,7 @@ end
     wind_tr = REC.SampleHoldTrace(timeline.wind, wind_data)
 
     env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.NoWind())
-    model = iris_vehicle_for_tests().model
+    model = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests().model
     motor_act = Sim.Vehicles.DirectActuators()
     servo_act = Sim.Vehicles.DirectActuators()
     propulsion = Sim.Propulsion.default_multirotor_set()
@@ -368,254 +310,24 @@ end
 
 
 @testset "Record/replay equivalence at log ticks (Tier0)" begin
-    # Record a short open-loop full-plant run, save/load the Tier0 recording, then replay the
-    # recorded inputs and assert that the logged plant states match at every log tick.
-
-    veh = iris_vehicle_for_tests()
-
-    # Record with a non-zero "live" environment wind model, but replay with the
-    # canonical replay environment (NoWind). If the plant ever reads env.wind
-    # directly, this test will diverge.
-    env_replay = iris_env_replay_for_tests()
-    env_record = Sim.Environment.EnvironmentModel(
-        atmosphere = env_replay.atmosphere,
-        wind = Sim.Environment.ConstantWind(Sim.Types.vec3(5.0, 0.0, 0.0)),
-        gravity = env_replay.gravity,
-        origin = env_replay.origin,
-    )
-    battery = iris_battery_for_tests()
-    contact = Sim.Contacts.NoContact()
-
-    model_record = Sim.PlantModels.CoupledMultirotorModel(
-        veh.model,
-        env_record,
-        contact,
-        veh.motor_actuators,
-        veh.servo_actuators,
-        veh.propulsion,
-        battery,
-    )
-
-    model_replay = Sim.PlantModels.CoupledMultirotorModel(
-        veh.model,
-        env_replay,
-        contact,
-        veh.motor_actuators,
-        veh.servo_actuators,
-        veh.propulsion,
-        battery,
-    )
-
-    rb0 = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(0.0, 0.0, -10.0))
-    plant0 = Sim.Plant.init_plant_state(
-        rb0,
-        veh.motor_actuators,
-        veh.servo_actuators,
-        veh.propulsion,
-        battery,
-    )
-
-    t_end_us = UInt64(50_000)
-    tl = RT.build_timeline(
-        UInt64(0),
-        t_end_us;
-        dt_ap_us = UInt64(2_000),
-        dt_wind_us = UInt64(10_000),
-        dt_log_us = UInt64(10_000),
-    )
-
-    # Constant motor duty command on the first 4 channels (rest unused).
-    motors = SVector{12, Float64}(0.55, 0.55, 0.55, 0.55, 0, 0, 0, 0, 0, 0, 0, 0)
-    servos = SVector{8, Float64}(0, 0, 0, 0, 0, 0, 0, 0)
-    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
-
-    ap_live = ConstantMotorAutopilotSource(cmd)
-
-    # Record wind from the live wind model.
-    wind_live = Sim.Sources.LiveWindSource(env_record.wind, Random.MersenneTwister(0), 0.01)
-
-    scenario = Sim.Sources.NullScenarioSource()
-    estimator = Sim.Sources.NullEstimatorSource()
-
-    integ = Sim.Integrators.RK4Integrator()
-
-    # --- Record ---
-    rec1 = REC.InMemoryRecorder()
-    sim1 = RT.Engine(
-        RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false, strict_cmd = true);
-        timeline = tl,
-        bus = RT.SimBus(time_us = UInt64(0)),
-        plant0 = plant0,
-        dynfun = model_record,
-        integrator = integ,
-        autopilot = ap_live,
-        wind = wind_live,
-        scenario = scenario,
-        estimator = estimator,
-        recorder = rec1,
-    )
-
-    RT.run!(sim1)
-    REC.finalize!(rec1)
-
-    tier0 = REC.Tier0Recording(recorder = rec1, timeline = tl, plant0 = plant0)
-    REC.validate_recording(tier0)
-
-    # Persist and reload (exercises schema + I/O path).
-    mktemp() do path, io
-        close(io)
-        REC.write_recording(path, tier0)
-        tier0_loaded = REC.read_recording(path)
-        REC.validate_recording(tier0_loaded)
-
-        # Build replay sources from the loaded recording.
-        tr = REC.tier0_traces(tier0_loaded.recorder, tier0_loaded.timeline)
-        scn = REC.scenario_traces(tier0_loaded.recorder, tier0_loaded.timeline)
-
-        ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
-        wind_replay = Sim.Sources.ReplayWindSource(tr.wind_base_ned)
-        wind_dist = hasproperty(scn, :wind_dist) ? scn.wind_dist : nothing
-        scenario_replay = Sim.Sources.ReplayScenarioSource(
-            scn.ap_cmd,
-            scn.landed,
-            scn.faults;
-            wind_dist = wind_dist,
-        )
-
-        # --- Replay (record again to compare traces) ---
-        rec2 = REC.InMemoryRecorder()
-        sim2 = RT.Engine(
-            RT.EngineConfig(mode = RT.MODE_RECORD, enable_derived_outputs = true, record_estimator = false, strict_cmd = true);
-            timeline = tl,
-            bus = RT.SimBus(time_us = UInt64(0)),
-            plant0 = plant0,
-            dynfun = model_replay,
-            integrator = integ,
-            autopilot = ap_replay,
-            wind = wind_replay,
-            scenario = scenario_replay,
-            estimator = estimator,
-            recorder = rec2,
-        )
-
-        RT.run!(sim2)
-        REC.finalize!(rec2)
-
-        tr2 = REC.tier0_traces(rec2, tl)
-
-        # Compare the logged plant state at every log tick.
-        V = Sim.Verification
-        @test length(tr.plant.data) == length(tr2.plant.data)
-        for i in eachindex(tr.plant.data)
-            e = V.plant_error(tr.plant.data[i], tr2.plant.data[i])
-            @test e.pos <= 1e-12
-            @test e.vel <= 1e-12
-            @test e.att_rad <= 1e-12
-            @test e.ω <= 1e-12
-            @test e.rotor <= 1e-12
-            @test e.soc <= 1e-15
-            @test e.v1 <= 1e-12
-        end
-    end
+    res = PX4Lockstep.Tests.Fixtures.record_replay_equivalence_log_ticks()
+    @test res.count > 0
+    @test res.max_pos <= 1e-12
+    @test res.max_vel <= 1e-12
+    @test res.max_att <= 1e-12
+    @test res.max_ω <= 1e-12
+    @test res.max_rotor <= 1e-12
+    @test res.max_soc <= 1e-15
+    @test res.max_v1 <= 1e-12
 end
 
 @testset "Record/replay equivalence with wind disturbance (Tier0)" begin
-    # Ensure non-zero wind_dist_ned (stepped at a non-wind boundary) reproduces exactly.
-    t0_us = UInt64(0)
-    t_end_us = UInt64(80_000)
-    timeline = RT.build_timeline(
-        t0_us,
-        t_end_us;
-        dt_ap_us = UInt64(5_000),
-        dt_wind_us = UInt64(20_000),
-        dt_log_us = UInt64(10_000),
-    )
-
-    base_wind = [Sim.Types.vec3(3.0, 0.0, 0.0) for _ in timeline.wind.t_us]
-    wind_tr = REC.SampleHoldTrace(timeline.wind, base_wind)
-
-    motors = SVector{12, Float64}(ntuple(_ -> 0.0, 12))
-    servos = SVector{8, Float64}(ntuple(_ -> 0.0, 8))
-    cmd = Sim.Vehicles.ActuatorCommand(motors = motors, servos = servos)
-
-    ap_live = ConstantMotorAutopilotSource(cmd)
-    wind_live = Sim.Sources.ReplayWindSource(wind_tr)
-    scenario = WindDistScenario(UInt64(35_000), Sim.Types.vec3(2.0, 0.0, 0.0))
-    estimator = Sim.Sources.NullEstimatorSource()
-
-    x0 = Sim.RigidBody.RigidBodyState(
-        pos_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-        q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
-        ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
-    )
-
-    integ = Sim.Integrators.RK4Integrator()
-
-    # --- Record ---
-    rec1 = REC.InMemoryRecorder()
-    sim1 = RT.Engine(
-        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true);
-        timeline = timeline,
-        bus = RT.SimBus(time_us = UInt64(0)),
-        plant0 = x0,
-        dynfun = WindAccelX(),
-        integrator = integ,
-        autopilot = ap_live,
-        wind = wind_live,
-        scenario = scenario,
-        estimator = estimator,
-        recorder = rec1,
-    )
-
-    RT.run!(sim1)
-    REC.finalize!(rec1)
-
-    tier0 = REC.Tier0Recording(recorder = rec1, timeline = timeline, plant0 = x0)
-    REC.validate_recording(tier0)
-
-    tr = REC.tier0_traces(rec1, timeline)
-    scn = REC.scenario_traces(rec1, timeline)
-
-    # --- Replay ---
-    ap_replay = Sim.Sources.ReplayAutopilotSource(tr.cmd)
-    wind_replay = Sim.Sources.ReplayWindSource(tr.wind_base_ned)
-    scenario_replay = Sim.Sources.ReplayScenarioSource(
-        scn.ap_cmd,
-        scn.landed,
-        scn.faults;
-        wind_dist = scn.wind_dist,
-    )
-
-    rec2 = REC.InMemoryRecorder()
-    sim2 = RT.Engine(
-        RT.EngineConfig(mode = RT.MODE_RECORD, strict_cmd = true);
-        timeline = timeline,
-        bus = RT.SimBus(time_us = UInt64(0)),
-        plant0 = x0,
-        dynfun = WindAccelX(),
-        integrator = integ,
-        autopilot = ap_replay,
-        wind = wind_replay,
-        scenario = scenario_replay,
-        estimator = estimator,
-        recorder = rec2,
-    )
-
-    RT.run!(sim2)
-    REC.finalize!(rec2)
-
-    tr2 = REC.tier0_traces(rec2, timeline)
-
-    @test length(tr.plant.data) == length(tr2.plant.data)
-    for i in eachindex(tr.plant.data)
-        a = tr.plant.data[i]
-        b = tr2.plant.data[i]
-        @test isapprox(a.pos_ned, b.pos_ned; atol = 1e-12)
-        @test isapprox(a.vel_ned, b.vel_ned; atol = 1e-12)
-        @test isapprox(a.q_bn, b.q_bn; atol = 1e-12)
-        @test isapprox(a.ω_body, b.ω_body; atol = 1e-12)
-    end
+    res = PX4Lockstep.Tests.Fixtures.record_replay_equivalence_wind_disturbance()
+    @test res.count > 0
+    @test res.max_pos <= 1e-12
+    @test res.max_vel <= 1e-12
+    @test res.max_q <= 1e-12
+    @test res.max_ω <= 1e-12
 end
 
 
@@ -655,9 +367,9 @@ end
         return nothing
     end
 
-    veh = iris_vehicle_for_tests()
-    batt = iris_battery_for_tests()
-    env0 = iris_env_replay_for_tests()
+    veh = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests()
+    batt = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
+    env0 = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
     wind_model = Sim.Environment.OUWind(
         mean = Sim.Types.vec3(0.0, 0.0, 0.0),
         σ = Sim.Types.vec3(0.0, 0.0, 0.0), # deterministic

@@ -13,7 +13,7 @@ function _have_lockstep_lib()
 end
 
 function _spec_with_lib(; t_end_s::Float64, arm_time_s::Float64, mission_time_s::Float64)
-    spec = iris_spec_for_tests()
+    spec = PX4Lockstep.Tests.Fixtures.iris_spec_for_tests()
     lib = PX4Lockstep.find_library()
     px4 = Sim.Aircraft.PX4Spec(
         mission_path = spec.px4.mission_path,

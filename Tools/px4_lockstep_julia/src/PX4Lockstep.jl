@@ -38,6 +38,7 @@ export LockstepConfig,
 # Simulation framework lives in a submodule so the core PX4 lockstep wrapper stays small.
 export Sim
 export Workflows
+export Tests
 
 include("lockstep/Library.jl")
 include("lockstep/Handle.jl")
@@ -51,5 +52,7 @@ include("lockstep/UORB.jl")
 
 include("sim/Sim.jl")
 include("Workflows/Workflows.jl")
+include("Tests/Tests.jl")
+include("PrecompileWorkload.jl")
 
 end

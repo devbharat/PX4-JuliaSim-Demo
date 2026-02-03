@@ -7,9 +7,6 @@ using PX4Lockstep
 const Sim = PX4Lockstep.Sim
 const Workflows = PX4Lockstep.Workflows
 
-# TOML-first Iris helpers for tests.
-include("_helpers/_iris_helpers.jl")
-include("_helpers/_test_helpers.jl")
 include("smoke/load.jl")
 
 # Optional test sharding to reduce wall time in CI / local iteration.

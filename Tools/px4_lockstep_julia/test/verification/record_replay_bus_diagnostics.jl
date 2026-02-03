@@ -27,17 +27,17 @@ function _compare_stream(rec1, rec2, name::Symbol, axis::RT.TimeAxis, cmp)
 end
 
 function _build_drop_setup()
-    env = iris_env_replay_for_tests()
-    contact = iris_contact_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
+    contact = PX4Lockstep.Tests.Fixtures.iris_contact_for_tests()
     rb0 = Sim.RigidBody.RigidBodyState(
         pos_ned = T.vec3(0.0, 0.0, -1.0),
         vel_ned = T.vec3(0.0, 0.0, 2.0),
         q_bn = T.Quat(1.0, 0.0, 0.0, 0.0),
         ω_body = T.vec3(0.0, 0.0, 0.0),
     )
-    vehicle = iris_vehicle_for_tests(x0 = rb0)
-    battery = iris_battery_for_tests()
-    dynfun = iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
+    vehicle = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests(x0 = rb0)
+    battery = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
+    dynfun = PX4Lockstep.Tests.Fixtures.iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
     plant0 = Sim.Plant.init_plant_state(
         vehicle.state,
         vehicle.motor_actuators,
@@ -49,7 +49,7 @@ function _build_drop_setup()
 end
 
 @testset "Record/replay bus diagnostics (landed/impact/battery)" begin
-    timeline = iris_timeline_for_tests(
+    timeline = PX4Lockstep.Tests.Fixtures.iris_timeline_for_tests(
         t_end_s = 0.4,
         dt_autopilot_s = 0.01,
         dt_wind_s = 0.02,

@@ -402,9 +402,9 @@ end
 
     # Build Iris plant components (TOML-first). Keep the run short and disable derived outputs
     # to make this test lightweight.
-    env = iris_env_replay_for_tests()
-    vehicle = iris_vehicle_for_tests()
-    battery = iris_battery_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
+    vehicle = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests()
+    battery = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
 
     contact = CONTACT.FlatGroundConstraintContact(
         enable_friction = false,
@@ -412,7 +412,7 @@ end
         v_rest_threshold_mps = 0.05,
         enable_impact_friction = false,
     )
-    dynfun = iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
+    dynfun = PX4Lockstep.Tests.Fixtures.iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
 
     rb0 = RB.RigidBodyState(
         pos_ned = T.vec3(0.0, 0.0, -1.0),
@@ -474,9 +474,9 @@ end
 @testset "Ground contact: hybrid tunneling regression (TOI in coarse step)" begin
     # High-speed touchdown should still be localized even with a large integration interval.
 
-    env = iris_env_replay_for_tests()
-    vehicle = iris_vehicle_for_tests()
-    battery = iris_battery_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
+    vehicle = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests()
+    battery = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
 
     contact = CONTACT.FlatGroundConstraintContact(
         enable_friction = false,
@@ -485,7 +485,7 @@ end
         enable_impact_friction = false,
         h_contact_us = UInt64(1000),
     )
-    dynfun = iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
+    dynfun = PX4Lockstep.Tests.Fixtures.iris_dynfun_for_tests(env, vehicle, battery; contact = contact)
 
     # Start 10 m above ground, high downward velocity.
     rb0 = RB.RigidBodyState(

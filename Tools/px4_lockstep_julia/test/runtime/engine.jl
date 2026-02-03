@@ -1,3 +1,4 @@
+
 @testset "Runtime.Engine time_us is exact and log samples pre-step state" begin
     RT = Sim.Runtime
     REC = Sim.Recording
@@ -28,7 +29,7 @@
     sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = ZeroRB(),
+        dynfun = PX4Lockstep.Tests.Fixtures.ZeroRB(),
         integrator = Sim.Integrators.EulerIntegrator(),
         autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
         wind = Sim.Sources.ReplayWindSource(wind_tr),
@@ -77,7 +78,7 @@ end
     sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = ZeroRB(),
+        dynfun = PX4Lockstep.Tests.Fixtures.ZeroRB(),
         integrator = integ,
         autopilot = ap_src,
         wind = wind_src,
@@ -136,7 +137,7 @@ end
     sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = CmdAccelX(),
+        dynfun = PX4Lockstep.Tests.Fixtures.CmdAccelX(),
         integrator = integ,
         autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
         wind = Sim.Sources.ReplayWindSource(wind_tr),
@@ -193,7 +194,7 @@ end
     sim = RT.plant_replay_engine(
         timeline = timeline,
         plant0 = x0,
-        dynfun = ZeroRB(),
+        dynfun = PX4Lockstep.Tests.Fixtures.ZeroRB(),
         integrator = Sim.Integrators.RK4Integrator(),
         autopilot = Sim.Sources.ReplayAutopilotSource(cmd_tr),
         wind = wind_src,

@@ -2,7 +2,7 @@
 
 julia_version = "1.12.4"
 manifest_format = "2.0"
-project_hash = "f342393e674de477f33e8accc83efcf9bbe1c52e"
+project_hash = "833fc51fd0717d80e77d465775585b1131ff2b0b"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -112,7 +112,7 @@ uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
 version = "3.5.4+0"
 
 [[deps.PX4Lockstep]]
-deps = ["Dates", "Libdl", "LinearAlgebra", "PackageCompiler", "Printf", "Random", "Serialization", "StaticArrays", "TOML"]
+deps = ["Dates", "Libdl", "LinearAlgebra", "PackageCompiler", "PrecompileTools", "Printf", "Random", "Serialization", "StaticArrays", "TOML"]
 path = "."
 uuid = "05d710f3-cab8-494a-a8a6-ce1ba4a271f6"
 version = "0.1.0"

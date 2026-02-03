@@ -69,7 +69,7 @@ end
 
     # Exact solution: q(t) = [cos(ωt/2), 0, 0, sin(ωt/2)]
     q_ref = Sim.Types.quat_from_axis_angle(Sim.Types.vec3(0.0, 0.0, 1.0), ω * T)
-    θ_err = quat_angle_error(x.q_bn, q_ref)
+    θ_err = PX4Lockstep.Tests.Fixtures.quat_angle_error(x.q_bn, q_ref)
 
     @test θ_err < 1e-6
     @test isapprox(norm(x.q_bn), 1.0; atol = 1e-12)

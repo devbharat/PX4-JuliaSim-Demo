@@ -1,3 +1,4 @@
+
 @testset "Simulation strict_lockstep_rates errors on autopilot rate mismatch" begin
     # Minimal autopilot that advertises a fast internal loop rate.
     Base.@kwdef mutable struct RateOutputs
@@ -63,7 +64,7 @@
         mode = :live,
         timeline = timeline,
         plant0 = Sim.RigidBody.RigidBodyState(),
-        dynfun = ZeroRB(),
+        dynfun = PX4Lockstep.Tests.Fixtures.ZeroRB(),
         integrator = Sim.Integrators.EulerIntegrator(),
         autopilot = autopilot_src,
         wind = wind_src,
@@ -77,7 +78,7 @@
         mode = :live,
         timeline = timeline,
         plant0 = Sim.RigidBody.RigidBodyState(),
-        dynfun = ZeroRB(),
+        dynfun = PX4Lockstep.Tests.Fixtures.ZeroRB(),
         integrator = Sim.Integrators.EulerIntegrator(),
         autopilot = autopilot_src,
         wind = wind_src,

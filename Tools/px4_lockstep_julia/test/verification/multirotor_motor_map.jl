@@ -6,7 +6,7 @@ using PX4Lockstep
 const Sim = PX4Lockstep.Sim
 
 @testset "Phase 2: MotorMap maps PX4 channels -> physical propulsors" begin
-    env = iris_env_replay_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
 
     # Use a small 4-motor multirotor and inspect the instantaneous rotor acceleration.
     N = 4
@@ -87,7 +87,7 @@ end
 
 
 @testset "Phase 2: Generic multirotor N=8 runs without PX4" begin
-    env = iris_env_replay_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
 
     N = 8
     r = 0.25
@@ -143,7 +143,7 @@ end
         battery,
     )
 
-    timeline = iris_timeline_for_tests(
+    timeline = PX4Lockstep.Tests.Fixtures.iris_timeline_for_tests(
         t_end_s = 0.2,
         dt_autopilot_s = 0.01,
         dt_wind_s = 0.01,

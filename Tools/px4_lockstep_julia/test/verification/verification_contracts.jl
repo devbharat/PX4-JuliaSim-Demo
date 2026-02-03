@@ -21,761 +21,140 @@ const RB = Sim.RigidBody
 const Scen = Sim.Scenario
 const Ev = Sim.Events
 
-build_battery_spec(; kwargs...) = AC.build_battery(AC.BatterySpec(; kwargs...))
-build_thevenin(; kwargs...) = build_battery_spec(model = :thevenin; kwargs...)
-build_ideal(; kwargs...) = build_battery_spec(model = :ideal; kwargs...)
-
-"""Test-only prop model that makes thrust/torque depend on Vax sign."""
-struct SignProp <: Sim.Propulsion.AbstractPropParams
-    kT::Float64
-    kQ::Float64
-end
-
-Sim.Propulsion.prop_thrust(p::SignProp, _ρ::Float64, _ω::Float64, Vax::Float64) = p.kT * Vax
-Sim.Propulsion.prop_torque(p::SignProp, _ρ::Float64, _ω::Float64, Vax::Float64) = p.kQ * Vax
-
-"""Build a minimal Iris full-plant model (CoupledMultirotorModel) for tests.
-
-Returns a NamedTuple with:
-- veh   :: Vehicles.VehicleInstance
-- batt  :: Powertrain.TheveninBattery
-- env   :: Environment.EnvironmentModel
-- model :: PlantModels.CoupledMultirotorModel
-- plant0:: Plant.PlantState{4,1}
-"""
-function _iris_fullplant(
-    ;
-    x0::RB.RigidBodyState = RB.RigidBodyState(),
-    contact = Sim.Contacts.NoContact(),
-    linear_drag::Union{Nothing,Float64} = nothing,
-    angular_damping::Union{Nothing,T.Vec3} = nothing,
-)
-    veh = iris_vehicle_for_tests(; x0 = x0)
-    if linear_drag !== nothing || angular_damping !== nothing
-        params = veh.model.params
-        params_new = Sim.Vehicles.QuadrotorParams{4}(
-            mass = params.mass,
-            inertia_kgm2 = params.inertia_kgm2,
-            inertia_inv_kgm2 = params.inertia_inv_kgm2,
-            rotor_pos_body = params.rotor_pos_body,
-            rotor_axis_body = params.rotor_axis_body,
-            rotor_inertia_kgm2 = params.rotor_inertia_kgm2,
-            rotor_dir = params.rotor_dir,
-            linear_drag = linear_drag === nothing ? params.linear_drag : linear_drag,
-            angular_damping =
-                angular_damping === nothing ? params.angular_damping : angular_damping,
-        )
-        veh.model = Sim.Vehicles.GenericMultirotor{4}(params_new)
-    end
-    batt = iris_battery_for_tests()
-    env = iris_env_replay_for_tests()
-
-    model = Sim.PlantModels.CoupledMultirotorModel(
-        veh.model,
-        env,
-        contact,
-        veh.motor_actuators,
-        veh.servo_actuators,
-        veh.propulsion,
-        batt,
-    )
-    plant0 = Sim.Plant.init_plant_state(
-        veh.state,
-        veh.motor_actuators,
-        veh.servo_actuators,
-        veh.propulsion,
-        batt,
-    )
-
-    return (veh=veh, batt=batt, env=env, model=model, plant0=plant0)
-end
-
-"""Compute the L2 norm of a quaternion stored as a 4-vector."""
-@inline function _qnorm(q::T.Quat)::Float64
-    return sqrt(sum(abs2, q))
-end
 
 @testset "Verification Tier 1 - Subsystems" begin
     @testset "Environment ISA1976 spot checks" begin
-        # These are classic “sanity anchor” checks: units, constants, and lapse-rate branch.
-        atm = Env.ISA1976()
-
-        # Sea-level
-        @test isapprox(Env.air_temperature(atm, 0.0), 288.15; atol=1e-9)
-        @test isapprox(Env.air_pressure(atm, 0.0), 101325.0; atol=1e-9)
-        @test isapprox(Env.air_density(atm, 0.0), 1.225; rtol=1e-3)
-
-        # 11 km (top of troposphere in the ISA definition)
-        @test isapprox(Env.air_temperature(atm, 11000.0), 216.65; atol=1e-3)
-        @test isapprox(Env.air_pressure(atm, 11000.0), 22632.1; rtol=1e-2)
-        @test isapprox(Env.air_density(atm, 11000.0), 0.36391; rtol=1e-2)
-
-        # Basic monotonic sanity
-        @test Env.air_density(atm, 0.0) > Env.air_density(atm, 1000.0)
-        @test Env.air_pressure(atm, 0.0) > Env.air_pressure(atm, 1000.0)
+        env = PX4Lockstep.Tests.Fixtures.tier1_env_isa1976_spot_checks()
+        @test isapprox(env.t0, 288.15; atol = 1e-9)
+        @test isapprox(env.p0, 101325.0; atol = 1e-9)
+        @test isapprox(env.rho0, 1.225; rtol = 1e-3)
+        @test isapprox(env.t11, 216.65; atol = 1e-3)
+        @test isapprox(env.p11, 22632.1; rtol = 1e-2)
+        @test isapprox(env.rho11, 0.36391; rtol = 1e-2)
+        @test env.rho0_gt_rho1k
+        @test env.p0_gt_p1k
     end
 
     @testset "OUWind discrete update contract" begin
-        # Verify the OU recurrence matches the exact discrete-time update.
-        # The same randn draws are computed with an identical RNG seed to remain stable
-        # even if Julia's normal RNG implementation changes.
-        rng_seed = 0x12345678
-        rng_ref = MersenneTwister(rng_seed)
-        rng = MersenneTwister(rng_seed)
-
-        dt = 0.1
-        v0 = T.vec3(1.0, -2.0, 0.5)
-        w = Env.OUWind(σ = T.vec3(2.0, 2.0, 2.0), τ_s = 5.0, v_gust = v0)
-
-        ξ = T.vec3(randn(rng_ref), randn(rng_ref), randn(rng_ref))
-        ϕ = exp(-dt / w.τ_s)
-        scale = sqrt(1.0 - ϕ * ϕ)
-        expected = ϕ * v0 + (w.σ * scale) .* ξ
-
-        Env.step_wind!(w, T.vec3(0.0, 0.0, 0.0), 0.0, dt, rng)
-
-        @test isapprox(w.phi, ϕ; atol=1e-14)
-        @test isapprox(w.scale, scale; atol=1e-14)
-        @test isapprox(w.v_gust, expected; atol=1e-12)
+        ou = PX4Lockstep.Tests.Fixtures.tier1_ouwind_discrete_update()
+        @test isapprox(ou.phi, exp(-0.1 / 5.0); atol = 1e-14)
+        @test isapprox(ou.scale, sqrt(1.0 - ou.phi * ou.phi); atol = 1e-14)
+        @test isapprox(ou.v_gust, ou.expected; atol = 1e-12)
     end
 
     @testset "Powertrain Thevenin battery analytic step-load" begin
-        # Battery-only verification under constant discharge current.
-        # Closed form for V1 and SOC:
-        #   SOC(t) = SOC0 - I*t/Q,  Q=Ah*3600
-        #   V1(t)  = V1(0)*exp(-t/τ) + I*R1*(1-exp(-t/τ)), τ=R1*C1
-        batt = build_thevenin(
-            capacity_ah=2.0,
-            soc0=1.0,
-            ocv_soc=[0.0, 1.0],
-            ocv_v=[12.0, 12.0],
-            r0=0.05,
-            r1=0.10,
-            c1=10.0,
-            v1_0=0.0,
-            min_voltage_v=0.0,
-        )
-
-        I = 5.0
-        dt = 0.01
-        t_end = 1.0
-        n = Int(floor(t_end / dt))
-
-        Q_c = batt.capacity_c
-        τ = batt.r1 * batt.c1
-        st = PT.battery_state(batt)
-        soc0 = st.soc
-        v1_0 = st.v1
-
-        # Aggregate errors instead of emitting thousands of per-step `@test` records.
-        # This keeps coverage (we still check every step) but avoids Test.jl overhead.
-        ϕ = exp(-dt / τ)
-        soc_expected = soc0
-        v1_expected = v1_0
-        max_soc_err = 0.0
-        max_v1_err = 0.0
-        max_vt_err = 0.0
-        max_soc_idx = 0
-        max_v1_idx = 0
-        max_vt_idx = 0
-
-        for k in 1:n
-            PT.step!(batt, st, I, dt)
-            soc_expected -= I * dt / Q_c
-            v1_expected = v1_expected * ϕ + I * batt.r1 * (1.0 - ϕ)
-
-            soc_err = abs(st.soc - soc_expected)
-            if soc_err > max_soc_err
-                max_soc_err = soc_err
-                max_soc_idx = k
-            end
-            v1_err = abs(st.v1 - v1_expected)
-            if v1_err > max_v1_err
-                max_v1_err = v1_err
-                max_v1_idx = k
-            end
-
-            # Terminal voltage check (OCV is constant here).
-            r0_eff = PT.r0_ohm(batt.r0_model, st.soc, batt.temp_c)
-            V_expected = 12.0 - I * r0_eff - v1_expected
-            vt_err = abs(PT.status(batt, st).voltage_v - V_expected)
-            if vt_err > max_vt_err
-                max_vt_err = vt_err
-                max_vt_idx = k
-            end
-        end
-
-        if max_soc_err > 1e-12
-            @info "Max SOC error" max_soc_err max_soc_idx
-        end
-        if max_v1_err > 1e-11
-            @info "Max V1 error" max_v1_err max_v1_idx
-        end
-        if max_vt_err > 1e-10
-            @info "Max terminal voltage error" max_vt_err max_vt_idx
-        end
-        @test max_soc_err <= 1e-12
-        @test max_v1_err <= 1e-11
-        @test max_vt_err <= 1e-10
-
-        @test st.soc < soc0
-        @test st.v1 > 0.0
+        batt = PX4Lockstep.Tests.Fixtures.tier1_battery_step_load()
+        @test batt.max_soc_err <= 1e-12
+        @test batt.max_v1_err <= 1e-11
+        @test batt.max_vt_err <= 1e-10
+        @test batt.soc < batt.soc0
+        @test batt.v1 > 0.0
     end
 
     @testset "Phase 5.1 - multi-battery PlantState math" begin
-        power0 = Sim.Plant.PowerState{2}(
-            soc = SVector{2,Float64}(1.0, 0.5),
-            v1 = SVector{2,Float64}(0.1, 0.2),
-        )
-        x0 = Sim.Plant.PlantState{4,2}(power = power0)
-
-        power_dot = Sim.Plant.PowerDeriv{2}(
-            soc_dot = SVector{2,Float64}(-0.01, -0.02),
-            v1_dot = SVector{2,Float64}(0.03, 0.04),
-        )
-        k = Sim.Plant.PlantDeriv{4,2}(power = power_dot)
-
-        dt = 2.0
-        x1 = Sim.Plant.plant_add(x0, k, dt)
-        @test x1.power.soc ≈ power0.soc + power_dot.soc_dot * dt
-        @test x1.power.v1 ≈ power0.v1 + power_dot.v1_dot * dt
-
-        # RK4 scale-add should reduce to the same linear update when all ks are equal.
-        x2 = Sim.Plant.plant_scale_add(x0, k, k, k, k, dt)
-        @test x2.power.soc ≈ power0.soc + power_dot.soc_dot * dt
-        @test x2.power.v1 ≈ power0.v1 + power_dot.v1_dot * dt
-
-        # Generic linear combination with mixed derivatives.
-        k2 = Sim.Plant.PlantDeriv{4,2}(
-            power = Sim.Plant.PowerDeriv{2}(
-                soc_dot = SVector{2,Float64}(-0.03, -0.01),
-                v1_dot = SVector{2,Float64}(0.02, 0.01),
-            ),
-        )
-        x3 = Sim.Plant.plant_lincomb(x0, dt, (k, k2), (0.25, 0.75))
-        @test x3.power.soc ≈ power0.soc + (0.25 * power_dot.soc_dot + 0.75 * k2.power.soc_dot) * dt
-        @test x3.power.v1 ≈ power0.v1 + (0.25 * power_dot.v1_dot + 0.75 * k2.power.v1_dot) * dt
+        pm = PX4Lockstep.Tests.Fixtures.tier1_multi_battery_plant_state_math()
+        @test pm.x1_soc ≈ pm.exp1_soc
+        @test pm.x1_v1 ≈ pm.exp1_v1
+        @test pm.x2_soc ≈ pm.exp1_soc
+        @test pm.x2_v1 ≈ pm.exp1_v1
+        @test pm.x3_soc ≈ pm.exp_soc
+        @test pm.x3_v1 ≈ pm.exp_v1
     end
 
     @testset "Phase 5.1 - init_plant_state with multiple batteries" begin
-        veh = iris_vehicle_for_tests()
-        b1 = build_thevenin(soc0 = 0.9, v1_0 = 0.12)
-        b2 = build_thevenin(soc0 = 0.8, v1_0 = 0.34)
-        x0 = Sim.Plant.init_plant_state(
-            veh.state,
-            veh.motor_actuators,
-            veh.servo_actuators,
-            veh.propulsion,
-            (b1, b2),
-        )
-        @test x0.power.soc == SVector{2,Float64}(0.9, 0.8)
-        @test x0.power.v1 == SVector{2,Float64}(0.12, 0.34)
+        init = PX4Lockstep.Tests.Fixtures.tier1_init_plant_state_multi_battery()
+        @test init.soc == SVector{2,Float64}(0.9, 0.8)
+        @test init.v1 == SVector{2,Float64}(0.12, 0.34)
     end
 
     @testset "Phase 5.1 - when_soc_below uses minimum SOC" begin
-        s = Scen.EventScenario()
-        Scen.when_soc_below!(s, 0.1, (st, ctx, t) -> st)
-        @test length(s.scheduler.events) == 1
-        e = s.scheduler.events[1]
-        @test e isa Ev.When
-
-        plant_low = Sim.Plant.PlantState{4,2}(
-            power = Sim.Plant.PowerState{2}(
-                soc = SVector{2,Float64}(0.2, 0.05),
-                v1 = SVector{2,Float64}(0.0, 0.0),
-            ),
-        )
-        ctx_low = Scen.ScenarioContext(
-            t_us = UInt64(0),
-            t_s = 0.0,
-            step = 0,
-            plant = plant_low,
-            rb = plant_low.rb,
-        )
-        @test e.condition(s.state, ctx_low, 0.0) == true
-
-        plant_high = Sim.Plant.PlantState{4,2}(
-            power = Sim.Plant.PowerState{2}(
-                soc = SVector{2,Float64}(0.2, 0.15),
-                v1 = SVector{2,Float64}(0.0, 0.0),
-            ),
-        )
-        ctx_high = Scen.ScenarioContext(
-            t_us = UInt64(0),
-            t_s = 0.0,
-            step = 0,
-            plant = plant_high,
-            rb = plant_high.rb,
-        )
-        @test e.condition(s.state, ctx_high, 0.0) == false
+        sb = PX4Lockstep.Tests.Fixtures.tier1_when_soc_below_min()
+        @test sb.event_count == 1
+        @test sb.event_is_when
+        @test sb.cond_low == true
+        @test sb.cond_high == false
     end
 
     @testset "Phase 5.2 - power network current sharing + avionics load" begin
-        # Two batteries on one bus, no motors. Verify current sharing under a pure avionics load.
-        b1 = build_thevenin(
-            capacity_ah = 2.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [12.0, 12.0],
-            r0 = 0.05,
-            r1 = 0.01,
-            c1 = 100.0,
-            v1_0 = 0.0,
-            min_voltage_v = 0.0,
-        )
-        b2 = build_thevenin(
-            capacity_ah = 2.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [12.0, 12.0],
-            r0 = 0.10, # higher internal resistance -> lower share in :inv_r0
-            r1 = 0.01,
-            c1 = 100.0,
-            v1_0 = 0.0,
-            min_voltage_v = 0.0,
-        )
-
-        net = Sim.PlantModels.PowerNetwork{4,2,1}(
-            bus_for_motor = SVector{4,Int}(1, 1, 1, 1),
-            bus_for_battery = SVector{2,Int}(1, 1),
-            avionics_load_w = SVector{1,Float64}(12.0),
-            share_mode = :inv_r0,
-        )
-
-        model = Sim.PlantModels.CoupledMultirotorModel(
-            iris_vehicle_for_tests().model,
-            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
-            Sim.Contacts.NoContact(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_multirotor_set(),
-            (b1, b2),
-            net,
-        )
-
-        x0 = Sim.Plant.PlantState{4,2}(
-            rotor_ω = zero(SVector{4,Float64}),
-            power = Sim.Plant.PowerState{2}(
-                soc = SVector{2,Float64}(1.0, 1.0),
-                v1 = SVector{2,Float64}(0.0, 0.0),
-            ),
-        )
-        u = Sim.Plant.PlantInput(cmd = Sim.Vehicles.ActuatorCommand(), faults = Sim.Faults.FaultState())
-
-        y = Sim.PlantModels.plant_outputs(model, 0.0, x0, u)
-        dx = model(0.0, x0, u)
-
-        # With 12 W load at ~12 V, total current ~1 A. Split by 1/R0 weights (2:1).
-        I1 = -dx.power.soc_dot[1] * b1.capacity_c
-        I2 = -dx.power.soc_dot[2] * b2.capacity_c
-        @test isapprox(I1 + I2, y.bus_current_a[1]; rtol = 1e-6, atol = 1e-6)
-        @test isapprox(I1 / I2, 2.0; rtol = 1e-2, atol = 1e-2)
-
-        # Equal share mode should split current evenly.
-        net_eq = Sim.PlantModels.PowerNetwork{4,2,1}(
-            bus_for_motor = SVector{4,Int}(1, 1, 1, 1),
-            bus_for_battery = SVector{2,Int}(1, 1),
-            avionics_load_w = SVector{1,Float64}(12.0),
-            share_mode = :equal,
-        )
-        model_eq = Sim.PlantModels.CoupledMultirotorModel(
-            iris_vehicle_for_tests().model,
-            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
-            Sim.Contacts.NoContact(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_multirotor_set(),
-            (b1, b2),
-            net_eq,
-        )
-        dx_eq = model_eq(0.0, x0, u)
-        I1_eq = -dx_eq.power.soc_dot[1] * b1.capacity_c
-        I2_eq = -dx_eq.power.soc_dot[2] * b2.capacity_c
-        @test isapprox(I1_eq, I2_eq; rtol = 1e-6, atol = 1e-6)
+        ps = PX4Lockstep.Tests.Fixtures.tier1_power_network_share()
+        @test isapprox(ps.I1 + ps.I2, ps.total; rtol = 1e-6, atol = 1e-6)
+        @test isapprox(ps.ratio, 2.0; rtol = 1e-2, atol = 1e-2)
+        @test isapprox(ps.I1_eq, ps.I2_eq; rtol = 1e-6, atol = 1e-6)
     end
 
     @testset "Phase 5.2 - multi-bus voltage mapping" begin
-        # Two buses, two batteries. Apply motor load only on bus 1 and verify bus 1 voltage droops.
-        b1 = build_thevenin(
-            capacity_ah = 2.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [12.0, 12.0],
-            r0 = 0.10,
-            r1 = 0.01,
-            c1 = 100.0,
-            v1_0 = 0.0,
-            min_voltage_v = 0.0,
-        )
-        b2 = build_thevenin(
-            capacity_ah = 2.0,
-            soc0 = 1.0,
-            ocv_soc = [0.0, 1.0],
-            ocv_v = [12.0, 12.0],
-            r0 = 0.10,
-            r1 = 0.01,
-            c1 = 100.0,
-            v1_0 = 0.0,
-            min_voltage_v = 0.0,
-        )
-
-        net = Sim.PlantModels.PowerNetwork{4,2,2}(
-            bus_for_motor = SVector{4,Int}(1, 1, 2, 2),
-            bus_for_battery = SVector{2,Int}(1, 2),
-            avionics_load_w = SVector{2,Float64}(12.0, 0.0),
-            share_mode = :inv_r0,
-        )
-
-        model = Sim.PlantModels.CoupledMultirotorModel(
-            iris_vehicle_for_tests().model,
-            Env.EnvironmentModel(gravity = Env.UniformGravity(0.0)),
-            Sim.Contacts.NoContact(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Vehicles.DirectActuators(),
-            Sim.Propulsion.default_multirotor_set(),
-            (b1, b2),
-            net,
-        )
-
-        x0 = Sim.Plant.PlantState{4,2}(
-            rotor_ω = zero(SVector{4,Float64}),
-            power = Sim.Plant.PowerState{2}(
-                soc = SVector{2,Float64}(1.0, 1.0),
-                v1 = SVector{2,Float64}(0.0, 0.0),
-            ),
-        )
-
-        cmd = Sim.Vehicles.ActuatorCommand()
-        u = Sim.Plant.PlantInput(cmd = cmd, faults = Sim.Faults.FaultState())
-
-        y = Sim.PlantModels.plant_outputs(model, 0.0, x0, u)
-        @test y.battery_statuses !== nothing
-        bats = y.battery_statuses
-        @test length(bats) == 2
-        @test bats[1].voltage_v < bats[2].voltage_v
-        @test isapprox(bats[2].voltage_v, 12.0; atol = 1e-3)
+        mb = PX4Lockstep.Tests.Fixtures.tier1_multi_bus_voltage()
+        @test mb.b1_v < mb.b2_v
+        @test isapprox(mb.b2_v, 12.0; atol = 1e-3)
     end
 
     @testset "Phase 5.2 - back-EMF can zero motor bus load" begin
-        # If ω is high enough that Ke*ω >= d*V, motor current clamps to 0 -> no bus droop.
-        setup = _iris_fullplant()
-        model = setup.model
-        batt = model.batteries[1]
-
-        soc = setup.plant0.power.soc[1]
-        ocv = Sim.PlantModels._battery_ocv(batt, soc)
-        Ke = Sim.Propulsion.motor_Ke(model.propulsion.units[1].motor)
-
-        duty = 0.2
-        ω_hi = 1.2 * (duty * ocv / Ke)
-
-        x = Sim.Plant.PlantState{4,1}(
-            rb = setup.plant0.rb,
-            motors_y = setup.plant0.motors_y,
-            motors_ydot = setup.plant0.motors_ydot,
-            servos_y = setup.plant0.servos_y,
-            servos_ydot = setup.plant0.servos_ydot,
-            rotor_ω = SVector{4,Float64}(ω_hi, ω_hi, ω_hi, ω_hi),
-            power = setup.plant0.power,
-        )
-        motors = SVector{12,Float64}(duty, duty, duty, duty, 0, 0, 0, 0, 0, 0, 0, 0)
-        u = Sim.Plant.PlantInput(cmd = Sim.Vehicles.ActuatorCommand(motors = motors))
-
-        y = Sim.PlantModels.plant_outputs(model, 0.0, x, u)
-        @test isapprox(y.bus_current_a[1], 0.0; atol = 1e-6)
-        @test isapprox(y.bus_voltage_v[1], ocv; atol = 1e-6)
+        be = PX4Lockstep.Tests.Fixtures.tier1_back_emf_zero_bus_load()
+        @test isapprox(be.bus_current, 0.0; atol = 1e-6)
+        @test isapprox(be.bus_voltage, be.ocv; atol = 1e-6)
     end
 
     @testset "Phase 4 - Propulsor axis geometry" begin
-        # Force/torque directions should follow the propulsor axis convention:
-        # F = -T * axis_b, τ = r × F + axis_b * Q
-        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
-        rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
-        rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
-        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
-
-        params = Sim.Vehicles.QuadrotorParams{1}(
-            mass = 1.0,
-            inertia_kgm2 = I,
-            inertia_inv_kgm2 = I,
-            rotor_pos_body = rotor_pos,
-            rotor_axis_body = rotor_axis,
-            rotor_inertia_kgm2 = SVector{1,Float64}(0.0),
-            rotor_dir = SVector{1,Float64}(1.0),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-        model = Sim.Vehicles.GenericMultirotor{1}(params)
-        x = RB.RigidBodyState()
-
-        out = Sim.Propulsion.RotorOutput{1}(
-            thrust_n = SVector{1,Float64}(2.0),
-            shaft_torque_nm = SVector{1,Float64}(0.5),
-            ω_rad_s = SVector{1,Float64}(0.0),
-            motor_current_a = SVector{1,Float64}(0.0),
-            bus_current_a = 0.0,
-        )
-
-        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(d.vel_dot[1], -2.0; atol = 1e-12)
-        @test isapprox(d.vel_dot[2], 0.0; atol = 1e-12)
-        @test isapprox(d.vel_dot[3], 0.0; atol = 1e-12)
-        @test isapprox(d.ω_dot[1], 0.5; atol = 1e-12)
-        @test isapprox(d.ω_dot[2], 0.0; atol = 1e-12)
-        @test isapprox(d.ω_dot[3], 0.0; atol = 1e-12)
+        pa = PX4Lockstep.Tests.Fixtures.tier1_propulsor_axis_geometry()
+        @test isapprox(pa.vel_dot[1], -2.0; atol = 1e-12)
+        @test isapprox(pa.vel_dot[2], 0.0; atol = 1e-12)
+        @test isapprox(pa.vel_dot[3], 0.0; atol = 1e-12)
+        @test isapprox(pa.ω_dot[1], 0.5; atol = 1e-12)
+        @test isapprox(pa.ω_dot[2], 0.0; atol = 1e-12)
+        @test isapprox(pa.ω_dot[3], 0.0; atol = 1e-12)
     end
 
     @testset "Phase 4 - Wrench composition (r×F + axis*Q)" begin
-        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
-        rotor_pos = SVector{2,T.Vec3}(T.vec3(1.0, 0.0, 0.0), T.vec3(0.0, 1.0, 0.0))
-        rotor_axis = SVector{2,T.Vec3}(T.vec3(0.0, 0.0, 1.0), T.vec3(0.0, 1.0, 0.0))
-        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
-
-        params = Sim.Vehicles.QuadrotorParams{2}(
-            mass = 1.0,
-            inertia_kgm2 = I,
-            inertia_inv_kgm2 = I,
-            rotor_pos_body = rotor_pos,
-            rotor_axis_body = rotor_axis,
-            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
-            rotor_dir = SVector{2,Float64}(1.0, 1.0),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-        model = Sim.Vehicles.GenericMultirotor{2}(params)
-        x = RB.RigidBodyState()
-
-        # Rotor 1: axis +Z, thrust 2, reaction torque 0.5
-        # Rotor 2: axis +Y, thrust 3, reaction torque 0.2
-        out = Sim.Propulsion.RotorOutput{2}(
-            thrust_n = SVector{2,Float64}(2.0, 3.0),
-            shaft_torque_nm = SVector{2,Float64}(0.5, 0.2),
-            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
-            motor_current_a = SVector{2,Float64}(0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-
-        # Expected force: F = -T * axis
+        wr = PX4Lockstep.Tests.Fixtures.tier1_wrench_composition()
         F_exp = T.vec3(0.0, -3.0, -2.0)
-        # Expected torque: r×F + axis*Q
         τ_exp = T.vec3(0.0, 2.2, 0.5)
-
-        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(d.vel_dot[1], F_exp[1]; atol = 1e-12)
-        @test isapprox(d.vel_dot[2], F_exp[2]; atol = 1e-12)
-        @test isapprox(d.vel_dot[3], F_exp[3]; atol = 1e-12)
-        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
-        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
-        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+        @test isapprox(wr.vel_dot[1], F_exp[1]; atol = 1e-12)
+        @test isapprox(wr.vel_dot[2], F_exp[2]; atol = 1e-12)
+        @test isapprox(wr.vel_dot[3], F_exp[3]; atol = 1e-12)
+        @test isapprox(wr.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(wr.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(wr.ω_dot[3], τ_exp[3]; atol = 1e-12)
     end
 
     @testset "Phase 4 - Vax sign from axis projection" begin
-        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
-        rotor_pos = SVector{1,T.Vec3}(T.vec3(0.0, 0.0, 0.0))
-        rotor_axis = SVector{1,T.Vec3}(T.vec3(1.0, 0.0, 0.0)) # axis points +X
-        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
-
-        params = Sim.Vehicles.QuadrotorParams{1}(
-            mass = 1.0,
-            inertia_kgm2 = I,
-            inertia_inv_kgm2 = I,
-            rotor_pos_body = rotor_pos,
-            rotor_axis_body = rotor_axis,
-            rotor_inertia_kgm2 = SVector{1,Float64}(0.0),
-            rotor_dir = SVector{1,Float64}(1.0),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-        model = Sim.Vehicles.GenericMultirotor{1}(params)
-        motor_act = Sim.Vehicles.DirectActuators()
-        servo_act = Sim.Vehicles.DirectActuators()
-
-        esc = Sim.Propulsion.ESCParams()
-        motor = Sim.Propulsion.BLDCMotorParams()
-        units = [Sim.Propulsion.MotorPropUnit(esc = esc, motor = motor, prop = SignProp(1.0, 0.5))]
-        prop = Sim.Propulsion.QuadRotorSet(units, SVector{1,Float64}(1.0))
-        battery = build_ideal(voltage_v = 12.0)
-
-        motor_map = Sim.Vehicles.MotorMap{1}(SVector{1,Int}(1))
-        dynfun = Sim.PlantModels.CoupledMultirotorModel(
-            model,
-            env,
-            Sim.Contacts.NoContact(),
-            motor_act,
-            servo_act,
-            prop,
-            battery;
-            motor_map = motor_map,
-        )
-
-        plant0 = Sim.Plant.init_plant_state(
-            Sim.RigidBody.RigidBodyState(),
-            motor_act,
-            servo_act,
-            prop,
-            battery,
-        )
-
-        plant = Sim.Plant.PlantState{1,1}(
-            rb = plant0.rb,
-            motors_y = plant0.motors_y,
-            motors_ydot = plant0.motors_ydot,
-            servos_y = plant0.servos_y,
-            servos_ydot = plant0.servos_ydot,
-            rotor_ω = SVector{1,Float64}(0.0),
-            power = plant0.power,
-        )
-
-        cmd = Sim.Vehicles.ActuatorCommand(motors = plant0.motors_y, servos = plant0.servos_y)
-
-        u_pos = Sim.Plant.PlantInput(
-            cmd = cmd,
-            wind_ned = T.vec3(1.0, 0.0, 0.0),
-            faults = Sim.Faults.FaultState(),
-        )
-        u_neg = Sim.Plant.PlantInput(
-            cmd = cmd,
-            wind_ned = T.vec3(-1.0, 0.0, 0.0),
-            faults = Sim.Faults.FaultState(),
-        )
-
-        y_pos = Sim.plant_outputs(dynfun, 0.0, plant, u_pos)
-        y_neg = Sim.plant_outputs(dynfun, 0.0, plant, u_neg)
-
-        @test y_pos.rotors.thrust_n[1] < 0.0
-        @test y_neg.rotors.thrust_n[1] > 0.0
+        vax = PX4Lockstep.Tests.Fixtures.tier1_vax_sign_projection()
+        @test vax.thrust_pos < 0.0
+        @test vax.thrust_neg > 0.0
     end
 
     @testset "Phase 4 - twin forward props (yaw via differential thrust)" begin
-        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
-        r = 0.5
-        rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
-        # Axis chosen so F = -T * axis gives forward +X force.
-        rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
-        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
-
-        params = Sim.Vehicles.QuadrotorParams{2}(
-            mass = 1.0,
-            inertia_kgm2 = I,
-            inertia_inv_kgm2 = I,
-            rotor_pos_body = rotor_pos,
-            rotor_axis_body = rotor_axis,
-            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
-            rotor_dir = SVector{2,Float64}(1.0, 1.0),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-        model = Sim.Vehicles.GenericMultirotor{2}(params)
-        x = RB.RigidBodyState()
-
-        # Differential thrust: right prop produces more thrust than left prop.
+        ty = PX4Lockstep.Tests.Fixtures.tier1_twin_forward_props_yaw()
         T_left = 2.0
         T_right = 5.0
-        out = Sim.Propulsion.RotorOutput{2}(
-            thrust_n = SVector{2,Float64}(T_left, T_right),
-            shaft_torque_nm = SVector{2,Float64}(0.0, 0.0),
-            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
-            motor_current_a = SVector{2,Float64}(0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-
-        # Expected force: F = -T * axis -> (+X) thrust
         F_exp = T.vec3(T_left + T_right, 0.0, 0.0)
-        # Expected yaw torque: r × F, with r at ±Y and F along +X
-        τz = r * (T_right - T_left)
+        τz = 0.5 * (T_right - T_left)
         τ_exp = T.vec3(0.0, 0.0, τz)
-
-        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(d.vel_dot[1], F_exp[1]; atol = 1e-12)
-        @test isapprox(d.vel_dot[2], F_exp[2]; atol = 1e-12)
-        @test isapprox(d.vel_dot[3], F_exp[3]; atol = 1e-12)
-        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
-        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
-        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+        @test isapprox(ty.vel_dot[1], F_exp[1]; atol = 1e-12)
+        @test isapprox(ty.vel_dot[2], F_exp[2]; atol = 1e-12)
+        @test isapprox(ty.vel_dot[3], F_exp[3]; atol = 1e-12)
+        @test isapprox(ty.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(ty.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(ty.ω_dot[3], τ_exp[3]; atol = 1e-12)
     end
 
     @testset "Phase 4 - Twin forward props roll torque from reaction torque" begin
-        env = Env.EnvironmentModel(gravity = Env.UniformGravity(0.0))
-        r = 0.5
-        rotor_pos = SVector{2,T.Vec3}(T.vec3(0.0, r, 0.0), T.vec3(0.0, -r, 0.0))
-        rotor_axis = SVector{2,T.Vec3}(T.vec3(-1.0, 0.0, 0.0), T.vec3(-1.0, 0.0, 0.0))
-        I = T.Mat3([1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
-
-        params = Sim.Vehicles.QuadrotorParams{2}(
-            mass = 1.0,
-            inertia_kgm2 = I,
-            inertia_inv_kgm2 = I,
-            rotor_pos_body = rotor_pos,
-            rotor_axis_body = rotor_axis,
-            rotor_inertia_kgm2 = SVector{2,Float64}(0.0, 0.0),
-            rotor_dir = SVector{2,Float64}(1.0, 1.0),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-        model = Sim.Vehicles.GenericMultirotor{2}(params)
-        x = RB.RigidBodyState()
-
-        # Equal thrust; nonzero reaction torque on each prop (about +X due to axis).
-        T_left = 3.0
-        T_right = 3.0
-        Q_left = 0.4
-        Q_right = 0.6
-        out = Sim.Propulsion.RotorOutput{2}(
-            thrust_n = SVector{2,Float64}(T_left, T_right),
-            shaft_torque_nm = SVector{2,Float64}(Q_left, Q_right),
-            ω_rad_s = SVector{2,Float64}(0.0, 0.0),
-            motor_current_a = SVector{2,Float64}(0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-
-        # r×F cancels in yaw; roll torque comes purely from axis*Q.
-        τ_exp = T.vec3(-(Q_left + Q_right), 0.0, 0.0)
-
-        d = Sim.Vehicles.dynamics(model, env, 0.0, x, out, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(d.ω_dot[1], τ_exp[1]; atol = 1e-12)
-        @test isapprox(d.ω_dot[2], τ_exp[2]; atol = 1e-12)
-        @test isapprox(d.ω_dot[3], τ_exp[3]; atol = 1e-12)
+        tr = PX4Lockstep.Tests.Fixtures.tier1_twin_forward_props_roll()
+        τ_exp = T.vec3(-(0.4 + 0.6), 0.0, 0.0)
+        @test isapprox(tr.ω_dot[1], τ_exp[1]; atol = 1e-12)
+        @test isapprox(tr.ω_dot[2], τ_exp[2]; atol = 1e-12)
+        @test isapprox(tr.ω_dot[3], τ_exp[3]; atol = 1e-12)
     end
 
     @testset "Phase 4 - CA axis param sign convention" begin
-        rotor_pos = T.Vec3[T.vec3(0.0, 0.0, 0.0), T.vec3(0.0, 0.0, 0.0)]
-        rotor_axis = T.Vec3[T.vec3(0.0, 0.0, 2.0), T.vec3(0.0, 1.0, 0.0)]
-
-        airframe = Sim.Aircraft.AirframeSpec(
-            kind = :multirotor,
-            mass_kg = 1.0,
-            inertia_diag_kgm2 = T.vec3(1.0, 1.0, 1.0),
-            rotor_pos_body_m = rotor_pos,
-            rotor_axis_body_m = rotor_axis,
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-
-        motors = Sim.Aircraft.MotorChannelSpec[
-            Sim.Aircraft.MotorChannelSpec(id = :motor1, channel = 1),
-            Sim.Aircraft.MotorChannelSpec(id = :motor2, channel = 2),
-        ]
-
-        actuation = Sim.Aircraft.ActuationSpec(
-            motors = motors,
-            servos = Sim.Aircraft.ServoSpec[],
-            motor_actuators = Sim.Aircraft.DirectActuatorSpec(),
-            servo_actuators = Sim.Aircraft.DirectActuatorSpec(),
-        )
-
-        spec = Sim.Aircraft.AircraftSpec(name = :test, airframe = airframe, actuation = actuation)
-        vehicle = Sim.Aircraft._build_vehicle(spec)
-        params = Sim.Aircraft._derive_ca_params(spec, vehicle)
-
-        pmap = Dict(p.name => Float64(p.value) for p in params)
-        @test isapprox(pmap["CA_ROTOR0_AZ"], -1.0; atol = 1e-12)
-        @test isapprox(pmap["CA_ROTOR1_AY"], -1.0; atol = 1e-12)
+        ca = PX4Lockstep.Tests.Fixtures.tier1_ca_axis_param_sign()
+        @test isapprox(ca.rotor0_az, -1.0; atol = 1e-12)
+        @test isapprox(ca.rotor1_ay, -1.0; atol = 1e-12)
     end
 end
 
 
 @testset "plant_outputs purity and RHS consistency" begin
-    setup = _iris_fullplant()
+    setup = PX4Lockstep.Tests.Fixtures._iris_fullplant()
     model = setup.model
     x0 = setup.plant0
 
@@ -840,438 +219,65 @@ end
 
 @testset "Verification Tier 2 - Full-plant contract tests" begin
     @testset "Full-plant ballistic free-fall (no thrust, no wind)" begin
-        # Goal: catch NED sign, gravity sign, quaternion handling, and engine stepping issues.
-        # Setup: Iris full plant, motor duties=0 (default), rotor ω=0, no wind, no contact.
-
-        t_end_s = 1.0
-        dt_phys_s = 0.01
-        dt_log_s = 0.01
-
-        rb0 = RB.RigidBodyState(
-            pos_ned=T.vec3(0.0, 0.0, -10.0),
-            vel_ned=T.vec3(0.0, 0.0, 0.0),
-            q_bn=T.Quat(1.0, 0.0, 0.0, 0.0),
-            ω_body=T.vec3(0.0, 0.0, 0.0),
-        )
-
-        setup = _iris_fullplant(
-            ;
-            x0 = rb0,
-            contact = Sim.Contacts.NoContact(),
-            linear_drag = 0.0,
-            angular_damping = T.vec3(0.0, 0.0, 0.0),
-        )
-
-        t_end_us = UInt64(round(Int, t_end_s * 1e6))
-        dt_phys_us = UInt64(round(Int, dt_phys_s * 1e6))
-        dt_log_us = UInt64(round(Int, dt_log_s * 1e6))
-
-        # No autopilot/wind ticks needed for this contract test.
-        timeline = Sim.Runtime.build_timeline(
-            UInt64(0),
-            t_end_us;
-            dt_ap_us=t_end_us + UInt64(1),
-            dt_wind_us=t_end_us + UInt64(1),
-            dt_log_us=dt_log_us,
-            dt_phys_us=dt_phys_us,
-            scn_times_us=UInt64[],
-        )
-
-        cfg = Sim.Runtime.EngineConfig(mode=Sim.Runtime.MODE_RECORD)
-        bus = Sim.Runtime.SimBus(time_us = UInt64(0))
-        rec = Sim.Recording.InMemoryRecorder()
-        integrator = Sim.Integrators.RK4Integrator()
-
-        eng = Sim.Runtime.Engine(
-            cfg,
-            timeline,
-            bus,
-            setup.plant0,
-            setup.model,
-            integrator,
-            nothing, # autopilot
-            nothing; # wind
-            recorder=rec,
-        )
-        Sim.Runtime.run!(eng)
-
-        @test haskey(rec.times, :plant)
-        @test length(rec.times[:plant]) == length(rec.values[:plant])
-
-        g = Env.gravity_accel(setup.env.gravity, rb0.pos_ned, 0.0)[3]
-        z0 = rb0.pos_ned[3]
-        vz0 = rb0.vel_ned[3]
-
-        for (t_us, x) in zip(rec.times[:plant], rec.values[:plant])
-            t = Float64(t_us) * 1e-6
-            z_exp = z0 + vz0 * t + 0.5 * g * t * t
-            vz_exp = vz0 + g * t
-
-            @test isapprox(x.rb.pos_ned[3], z_exp; atol=1e-7)
-            @test isapprox(x.rb.vel_ned[3], vz_exp; atol=1e-7)
-
-            @test isapprox(_qnorm(x.rb.q_bn), 1.0; atol=1e-12)
-            @test all(x.rotor_ω .>= -1e-12)
-            @test 0.0 <= x.power.soc[1] <= 1.0
-            @test isfinite(x.power.v1[1])
-        end
+        b = PX4Lockstep.Tests.Fixtures.tier2_ballistic_freefall()
+        @test b.count > 0
+        @test b.max_z_err <= 1e-7
+        @test b.max_vz_err <= 1e-7
+        @test b.max_qnorm_err <= 1e-12
+        @test b.min_rotor >= -1e-12
+        @test b.soc_ok
+        @test b.v1_ok
     end
 
     @testset "Hover force-balance RHS check (t=0)" begin
-        # Goal: verify thrust direction and magnitude mapping into RB acceleration.
-        # This is a *single RHS evaluation* contract test (not a long sim).
-
-        setup = _iris_fullplant(; x0 = RB.RigidBodyState(), contact = Sim.Contacts.NoContact())
-
-        # Solve for a rotor ω that yields total thrust ≈ m*g at Vax=0 and sea-level density.
-        alt_msl_m = setup.env.origin.alt_msl_m - setup.plant0.rb.pos_ned[3]
-        ρ = Env.air_density(setup.env.atmosphere, alt_msl_m)
-        g = Env.gravity_accel(setup.env.gravity, setup.plant0.rb.pos_ned, 0.0)[3]
-        m = Sim.Vehicles.mass(setup.veh.model)
-
-        # Assume symmetric rotors for Iris.
-        prop = setup.veh.propulsion.units[1].prop
-
-        function total_thrust(ω::Float64)
-            Ti = Sim.Propulsion.prop_thrust(prop, ρ, ω, 0.0)
-            return 4.0 * Ti
-        end
-
-        T_target = m * g
-        ω_lo = 0.0
-        ω_hi = 10.0
-        for _ in 1:30
-            if total_thrust(ω_hi) >= T_target
-                break
-            end
-            ω_hi *= 2.0
-        end
-        @test total_thrust(ω_hi) >= T_target
-
-        for _ in 1:60
-            ω_mid = 0.5 * (ω_lo + ω_hi)
-            if total_thrust(ω_mid) >= T_target
-                ω_hi = ω_mid
-            else
-                ω_lo = ω_mid
-            end
-        end
-        ω_hover = ω_hi
-
-        # Build a PlantState with rotor ω initialized to hover ω.
-        x = setup.plant0
-        x = Sim.Plant.PlantState{4,1}(
-            x.rb,
-            x.motors_y,
-            x.motors_ydot,
-            x.servos_y,
-            x.servos_ydot,
-            SVector{4,Float64}(fill(ω_hover, 4)),
-            x.power,
-        )
-
-        u = Sim.Plant.PlantInput() # cmd=0, wind=0, faults=none
-        dx = setup.model(0.0, x, u)
-
-        # At identity attitude, hover thrust should cancel gravity => a_down ≈ 0.
-        @test isapprox(dx.rb.vel_dot[3], 0.0; atol=1e-6)
-        @test isapprox(dx.rb.vel_dot[1], 0.0; atol=1e-9)
-        @test isapprox(dx.rb.vel_dot[2], 0.0; atol=1e-9)
+        h = PX4Lockstep.Tests.Fixtures.tier2_hover_force_balance()
+        @test isapprox(h.vel_dot[3], 0.0; atol = 1e-6)
+        @test isapprox(h.vel_dot[1], 0.0; atol = 1e-9)
+        @test isapprox(h.vel_dot[2], 0.0; atol = 1e-9)
     end
 
     @testset "Bus solve residual sweep" begin
-        # Goal: verify the bus-voltage solver returns a consistent fixed-point.
-        # This is a deterministic envelope sweep over random-but-safe inputs.
-
-        p = Sim.Propulsion.default_multirotor_set()
-        rng = MersenneTwister(123)
-
-        ocv = 16.0
-        R0 = 0.05
-        Vmin = 0.0
-
-        for _ in 1:25
-            ω = SVector{4,Float64}(rand(rng, 4) .* 600.0)
-            duty = SVector{4,Float64}(rand(rng, 4))
-            v1 = 0.5 * rand(rng)
-
-            V = Sim.PlantModels._solve_bus_voltage(p, ω, duty, ocv, v1, R0, Vmin)
-            @test V >= Vmin - 1e-12
-            @test V <= (ocv - v1) + 1e-12
-
-            I = Sim.PlantModels._bus_current_total(p, ω, duty, V)
-            V_rhs = clamp(Vmin, (ocv - v1) - R0 * I, (ocv - v1))
-            @test isapprox(V, V_rhs; atol=1e-6)
-        end
-
-        # Simple monotonic sanity: increasing duty should not increase bus voltage.
-        ω0 = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0)
-        duty1 = SVector{4,Float64}(0.2, 0.2, 0.2, 0.2)
-        duty2 = SVector{4,Float64}(0.4, 0.4, 0.4, 0.4)
-        v1 = 0.0
-
-        V1 = Sim.PlantModels._solve_bus_voltage(p, ω0, duty1, ocv, v1, R0, Vmin)
-        V2 = Sim.PlantModels._solve_bus_voltage(p, ω0, duty2, ocv, v1, R0, Vmin)
-        @test V2 <= V1 + 1e-9
+        bus = PX4Lockstep.Tests.Fixtures.tier2_bus_solve_residual_sweep()
+        @test bus.min_ok
+        @test bus.max_ok
+        @test bus.max_resid <= 1e-6
+        @test bus.monotonic_ok
     end
 
     @testset "Quad symmetry torque test" begin
-        # Roll/pitch cancellation for symmetric thrust distribution.
-        model = iris_vehicle_for_tests().model
-        env = Sim.Environment.EnvironmentModel(wind = Sim.Environment.NoWind())
+        quad = PX4Lockstep.Tests.Fixtures.tier2_quad_symmetry_torque()
+        @test isapprox(quad.bal[1], 0.0; atol = 1e-12)
+        @test isapprox(quad.bal[2], 0.0; atol = 1e-12)
+        @test isapprox(quad.bal[3], 0.0; atol = 1e-12)
+        @test isapprox(quad.yaw_pos[1], 0.0; atol = 1e-12)
+        @test isapprox(quad.yaw_pos[2], 0.0; atol = 1e-12)
+        @test quad.yaw_pos[3] > 0.0
+        @test isapprox(quad.yaw_neg[1], 0.0; atol = 1e-12)
+        @test isapprox(quad.yaw_neg[2], 0.0; atol = 1e-12)
+        @test quad.yaw_neg[3] < 0.0
+    end
 
-        x = RB.RigidBodyState()  # identity attitude, zero rates
-
-        thrust = 5.0
-        Q = 0.05
-
-        # Balanced yaw torque (two +Q, two -Q) should yield ~zero body angular acceleration.
-        u_bal = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
-            shaft_torque_nm = SVector{4,Float64}(Q, Q, -Q, -Q),
-            ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-        dx = Sim.Vehicles.dynamics(model, env, 0.0, x, u_bal, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(dx.ω_dot[1], 0.0; atol=1e-12)
-        @test isapprox(dx.ω_dot[2], 0.0; atol=1e-12)
-        @test isapprox(dx.ω_dot[3], 0.0; atol=1e-12)
-
-        # Non-canceling yaw torque should produce a clear yaw acceleration sign.
-        u_yaw_pos = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
-            shaft_torque_nm = SVector{4,Float64}(Q, Q, Q, Q),
-            ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-        dxp = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_pos, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(dxp.ω_dot[1], 0.0; atol=1e-12)
-        @test isapprox(dxp.ω_dot[2], 0.0; atol=1e-12)
-        @test dxp.ω_dot[3] > 0.0
-
-        u_yaw_neg = Sim.Propulsion.RotorOutput{4}(
-            thrust_n = SVector{4,Float64}(thrust, thrust, thrust, thrust),
-            shaft_torque_nm = SVector{4,Float64}(-Q, -Q, -Q, -Q),
-            ω_rad_s = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            motor_current_a = SVector{4,Float64}(0.0, 0.0, 0.0, 0.0),
-            bus_current_a = 0.0,
-        )
-        dxn = Sim.Vehicles.dynamics(model, env, 0.0, x, u_yaw_neg, T.vec3(0.0, 0.0, 0.0))
-        @test isapprox(dxn.ω_dot[1], 0.0; atol=1e-12)
-        @test isapprox(dxn.ω_dot[2], 0.0; atol=1e-12)
-        @test dxn.ω_dot[3] < 0.0
-
-        # rotor_dir sign sensitivity: propulsion should apply rotor_dir exactly once to the yaw reaction torque.
-        setup = _iris_fullplant()
-        veh = setup.veh
-        env2 = setup.env
-        full_model = setup.model
-        plant0 = setup.plant0
-        ω0 = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
-        motors_y = SVector{12,Float64}(0.6, 0.6, 0.6, 0.6, 0, 0, 0, 0, 0, 0, 0, 0)
-        xplant = Sim.Plant.PlantState{4,1}(
-            rb = plant0.rb,
-            motors_y = motors_y,
-            motors_ydot = plant0.motors_ydot,
-            servos_y = plant0.servos_y,
-            servos_ydot = plant0.servos_ydot,
-            rotor_ω = ω0,
-            power = Sim.Plant.PowerState{1}(
-                soc = SVector{1,Float64}(1.0),
-                v1 = SVector{1,Float64}(0.0),
-            ),
-        )
-        cmd = Sim.Vehicles.ActuatorCommand(
-            motors = motors_y,
-            servos = plant0.servos_y,
-        )
-        u = Sim.Plant.PlantInput(cmd = cmd, wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0), faults = Sim.Faults.FaultState())
-        y1 = Sim.plant_outputs(full_model, 0.0, xplant, u)
-        prop2 = Sim.Propulsion.QuadRotorSet(veh.propulsion.units, -veh.propulsion.rotor_dir)
-        model2 = Sim.PlantModels.CoupledMultirotorModel(
-            veh.model,
-            env2,
-            Sim.Contacts.NoContact(),
-            veh.motor_actuators,
-            veh.servo_actuators,
-            prop2,
-            setup.batt,
-        )
-        y2 = Sim.plant_outputs(model2, 0.0, xplant, u)
-        @test y2.rotors.shaft_torque_nm ≈ -y1.rotors.shaft_torque_nm
+    @testset "Rotor_dir sign sensitivity" begin
+        @test PX4Lockstep.Tests.Fixtures.tier2_rotor_dir_sign_sensitivity().ok
     end
 
     @testset "Fault semantics (motor disable / battery disconnect / estimator freeze)" begin
-        # Plant-level fault consumption: motor disable forces duty=0 -> motor current drops to 0 and ω̇ < 0.
-        setup = _iris_fullplant()
-        model = setup.model
-        plant0 = setup.plant0
-        t = 0.0
-
-        # Construct a state with nonzero rotor speed so disable has an immediate effect.
-        ω0 = SVector{4,Float64}(100.0, 100.0, 100.0, 100.0)
-        motors_y = SVector{12,Float64}(0.6, 0.6, 0.6, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        x = Sim.Plant.PlantState{4,1}(
-            rb = plant0.rb,
-            motors_y = motors_y,
-            motors_ydot = plant0.motors_ydot,
-            servos_y = plant0.servos_y,
-            servos_ydot = plant0.servos_ydot,
-            rotor_ω = ω0,
-            power = Sim.Plant.PowerState{1}(
-                soc = SVector{1,Float64}(1.0),
-                v1 = SVector{1,Float64}(0.0),
-            ),
-        )
-
-        cmd = Sim.Vehicles.ActuatorCommand(
-            motors = motors_y,
-            servos = plant0.servos_y,
-        )
-
-        u_nom = Sim.Plant.PlantInput(
-            cmd = cmd,
-            wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-            faults = Sim.Faults.FaultState(),
-        )
-        y_nom = Sim.plant_outputs(model, t, x, u_nom)
-        dx_nom = model(t, x, u_nom)
-
-        u_dis = Sim.Plant.PlantInput(
-            cmd = cmd,
-            wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-            faults = Sim.Faults.FaultState(motor_disable_mask = UInt32(0x1)),
-        )
-        y_dis = Sim.plant_outputs(model, t, x, u_dis)
-        dx_dis = model(t, x, u_dis)
-
-        @test y_dis.rotors.motor_current_a[1] == 0.0
-        @test y_nom.rotors.motor_current_a[1] > 0.0
-        @test y_dis.rotors.bus_current_a < y_nom.rotors.bus_current_a + 1e-12
-        @test dx_dis.rotor_ω_dot[1] < 0.0
-        @test dx_dis.rotor_ω_dot[1] < dx_nom.rotor_ω_dot[1] + 1e-12
-
-        # Battery disconnect collapses bus V/I and motor current.
-        u_disc = Sim.Plant.PlantInput(
-            cmd = cmd,
-            wind_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-            faults = Sim.Faults.FaultState(battery_connected = false),
-        )
-        y_disc = Sim.plant_outputs(model, t, x, u_disc)
-        @test y_disc.battery_statuses[1].connected == false
-        @test isapprox(y_disc.bus_voltage_v[1], 0.0; atol=1e-12)
-        @test isapprox(y_disc.rotors.bus_current_a, 0.0; atol=1e-12)
-        @test all(y_disc.rotors.motor_current_a .== 0.0)
-
-        # Estimator freeze: the estimator must not update bus.est while the freeze bit is set.
-        bus = Sim.Runtime.SimBus(time_us = UInt64(0))
-        plant_rb = Sim.RigidBody.RigidBodyState(pos_ned = Sim.Types.vec3(1.0, 2.0, 3.0))
-        bus.est = Sim.Estimators.EstimatedState(
-            pos_ned = Sim.Types.vec3(9.0, 9.0, 9.0),
-            vel_ned = Sim.Types.vec3(0.0, 0.0, 0.0),
-            q_bn = Sim.Types.Quat(1.0, 0.0, 0.0, 0.0),
-            ω_body = Sim.Types.vec3(0.0, 0.0, 0.0),
-        )
-        est = Sim.Sources.LiveEstimatorSource(
-            Sim.Estimators.TruthEstimator(),
-            MersenneTwister(123),
-            0.01,
-        )
-
-        bus.faults = Sim.Faults.FaultState(sensor_fault_mask = Sim.Faults.SENSOR_FAULT_EST_FREEZE)
-        Sim.Runtime.update!(est, bus, plant_rb, UInt64(0))
-        @test bus.est.pos_ned == Sim.Types.vec3(9.0, 9.0, 9.0)
-
-        bus.faults = Sim.Faults.FaultState()
-        Sim.Runtime.update!(est, bus, plant_rb, UInt64(0))
-        @test bus.est.pos_ned == plant_rb.pos_ned
+        f = PX4Lockstep.Tests.Fixtures.tier2_fault_semantics()
+        @test f.motor_current_disabled == 0.0
+        @test f.motor_current_nom > 0.0
+        @test f.bus_current_disabled < f.bus_current_nom + 1e-12
+        @test f.rotor_ω_dot_disabled < 0.0
+        @test f.rotor_ω_dot_disabled < f.rotor_ω_dot_nom + 1e-12
+        @test f.battery_connected == false
+        @test isapprox(f.bus_voltage, 0.0; atol = 1e-12)
+        @test isapprox(f.bus_current_disc, 0.0; atol = 1e-12)
+        @test f.motor_current_all_zero
+        @test f.est_freeze_ok
+        @test f.est_update_ok
     end
 
     @testset "Engine boundary ordering probe test" begin
-        # Verify that the canonical boundary protocol ordering is enforced in code:
-        # scenario -> wind -> estimator -> autopilot for boundaries where all are due.
-        mutable struct ProbeScenarioSource end
-        mutable struct ProbeWindSource end
-        mutable struct ProbeEstimatorSource end
-        mutable struct ProbeAutopilotSource end
-
-        function Sim.Runtime.update!(
-            ::ProbeScenarioSource,
-            bus::Sim.Runtime.SimBus,
-            plant,
-            t_us::UInt64,
-        )
-            bus.wind_ned = Sim.Types.vec3(1.0, 0.0, 0.0)
-            return nothing
-        end
-
-        function Sim.Runtime.update!(
-            ::ProbeWindSource,
-            bus::Sim.Runtime.SimBus,
-            plant,
-            t_us::UInt64,
-        )
-            @test bus.wind_ned[1] == 1.0
-            bus.wind_ned = Sim.Types.vec3(2.0, 0.0, 0.0)
-            return nothing
-        end
-
-        function Sim.Runtime.update!(
-            ::ProbeEstimatorSource,
-            bus::Sim.Runtime.SimBus,
-            plant,
-            t_us::UInt64,
-        )
-            @test bus.wind_ned[1] == 2.0
-            bus.wind_ned = Sim.Types.vec3(3.0, 0.0, 0.0)
-            return nothing
-        end
-
-        function Sim.Runtime.update!(
-            ::ProbeAutopilotSource,
-            bus::Sim.Runtime.SimBus,
-            plant,
-            t_us::UInt64,
-        )
-            @test bus.wind_ned[1] == 3.0
-            bus.wind_ned = Sim.Types.vec3(4.0, 0.0, 0.0)
-            return nothing
-        end
-
-        struct ZeroRB end
-        function (d::ZeroRB)(t_s::Float64, x::Sim.RigidBody.RigidBodyState, u::Sim.Plant.PlantInput)
-            return Sim.RigidBody.rb_deriv_zero()
-        end
-
-        t_end_us = UInt64(30_000)
-        tl = Sim.Runtime.build_timeline(
-            UInt64(0),
-            t_end_us;
-            dt_ap_us = UInt64(10_000),
-            dt_wind_us = UInt64(10_000),
-            dt_log_us = UInt64(10_000),
-        )
-
-        cfg = Sim.Runtime.EngineConfig(mode = Sim.Runtime.MODE_LIVE, enable_derived_outputs = false)
-        sim = Sim.Runtime.Engine(
-            cfg,
-            tl,
-            Sim.Runtime.SimBus(time_us = UInt64(0)),
-            RB.RigidBodyState(),
-            ZeroRB(),
-            Sim.Integrators.EulerIntegrator(),
-            ProbeAutopilotSource(),
-            ProbeWindSource();
-            scenario = ProbeScenarioSource(),
-            estimator = ProbeEstimatorSource(),
-            telemetry = Sim.Runtime.NullTelemetry(),
-            recorder = Sim.Recording.NullRecorder(),
-        )
-
-        Sim.Runtime.run!(sim)
-        @test sim.bus.wind_ned[1] == 4.0
+        @test PX4Lockstep.Tests.Fixtures.tier2_boundary_order_probe().order_ok
     end
 end
 

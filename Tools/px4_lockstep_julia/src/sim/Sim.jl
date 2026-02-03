@@ -66,6 +66,8 @@ include("Aircraft/Aircraft.jl")
 # Deterministic verification utilities and reference problems.
 include("Verification.jl")
 
+# Precompile-friendly test workloads and helpers.
+
 # User-facing workflow entrypoints (thin wrappers around Runtime.Engine).
 include("API.jl")
 

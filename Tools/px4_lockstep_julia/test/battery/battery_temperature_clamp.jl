@@ -3,10 +3,10 @@ using Test
 const Sim = PX4Lockstep.Sim
 
 @testset "Battery: temperature clamp in plant_project" begin
-    env = iris_env_replay_for_tests()
-    veh = iris_vehicle_for_tests()
-    batt = iris_battery_for_tests()
-    model = iris_dynfun_for_tests(env, veh, batt)
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
+    veh = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests()
+    batt = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
+    model = PX4Lockstep.Tests.Fixtures.iris_dynfun_for_tests(env, veh, batt)
 
     x0 = Sim.Plant.init_plant_state(
         veh.state,

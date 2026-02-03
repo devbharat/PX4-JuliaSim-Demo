@@ -1,7 +1,7 @@
 @testset "Propulsion owns rotor_dir yaw-torque sign" begin
-    env = iris_env_replay_for_tests()
-    vehicle = iris_vehicle_for_tests()
-    battery = iris_battery_for_tests()
+    env = PX4Lockstep.Tests.Fixtures.iris_env_replay_for_tests()
+    vehicle = PX4Lockstep.Tests.Fixtures.iris_vehicle_for_tests()
+    battery = PX4Lockstep.Tests.Fixtures.iris_battery_for_tests()
 
     dynfun = Sim.PlantModels.CoupledMultirotorModel(
         vehicle.model,
